@@ -11,6 +11,10 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.ScreenMutation;
@@ -118,7 +122,7 @@ public final class TerminalLineRenderNodeCacheTest {
 
     assertEquals(0, cache.sizeForTest());
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
-        cache.drawOrRecord(canvas, snapshot.screen[0], 0f, false));
+        cache.drawOrRecord(canvas, snapshot.screenView.lineAt(0), 0f, false));
     assertEquals(1, cache.sizeForTest());
     assertEquals(1, createdNodes.size());
   }
@@ -128,14 +132,14 @@ public final class TerminalLineRenderNodeCacheTest {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, snapshot, 1, 1, 1);
-    TerminalLine line = snapshot.screen[0];
+    RenderLine line = snapshot.screenView.lineAt(0);
 
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, line, 0f, false));
-    TerminalRowNode node = cache.nodeForLineForTest(line.id);
+    TerminalRowNode node = cache.nodeForLineForTest(line.key().lineId());
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
         cache.drawOrRecord(canvas, line, 20f, true));
-    assertSame(node, cache.nodeForLineForTest(line.id));
+    assertSame(node, cache.nodeForLineForTest(line.key().lineId()));
     assertEquals(2, ((FakeNode) node).drawCount);
   }
 
@@ -144,10 +148,11 @@ public final class TerminalLineRenderNodeCacheTest {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, snapshot, 1, 1, 1);
-    TerminalLine original = snapshot.screen[2];
+    RenderLine original = snapshot.screenView.lineAt(2);
     cache.drawOrRecord(canvas, original, 0f, false);
-    FakeNode node = (FakeNode) cache.nodeForLineForTest(original.id);
-    TerminalLine changed = line(original.id, original.version + 1, 10);
+    FakeNode node = (FakeNode) cache.nodeForLineForTest(original.key().lineId());
+    RenderLine changed = renderLine(
+        original.key().lineId(), original.key().lineVersion() + 1, 10);
     cache.endFrame();
     begin(cache, snapshot, 1, 1, 1);
 
@@ -164,8 +169,8 @@ public final class TerminalLineRenderNodeCacheTest {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, snapshot, 1, 1, 1);
-    TerminalLine original = textLine(500, 1, 10, "A");
-    TerminalLine changed = textLine(500, 1, 10, "B");
+    RenderLine original = renderLine(500, 1, 10, "A");
+    RenderLine changed = renderLine(500, 1, 10, "B");
     TerminalRenderMetrics.Snapshot metricsBefore = TerminalRenderMetrics.snapshot();
 
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
@@ -196,8 +201,8 @@ public final class TerminalLineRenderNodeCacheTest {
   public void sameIdAndVersionWithDifferentContentRerecordsInNextFrame() {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
-    TerminalLine first = textLine(500, 1, 10, "A");
-    TerminalLine changed = textLine(500, 1, 10, "B");
+    RenderLine first = renderLine(500, 1, 10, "A");
+    RenderLine changed = renderLine(500, 1, 10, "B");
     begin(cache, snapshot, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, first, 0f, false));
@@ -215,7 +220,7 @@ public final class TerminalLineRenderNodeCacheTest {
   public void sameImmutableObjectUsesFastHitAcrossFrames() {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
-    TerminalLine line = textLine(500, 1, 10, "A");
+    RenderLine line = renderLine(500, 1, 10, "A");
     begin(cache, snapshot, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, line, 0f, false));
@@ -232,8 +237,8 @@ public final class TerminalLineRenderNodeCacheTest {
   public void equivalentReconstructedLineHitsWithoutRerecording() {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
-    TerminalLine first = textLine(500, 1, 10, "A");
-    TerminalLine reconstructed = textLine(500, 1, 10, "A");
+    RenderLine first = renderLine(500, 1, 10, "A");
+    RenderLine reconstructed = renderLine(500, 1, 10, "A");
     assertNotSame(first, reconstructed);
     begin(cache, snapshot, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
@@ -256,9 +261,10 @@ public final class TerminalLineRenderNodeCacheTest {
     TerminalLineRenderNodeCache cache = newCache();
     RemoteTerminalModel.RenderSnapshot first = model.renderSnapshot();
     TerminalLine original = first.screen[0];
+    RenderLine originalRender = first.screenView.lineAt(0);
     begin(cache, first, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
-        cache.drawOrRecord(canvas, original, 0f, false));
+        cache.drawOrRecord(canvas, originalRender, 0f, false));
     FakeNode node = (FakeNode) cache.nodeForLineForTest(original.id);
     int recordsAfterBaseline = totalRecordings();
     cache.endFrame();
@@ -272,7 +278,7 @@ public final class TerminalLineRenderNodeCacheTest {
     assertSame(original, replaySnapshot.screen[0]);
     begin(cache, replaySnapshot, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
-        cache.drawOrRecord(canvas, replaySnapshot.screen[0], 0f, false));
+        cache.drawOrRecord(canvas, replaySnapshot.screenView.lineAt(0), 0f, false));
     assertEquals(recordsAfterBaseline, totalRecordings());
     cache.endFrame();
 
@@ -292,7 +298,7 @@ public final class TerminalLineRenderNodeCacheTest {
     assertEquals("changed", changedSnapshot.screen[0].at(0).text);
     begin(cache, changedSnapshot, 1, 1, 1);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
-        cache.drawOrRecord(canvas, changedSnapshot.screen[0], 0f, false));
+        cache.drawOrRecord(canvas, changedSnapshot.screenView.lineAt(0), 0f, false));
     assertSame(node, cache.nodeForLineForTest(original.id));
     assertEquals(recordsAfterBaseline + 1, totalRecordings());
   }
@@ -302,13 +308,17 @@ public final class TerminalLineRenderNodeCacheTest {
     RemoteTerminalModel.RenderSnapshot first = snapshot(40, 80, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, first, 1, 1, 1);
-    for (TerminalLine line : first.screen) cache.drawOrRecord(canvas, line, 0f, false);
+    for (RenderLine line : first.screenView.copyLines()) {
+      cache.drawOrRecord(canvas, line, 0f, false);
+    }
     int recordsBefore = totalRecordings();
     cache.endFrame();
 
     RemoteTerminalModel.RenderSnapshot second = snapshot(40, 80, 1L, "instance-1", 2L);
     begin(cache, second, 1, 1, 1);
-    for (TerminalLine line : second.screen) cache.drawOrRecord(canvas, line, 0f, false);
+    for (RenderLine line : second.screenView.copyLines()) {
+      cache.drawOrRecord(canvas, line, 0f, false);
+    }
 
     assertEquals(1, totalRecordings() - recordsBefore);
     // 离开 screen 的那一行仍在 LRU 内，供它进入 history 时继续命中。
@@ -320,14 +330,16 @@ public final class TerminalLineRenderNodeCacheTest {
     RemoteTerminalModel.RenderSnapshot first = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, first, 1, 1, 1);
-    cache.drawOrRecord(canvas, first.screen[0], 0f, false);
-    TerminalRowNode oldNode = cache.nodeForLineForTest(first.screen[0].id);
+    cache.drawOrRecord(canvas, first.screenView.lineAt(0), 0f, false);
+    TerminalRowNode oldNode = cache.nodeForLineForTest(
+        first.screenView.lineAt(0).key().lineId());
     cache.endFrame();
 
     begin(cache, first, 2, 1, 1);
     assertEquals(0, cache.sizeForTest());
-    cache.drawOrRecord(canvas, first.screen[0], 0f, false);
-    assertNotSame(oldNode, cache.nodeForLineForTest(first.screen[0].id));
+    cache.drawOrRecord(canvas, first.screenView.lineAt(0), 0f, false);
+    assertNotSame(oldNode, cache.nodeForLineForTest(
+        first.screenView.lineAt(0).key().lineId()));
     cache.endFrame();
 
     RemoteTerminalModel.RenderSnapshot nextLayout = snapshot(5, 10, 2L, "instance-1");
@@ -340,16 +352,16 @@ public final class TerminalLineRenderNodeCacheTest {
     RemoteTerminalModel.RenderSnapshot snapshot = snapshot(5, 10, 1L, "instance-1");
     TerminalLineRenderNodeCache cache = newCache();
     begin(cache, snapshot, 1, 1, 1);
-    TerminalLine line = snapshot.screen[0];
+    RenderLine line = snapshot.screenView.lineAt(0);
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
         cache.drawOrRecord(canvas, line, 0f, false));
-    TerminalRowNode recorded = cache.nodeForLineForTest(line.id);
+    TerminalRowNode recorded = cache.nodeForLineForTest(line.key().lineId());
     int recordings = totalRecordings();
     cache.endFrame();
 
     // fullInvalidate 只改变 View 的受损区域；传给缓存的视觉 generation 保持不变。
     begin(cache, snapshot, 1, 1, 1);
-    assertSame(recorded, cache.nodeForLineForTest(line.id));
+    assertSame(recorded, cache.nodeForLineForTest(line.key().lineId()));
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.HIT,
         cache.drawOrRecord(canvas, line, 0f, false));
     assertEquals(recordings, totalRecordings());
@@ -363,7 +375,7 @@ public final class TerminalLineRenderNodeCacheTest {
     assertEquals(384, cache.capacityForTest());
 
     for (int id = 1; id <= 600; id++) {
-      cache.drawOrRecord(canvas, line(id, 1, 10), 0f, true);
+      cache.drawOrRecord(canvas, renderLine(id, 1, 10), 0f, true);
     }
     assertEquals(384, cache.sizeForTest());
     assertTrue(createdNodes.size() <= 384);
@@ -376,12 +388,12 @@ public final class TerminalLineRenderNodeCacheTest {
     begin(cache, snapshot, 1, 1, 1);
     for (int id = 1; id <= cache.capacityForTest(); id++) {
       assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
-          cache.drawOrRecord(canvas, line(id, 1, 10), 0f, true));
+          cache.drawOrRecord(canvas, renderLine(id, 1, 10), 0f, true));
     }
     int recordingsBefore = totalRecordings();
 
     assertEquals(TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE,
-        cache.drawOrRecord(canvas, line(10_000L, 1, 10), 0f, true));
+        cache.drawOrRecord(canvas, renderLine(10_000L, 1, 10), 0f, true));
     assertEquals(recordingsBefore, totalRecordings());
     assertEquals(cache.capacityForTest(), cache.sizeForTest());
     assertEquals(1, cache.victimScanCountForTest());
@@ -452,6 +464,19 @@ public final class TerminalLineRenderNodeCacheTest {
     TerminalCell[] cells = new TerminalCell[columns];
     Arrays.fill(cells, TerminalCell.EMPTY);
     return new TerminalLine(id, version, false, cells);
+  }
+
+  private static RenderLine renderLine(long id, long version, int columns) {
+    return renderLine(id, version, columns, " ");
+  }
+
+  private static RenderLine renderLine(
+      long id, long version, int columns, String text) {
+    CellValue[] cells = new CellValue[columns];
+    cells[0] = new CellValue(text, (byte) 1, null, null);
+    for (int column = 1; column < columns; column++) cells[column] = CellValue.EMPTY;
+    return new RenderLine(
+        new LineKey(id, version), new LineBody(columns, false, cells));
   }
 
   static final class FakeNode implements TerminalRowNode {

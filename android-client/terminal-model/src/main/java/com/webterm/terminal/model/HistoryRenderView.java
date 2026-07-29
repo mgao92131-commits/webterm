@@ -13,4 +13,5 @@ public interface HistoryRenderView extends TerminalHistoryView {
   long estimatedByteCount();
   long firstLoadedSeq();
   SlotState slotStateAt(long logicalIndex);
+  RenderLine renderLineAt(int logicalIndex);
 }

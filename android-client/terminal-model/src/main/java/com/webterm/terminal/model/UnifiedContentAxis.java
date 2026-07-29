@@ -24,11 +24,11 @@ public final class UnifiedContentAxis {
     public final long fromHistorySeq;
     public final long toHistorySeq;
     public final long lineId;
-    public final TerminalLine line;
+    public final RenderLine line;
 
     private Item(Kind kind, long startRow, long rowCount,
                  long fromHistorySeq, long toHistorySeq,
-                 long lineId, TerminalLine line) {
+                 long lineId, RenderLine line) {
       this.kind = kind;
       this.startRow = startRow;
       this.rowCount = rowCount;
@@ -45,27 +45,31 @@ public final class UnifiedContentAxis {
 
   private final List<Item> items;
   private final Map<Long, Long> rowByLineId;
+  private final Map<LineKey, Long> rowByLineKey;
   private final long rowCount;
   private final long historyRowCount;
 
   private UnifiedContentAxis(
       List<Item> items, Map<Long, Long> rowByLineId,
+      Map<LineKey, Long> rowByLineKey,
       long rowCount, long historyRowCount) {
     this.items = Collections.unmodifiableList(items);
     this.rowByLineId = Collections.unmodifiableMap(rowByLineId);
+    this.rowByLineKey = Collections.unmodifiableMap(rowByLineKey);
     this.rowCount = rowCount;
     this.historyRowCount = historyRowCount;
   }
 
   public static UnifiedContentAxis empty() {
     return new UnifiedContentAxis(
-        Collections.emptyList(), Collections.emptyMap(), 0, 0);
+        Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(), 0, 0);
   }
 
   static UnifiedContentAxis build(
       PagedTerminalHistorySnapshot history, ActiveRows activeRows, LineStore lineStore) {
     List<Item> result = new ArrayList<>();
     Map<Long, Long> rowsById = new HashMap<>();
+    Map<LineKey, Long> rowsByKey = new HashMap<>();
     long row = 0;
     HistoryExtent extent = history.extent();
     long nextSeq = extent.isEmpty() ? 1 : extent.firstSeq;
@@ -80,8 +84,10 @@ public final class UnifiedContentAxis {
       TerminalLine canonical = lineStore.line(loaded.line.id);
       if (canonical != null) {
         result.add(new Item(Kind.LOADED_LINE, row, 1,
-            loaded.historySeq, loaded.historySeq, canonical.id, canonical));
+            loaded.historySeq, loaded.historySeq, canonical.id,
+            SemanticLineAdapter.semanticRenderLine(canonical)));
         rowsById.put(canonical.id, row);
+        rowsByKey.put(new LineKey(canonical.id, canonical.version), row);
       } else {
         result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, 1,
             loaded.historySeq, loaded.historySeq, 0, null));
@@ -102,16 +108,19 @@ public final class UnifiedContentAxis {
       if (line == null) {
         throw new IllegalStateException("ActiveRows references missing LineID " + lineId);
       }
-      result.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, lineId, line));
+      result.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, lineId,
+          SemanticLineAdapter.semanticRenderLine(line)));
       rowsById.put(lineId, row);
+      rowsByKey.put(new LineKey(line.id, line.version), row);
       row++;
     }
-    return new UnifiedContentAxis(result, rowsById, row, historyRows);
+    return new UnifiedContentAxis(result, rowsById, rowsByKey, row, historyRows);
   }
 
   static UnifiedContentAxis build(TerminalSurfaceState surface) {
     List<Item> result = new ArrayList<>();
     Map<Long, Long> rowsById = new HashMap<>();
+    Map<LineKey, Long> rowsByKey = new HashMap<>();
     long row = 0;
     HistoryExtent extent = surface.historyCatalog.extent();
     long nextSeq = extent.isEmpty() ? 1 : extent.firstSeq;
@@ -129,10 +138,11 @@ public final class UnifiedContentAxis {
       LineBody body = expected != null && expected.equals(resident.key())
           ? surface.bodyCache.body(expected) : null;
       if (body != null) {
-        TerminalLine line = SemanticLineAdapter.renderLine(expected, seq, body);
+        RenderLine line = new RenderLine(expected, body);
         result.add(new Item(Kind.LOADED_LINE, row, 1,
             seq, seq, expected.lineId(), line));
         rowsById.put(expected.lineId(), row);
+        rowsByKey.put(expected, row);
       } else {
         result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, 1,
             seq, seq, 0, null));
@@ -153,12 +163,13 @@ public final class UnifiedContentAxis {
       if (body == null) {
         throw new IllegalStateException("ActiveRows references missing LineKey " + key);
       }
-      TerminalLine line = SemanticLineAdapter.renderLine(key, 0, body);
+      RenderLine line = new RenderLine(key, body);
       result.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, key.lineId(), line));
       rowsById.put(key.lineId(), row);
+      rowsByKey.put(key, row);
       row++;
     }
-    return new UnifiedContentAxis(result, rowsById, row, historyRows);
+    return new UnifiedContentAxis(result, rowsById, rowsByKey, row, historyRows);
   }
 
   public List<Item> items() {
@@ -175,6 +186,10 @@ public final class UnifiedContentAxis {
 
   public Long rowOfLineId(long lineId) {
     return rowByLineId.get(lineId);
+  }
+
+  public Long rowOfLineKey(LineKey key) {
+    return rowByLineKey.get(key);
   }
 
   public Item itemAtRow(long axisRow) {

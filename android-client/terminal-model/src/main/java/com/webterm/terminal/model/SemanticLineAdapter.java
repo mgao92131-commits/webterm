@@ -59,6 +59,11 @@ final class SemanticLineAdapter {
         key.lineId(), key.lineVersion(), historySeq, body.wrapped, cells);
   }
 
+  static RenderLine semanticRenderLine(TerminalLine line) {
+    if (line == null) return null;
+    return new RenderLine(new LineKey(line.id, line.version), body(line));
+  }
+
   private static LineBody body(TerminalLine line) {
     CellValue[] cells = new CellValue[line.length()];
     for (int column = 0; column < line.length(); column++) {

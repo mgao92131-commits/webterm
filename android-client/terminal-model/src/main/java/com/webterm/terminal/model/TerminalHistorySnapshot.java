@@ -30,6 +30,11 @@ public final class TerminalHistorySnapshot implements HistoryRenderView {
   }
 
   @Override
+  public RenderLine renderLineAt(int index) {
+    return SemanticLineAdapter.semanticRenderLine(lineAt(index));
+  }
+
+  @Override
   public int findSeqIndex(long seq) {
     for (int i = 0; i < lines.size(); i++) {
       if (lines.get(i).historyOrder() == seq) return i;

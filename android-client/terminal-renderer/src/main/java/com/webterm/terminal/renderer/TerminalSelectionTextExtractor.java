@@ -1,9 +1,9 @@
 package com.webterm.terminal.renderer;
 
-import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.HistoryRenderView;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
-import com.webterm.terminal.model.TerminalHistoryView;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 
 import java.util.ArrayList;
@@ -26,7 +26,7 @@ final class TerminalSelectionTextExtractor {
    * @param history   按逻辑 HistorySeq 槽位排列的历史视图；可能为空
    * @param screen    活动屏幕行数组；可能为 null
    */
-  static String extract(TerminalSelection selection, TerminalHistoryView history, TerminalLine[] screen) {
+  static String extract(TerminalSelection selection, HistoryRenderView history, RenderLine[] screen) {
     List<CopyLine> lines = new ArrayList<>();
     TerminalSelection.Anchor start = selection.start;
     TerminalSelection.Anchor end = selection.end;
@@ -49,7 +49,7 @@ final class TerminalSelectionTextExtractor {
   }
 
   private static void appendHistoryRange(List<CopyLine> lines, long startSeq, long endSeq,
-                                         int startCol, int endCol, TerminalHistoryView history) {
+                                         int startCol, int endCol, HistoryRenderView history) {
     if (history == null || history.isEmpty()) return;
     int startIndex = history.findSeqIndex(startSeq);
     if (startIndex < 0) startIndex = 0;
@@ -58,7 +58,7 @@ final class TerminalSelectionTextExtractor {
 
     for (int i = startIndex; i <= endIndex && i < history.size(); i++) {
       long seq = history.seqAt(i);
-      TerminalLine line = history.lineAt(i);
+      RenderLine line = history.renderLineAt(i);
       if (line == null) {
         // 未加载槽位：跳过该行，避免 NPE；不把 LineID 误当 HistorySeq。
         continue;
@@ -72,7 +72,7 @@ final class TerminalSelectionTextExtractor {
   }
 
   private static void appendScreenRange(List<CopyLine> lines, TerminalSelection.Anchor start,
-                                        TerminalSelection.Anchor end, TerminalLine[] screen) {
+                                        TerminalSelection.Anchor end, RenderLine[] screen) {
     if (screen == null) return;
     for (int row = start.screenRow; row <= end.screenRow && row < screen.length; row++) {
       int c0 = row == start.screenRow ? start.col : 0;
@@ -81,10 +81,10 @@ final class TerminalSelectionTextExtractor {
     }
   }
 
-  private static void appendScreenRow(List<CopyLine> lines, TerminalLine[] screen,
+  private static void appendScreenRow(List<CopyLine> lines, RenderLine[] screen,
                                       int row, int colStart, int colEnd) {
     if (screen == null || row < 0 || row >= screen.length) return;
-    TerminalLine line = screen[row];
+    RenderLine line = screen[row];
     if (line == null) {
       lines.add(new CopyLine("", false));
       return;
@@ -92,17 +92,17 @@ final class TerminalSelectionTextExtractor {
     appendLine(lines, line, colStart, colEnd);
   }
 
-  private static void appendLine(List<CopyLine> lines, TerminalLine line, int colStart, int colEnd) {
+  private static void appendLine(List<CopyLine> lines, RenderLine line, int colStart, int colEnd) {
     if (line == null) return;
     StringBuilder text = new StringBuilder();
     int start = Math.max(0, Math.min(line.length(), colStart));
     int end = Math.max(0, Math.min(line.length(), colEnd));
     for (int i = start; i < end; i++) {
-      TerminalCell cell = line.at(i);
+      CellValue cell = line.at(i);
       if (cell == null || cell.isSpacer()) continue;
-      String value = cell.text;
+      String value = cell.text();
       text.append(value == null || value.isEmpty() ? " " : value);
     }
-    lines.add(new CopyLine(text.toString(), line.wrapped));
+    lines.add(new CopyLine(text.toString(), line.body().wrapped));
   }
 }

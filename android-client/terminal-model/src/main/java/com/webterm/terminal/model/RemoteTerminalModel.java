@@ -1338,6 +1338,7 @@ public final class RemoteTerminalModel {
     public final int columns;
     public final TerminalBufferKind activeBuffer;
     public final TerminalLine[] screen;
+    public final ScreenRenderView screenView;
     /** Sparse immutable history snapshot for indexed rendering. */
     public final HistoryRenderView history;
     /** 历史、缺失占位和 ActiveRows 组成的单一纵向坐标空间。 */
@@ -1364,6 +1365,11 @@ public final class RemoteTerminalModel {
       this.columns = columns;
       this.activeBuffer = activeBuffer;
       this.screen = screen;
+      RenderLine[] semanticRows = new RenderLine[screen == null ? 0 : screen.length];
+      for (int row = 0; row < semanticRows.length; row++) {
+        semanticRows[row] = SemanticLineAdapter.semanticRenderLine(screen[row]);
+      }
+      this.screenView = new ScreenRenderView(semanticRows);
       this.history = history;
       this.contentAxis = contentAxis;
       this.cursor = cursor;

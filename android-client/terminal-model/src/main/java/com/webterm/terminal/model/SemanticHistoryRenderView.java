@@ -33,6 +33,15 @@ public final class SemanticHistoryRenderView implements HistoryRenderView {
   }
 
   @Override
+  public RenderLine renderLineAt(int index) {
+    long seq = seqAt(index);
+    LineKey key = catalog.key(seq);
+    if (key == null || cache.historyResidency().key(seq) == null) return null;
+    LineBody body = cache.body(key);
+    return body == null ? null : new RenderLine(key, body);
+  }
+
+  @Override
   public int findSeqIndex(long seq) {
     if (!extent().contains(seq)) return -1;
     long index = seq - firstSeq();

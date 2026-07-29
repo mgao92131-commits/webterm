@@ -7,7 +7,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 
@@ -63,7 +63,7 @@ public final class TerminalLineRenderNodeCache {
                   @NonNull RemoteTerminalRenderer renderer,
                   @NonNull TerminalPalette palette, int canvasBackground,
                   int fontGeneration, int paletteGeneration, int styleGeneration) {
-    int rows = snapshot.screen != null ? snapshot.screen.length : 0;
+    int rows = snapshot.screenView.size();
     int nextCapacity = clamp(rows * 4, MIN_CAPACITY, MAX_CAPACITY);
     int nextColumns = snapshot.columns;
     // 行节点高度必须与整数 lineHeight 一致，保证录制内容铺满单元格且与
@@ -103,14 +103,14 @@ public final class TerminalLineRenderNodeCache {
     trimToCapacity();
   }
 
-  LineDrawResult drawOrRecord(@NonNull Canvas canvas, @Nullable TerminalLine line,
+  LineDrawResult drawOrRecord(@NonNull Canvas canvas, @Nullable RenderLine line,
                               float rowTop, boolean historyLine) {
     if (line == null || frameRenderer == null || framePalette == null
         || widthPx <= 0 || heightPx <= 0) {
       return LineDrawResult.UNAVAILABLE;
     }
 
-    CachedLine cached = lines.get(line.id);
+    CachedLine cached = lines.get(line.key().lineId());
     if (cached != null && cached.node.hasDisplayList() && matchesRecordedLine(cached, line)) {
       cached.lastUsedFrame = frameNumber;
       cached.lastDrawnFrame = frameNumber;
@@ -129,7 +129,7 @@ public final class TerminalLineRenderNodeCache {
         return LineDrawResult.UNAVAILABLE;
       }
     } else {
-      cached = obtainEntry(line.id);
+      cached = obtainEntry(line.key().lineId());
       if (cached == null) return LineDrawResult.UNAVAILABLE;
     }
     if (!record(cached, line)) return LineDrawResult.UNAVAILABLE;
@@ -194,7 +194,7 @@ public final class TerminalLineRenderNodeCache {
     return victim;
   }
 
-  private boolean record(@NonNull CachedLine cached, @NonNull TerminalLine line) {
+  private boolean record(@NonNull CachedLine cached, @NonNull RenderLine line) {
     cached.node.setPosition(0, 0, widthPx, heightPx);
     long startedNanos = System.nanoTime();
     Canvas recordingCanvas = cached.node.beginRecording(widthPx, heightPx);
@@ -206,8 +206,8 @@ public final class TerminalLineRenderNodeCache {
       TerminalRenderMetrics.renderNodeRecordDuration(System.nanoTime() - startedNanos);
     }
     if (!cached.node.hasDisplayList()) return false;
-    cached.lineId = line.id;
-    cached.lineVersion = line.version;
+    cached.lineId = line.key().lineId();
+    cached.lineVersion = line.key().lineVersion();
     cached.recordedLine = line;
     frameRowMisses++;
     return true;
@@ -232,7 +232,7 @@ public final class TerminalLineRenderNodeCache {
   long allPinnedFallbackCountForTest() { return allPinnedFallbackCount; }
 
   @Nullable
-  TerminalLine recordedLineForTest(long lineId) {
+  RenderLine recordedLineForTest(long lineId) {
     CachedLine cached = lines.get(lineId);
     return cached != null ? cached.recordedLine : null;
   }
@@ -245,19 +245,19 @@ public final class TerminalLineRenderNodeCache {
 
   /** 同一不可变行对象是热路径；只有恢复/分页等重建对象时才比较 cells。 */
   private static boolean matchesRecordedLine(
-      @NonNull CachedLine cached, @NonNull TerminalLine incoming) {
-    TerminalLine recorded = cached.recordedLine;
+      @NonNull CachedLine cached, @NonNull RenderLine incoming) {
+    RenderLine recorded = cached.recordedLine;
     return recorded != null
-        && cached.lineId == incoming.id
-        && cached.lineVersion == incoming.version
-        && (recorded == incoming || recorded.sameContent(incoming));
+        && cached.lineId == incoming.key().lineId()
+        && cached.lineVersion == incoming.key().lineVersion()
+        && (recorded == incoming || recorded.body().equals(incoming.body()));
   }
 
   private static final class CachedLine {
     final TerminalRowNode node;
     long lineId;
     long lineVersion;
-    @Nullable TerminalLine recordedLine;
+    @Nullable RenderLine recordedLine;
     long lastUsedFrame;
     long lastDrawnFrame = Long.MIN_VALUE;
 

@@ -9,17 +9,17 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.RemoteTerminalModel;
-import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalHistoryView;
 import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.SlotState;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalSelection;
-import com.webterm.terminal.model.TerminalStyle;
+import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalBufferKind;
@@ -130,7 +130,7 @@ public final class RemoteTerminalRenderer {
                      @Nullable TerminalLineRenderNodeCache lineCache) {
     long renderStartedNanos = System.nanoTime();
     try {
-    TerminalLine[] screen = model.screen;
+    RenderLine[] screen = model.screenView.copyLines();
     if (screen == null || lineHeight <= 0 || cellWidth <= 0) return;
 
     UnifiedContentAxis axis = model.contentAxis;
@@ -189,7 +189,7 @@ public final class RemoteTerminalRenderer {
         continue;
       }
 
-      TerminalLine line = item.line;
+      RenderLine line = item.line;
       int screenRow = active ? (int) (axisRow - historyRowsLong) : -1;
       long historySeq = active ? 0 : item.fromHistorySeq;
       if (!active) {
@@ -279,13 +279,13 @@ public final class RemoteTerminalRenderer {
   }
 
   private void drawLine(Canvas canvas, int columns, TerminalPalette palette,
-                        TerminalLine line, float y,
+                        RenderLine line, float y,
                         long historySeq, int screenRow, TerminalSelection selection,
                         TerminalCursor cursor, boolean cursorVisible, int canvasBackground) {
     if (line == null) return;
     int lineLength = Math.min(line.length(), columns);
     for (int col = 0; col < lineLength; ) {
-      TerminalCell cell = line.at(col);
+      CellValue cell = line.at(col);
       if (cell == null || cell.isSpacer()) {
         col++;
         continue;
@@ -296,10 +296,10 @@ public final class RemoteTerminalRenderer {
       if (startsBatchableAsciiRun(line, lineLength, selection, historySeq, screenRow, col,
           cursor, cursorVisible)) {
         int runStart = col;
-        TerminalStyle runStyle = styleOf(cell);
+        StyleValue runStyle = styleOf(cell);
         plainAsciiRun.setLength(0);
         do {
-          plainAsciiRun.append(line.at(col).text.charAt(0));
+          plainAsciiRun.append(line.at(col).text().charAt(0));
           col++;
         } while (col < lineLength && java.util.Objects.equals(
                 styleOf(line.at(col)), runStyle)
@@ -317,7 +317,7 @@ public final class RemoteTerminalRenderer {
       boolean selected = isCellSelected(selection, historySeq, screenRow, col, columnWidth);
       boolean insideCursor = cursorVisible && screenRow == cursor.row
           && (cursor.col == col || (columnWidth == 2 && cursor.col == col + 1));
-      int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
+      int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
       boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, columnWidth,
           hasRightPadding(line, col, columnWidth, styleOf(cell)));
       drawCell(canvas, palette, cell, col, y, selected, insideCursor, cursor,
@@ -331,11 +331,11 @@ public final class RemoteTerminalRenderer {
    * 用于 RenderNode 行缓存录制，保证光标闪烁和选择变化不会触发整行重录。
    */
   void drawTerminalLineContent(Canvas canvas, int columns, TerminalPalette palette,
-                               TerminalLine line, float y, int canvasBackground) {
+                               RenderLine line, float y, int canvasBackground) {
     if (line == null) return;
     int lineLength = Math.min(line.length(), columns);
     for (int col = 0; col < lineLength; ) {
-      TerminalCell cell = line.at(col);
+      CellValue cell = line.at(col);
       if (cell == null || cell.isSpacer()) {
         col++;
         continue;
@@ -345,10 +345,10 @@ public final class RemoteTerminalRenderer {
       if (startsBatchableAsciiRun(line, lineLength, null, 0, -1, col,
           null, false)) {
         int runStart = col;
-        TerminalStyle runStyle = styleOf(cell);
+        StyleValue runStyle = styleOf(cell);
         plainAsciiRun.setLength(0);
         do {
-          plainAsciiRun.append(line.at(col).text.charAt(0));
+          plainAsciiRun.append(line.at(col).text().charAt(0));
           col++;
         } while (col < lineLength && java.util.Objects.equals(
                 styleOf(line.at(col)), runStyle)
@@ -361,7 +361,7 @@ public final class RemoteTerminalRenderer {
         col = runStart;
       }
       int columnWidth = cell.isWideStart() ? 2 : 1;
-      int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
+      int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
       boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, columnWidth,
           hasRightPadding(line, col, columnWidth, styleOf(cell)));
       drawCell(canvas, palette, cell, col, y, false, false, null,
@@ -372,13 +372,13 @@ public final class RemoteTerminalRenderer {
 
   /** 在已绘制的行上追加选择高亮覆盖层。 */
   private void drawSelectionOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
-                                          TerminalLine line, float y, long historySeq, int screenRow,
+                                          RenderLine line, float y, long historySeq, int screenRow,
                                           TerminalSelection selection, int canvasBackground) {
     if (line == null || selection == null) return;
     TerminalSelection normalized = selection.normalized();
     int lineLength = Math.min(line.length(), columns);
     for (int col = 0; col < lineLength; ) {
-      TerminalCell cell = line.at(col);
+      CellValue cell = line.at(col);
       if (cell == null || cell.isSpacer()) {
         col++;
         continue;
@@ -397,18 +397,18 @@ public final class RemoteTerminalRenderer {
 
   /** 在已绘制的行上追加光标覆盖层。 */
   private void drawCursorOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
-                                       TerminalLine line, float y, int screenRow,
+                                       RenderLine line, float y, int screenRow,
                                        TerminalCursor cursor, int canvasBackground) {
     if (line == null || cursor == null || !cursor.visible || screenRow != cursor.row
         || cursor.col < 0 || cursor.col >= columns) {
       return;
     }
     int col = cursor.col;
-    TerminalCell cell = col < line.length() ? line.at(col) : null;
+    CellValue cell = col < line.length() ? line.at(col) : null;
     // 光标落在宽字符右半（spacer 列）时归一到宽字符起始格：整格 2 列高亮，
     // 与 drawCell 旧路径 `cursor.col == col + 1` 的块光标行为一致。
     if (cell != null && cell.isSpacer() && col > 0) {
-      TerminalCell left = line.at(col - 1);
+      CellValue left = line.at(col - 1);
       if (left != null && left.isWideStart()) {
         col--;
         cell = left;
@@ -429,7 +429,7 @@ public final class RemoteTerminalRenderer {
     } else {
       // BLOCK 光标：复用 drawCell 的 insideCursor 路径——先画反色背景与不透明光标矩形，
       // 再以反色前景重绘字形，保证块光标下的字符可见（对齐旧 drawLine 路径）。
-      int codePoint = cell.text == null || cell.text.isEmpty() ? ' ' : cell.text.codePointAt(0);
+      int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
       boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint,
           columnWidth, hasRightPadding(line, col, columnWidth, styleOf(cell)));
       drawCell(canvas, palette, cell, col, y, false, true, cursor, preserveAspect,
@@ -437,25 +437,25 @@ public final class RemoteTerminalRenderer {
     }
   }
 
-  private static boolean canBatchAscii(TerminalCell cell, TerminalSelection selection,
+  private static boolean canBatchAscii(CellValue cell, TerminalSelection selection,
                                        long historySeq, int screenRow, int col,
                                        TerminalCursor cursor, boolean cursorVisible) {
     if (cell == null || cell.isSpacer() || cell.isWideStart()
-        || cell.text == null || cell.text.length() != 1) return false;
-    char c = cell.text.charAt(0);
+        || cell.text().length() != 1) return false;
+    char c = cell.text().charAt(0);
     if (c < ' ' || c > '~') return false;
     if (isCellSelected(selection, historySeq, screenRow, col, 1)) return false;
     return !cursorVisible || screenRow != cursor.row || cursor.col != col;
   }
 
-  private static boolean startsBatchableAsciiRun(TerminalLine line, int lineLength,
+  private static boolean startsBatchableAsciiRun(RenderLine line, int lineLength,
                                                  TerminalSelection selection, long historySeq,
                                                  int screenRow, int col, TerminalCursor cursor,
                                                  boolean cursorVisible) {
     if (col + 2 >= lineLength) return false;
-    TerminalStyle style = styleOf(line.at(col));
+    StyleValue style = styleOf(line.at(col));
     for (int candidate = col; candidate < col + 3; candidate++) {
-      TerminalCell cell = line.at(candidate);
+      CellValue cell = line.at(candidate);
       if (cell == null || !java.util.Objects.equals(
               styleOf(cell), style)
           || !canBatchAscii(cell, selection, historySeq, screenRow,
@@ -466,10 +466,10 @@ public final class RemoteTerminalRenderer {
 
   /** @return true if the run was drawn; false when glyph scaling requires the per-cell path. */
   private boolean drawAsciiRun(Canvas canvas, TerminalPalette palette,
-                               @Nullable TerminalStyle style, CharSequence text, int startCol,
+                               @Nullable StyleValue style, CharSequence text, int startCol,
                                float rowY, int canvasBackground) {
-    TerminalColor fgColor = style != null ? style.fg : palette.defaultFg;
-    TerminalColor bgColor = style != null ? style.bg : palette.defaultBg;
+    TerminalColor fgColor = style != null ? style.fg() : palette.defaultFg;
+    TerminalColor bgColor = style != null ? style.bg() : palette.defaultBg;
     if (palette.reverseVideo ^ (style != null && style.reverse())) {
       TerminalColor swap = fgColor;
       fgColor = bgColor;
@@ -509,8 +509,8 @@ public final class RemoteTerminalRenderer {
     }
 
     if (style != null && (style.underline() || style.doubleUnderline())) {
-      textPaint.setColor(style.underlineColor != null
-          ? resolveColor(palette, style.underlineColor) : fg);
+      textPaint.setColor(style.underlineColor() != null
+          ? resolveColor(palette, style.underlineColor()) : fg);
       float underlineY = rowY + lineHeight - 2;
       canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
       if (style.doubleUnderline()) {
@@ -526,12 +526,12 @@ public final class RemoteTerminalRenderer {
   }
 
   private void drawCell(Canvas canvas, TerminalPalette palette,
-                        TerminalCell cell, int col, float rowY, boolean selected,
+                        CellValue cell, int col, float rowY, boolean selected,
                         boolean insideCursor, TerminalCursor cursor, boolean preserveAspect,
                         int canvasBackground) {
-    TerminalStyle style = styleOf(cell);
-    TerminalColor fgColor = style != null ? style.fg : palette.defaultFg;
-    TerminalColor bgColor = style != null ? style.bg : palette.defaultBg;
+    StyleValue style = styleOf(cell);
+    TerminalColor fgColor = style != null ? style.fg() : palette.defaultFg;
+    TerminalColor bgColor = style != null ? style.bg() : palette.defaultBg;
     boolean blockCursor = insideCursor && cursor.shape == TerminalCursor.Shape.BLOCK;
     // Text selection is a view-layer highlight, not an ANSI inverse-video mode.
     // Reversing every individual cell makes CJK/emoji and styled TUI runs lose
@@ -570,8 +570,8 @@ public final class RemoteTerminalRenderer {
       }
     }
 
-    String text = cell.text;
-    if (text == null || text.isEmpty()) text = " ";
+    String text = cell.text();
+    if (text.isEmpty()) text = " ";
     // A terminal's common case is an unstyled blank cell. Its background was
     // already handled above, so measuring and drawing a space per cell only
     // burns UI-thread time without changing pixels.
@@ -598,8 +598,8 @@ public final class RemoteTerminalRenderer {
     }
 
     if (style != null && (style.underline() || style.doubleUnderline())) {
-      textPaint.setColor(style.underlineColor != null
-          ? resolveColor(palette, style.underlineColor) : fg);
+      textPaint.setColor(style.underlineColor() != null
+          ? resolveColor(palette, style.underlineColor()) : fg);
       float underlineY = rowY + lineHeight - 2;
       canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
       if (style.doubleUnderline()) {
@@ -619,17 +619,17 @@ public final class RemoteTerminalRenderer {
   }
 
   private boolean hasRightPadding(
-      TerminalLine line, int col, int width, TerminalStyle style) {
+      RenderLine line, int col, int width, StyleValue style) {
     int nextCol = col + width;
     if (nextCol >= line.length()) return false;
-    TerminalCell next = line.at(nextCol);
+    CellValue next = line.at(nextCol);
     return next != null && !next.isSpacer()
         && java.util.Objects.equals(styleOf(next), style)
-        && (next.text == null || next.text.isEmpty() || " ".equals(next.text));
+        && (next.text().isEmpty() || " ".equals(next.text()));
   }
 
-  private static TerminalStyle styleOf(TerminalCell cell) {
-    return cell == null ? null : cell.style;
+  private static StyleValue styleOf(CellValue cell) {
+    return cell == null ? null : cell.style();
   }
 
   private static boolean isCellSelected(TerminalSelection selection, long historySeq, int screenRow,

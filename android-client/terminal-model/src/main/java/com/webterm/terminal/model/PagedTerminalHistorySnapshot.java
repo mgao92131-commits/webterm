@@ -125,6 +125,11 @@ public final class PagedTerminalHistorySnapshot implements HistoryRenderView {
   }
 
   @Override
+  public RenderLine renderLineAt(int logicalIndex) {
+    return SemanticLineAdapter.semanticRenderLine(lineAt(logicalIndex));
+  }
+
+  @Override
   public long seqAt(int index) {
     return seqAt((long) index);
   }

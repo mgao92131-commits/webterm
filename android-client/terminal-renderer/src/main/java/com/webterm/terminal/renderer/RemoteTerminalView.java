@@ -31,12 +31,12 @@ import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.capture.CapturedScreenshot;
 import com.webterm.terminal.model.capture.CapturedViewState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
-import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalHistoryView;
 import com.webterm.terminal.model.HistoryRenderView;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.TerminalBufferKind;
@@ -302,22 +302,20 @@ public final class RemoteTerminalView extends View {
         || previousSnapshot.activeBuffer != nextSnapshot.activeBuffer) {
       return null;
     }
-    TerminalLine previousLine;
+    RenderLine previousLine;
     if (anchor.historySeq != 0) {
       int index = previousSnapshot.history.findSeqIndex(anchor.historySeq);
-      previousLine = index >= 0 ? previousSnapshot.history.lineAt(index) : null;
+      previousLine = index >= 0 ? previousSnapshot.history.renderLineAt(index) : null;
     } else {
-      TerminalLine[] screen = previousSnapshot.screen;
-      previousLine = screen != null
-          && anchor.screenRow >= 0
-          && anchor.screenRow < screen.length
-          ? screen[anchor.screenRow]
+      previousLine = anchor.screenRow >= 0
+          && anchor.screenRow < previousSnapshot.screenView.size()
+          ? previousSnapshot.screenView.lineAt(anchor.screenRow)
           : null;
     }
     if (previousLine == null) return null;
 
     UnifiedContentAxis axis = nextSnapshot.contentAxis;
-    Long axisRow = axis.rowOfLineId(previousLine.id);
+    Long axisRow = axis.rowOfLineKey(previousLine.key());
     if (axisRow == null) return null;
     UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
     if (item.kind == UnifiedContentAxis.Kind.LOADED_LINE) {
@@ -760,7 +758,7 @@ public final class RemoteTerminalView extends View {
       return;
     }
 
-    int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
+    int screenRows = snapshot.screenView.size();
     int historyRows = history.size();
     float scrollOffset = viewportOffset(snapshot);
     float screenTop = RemoteTerminalRenderer.screenTopY(
@@ -798,8 +796,7 @@ public final class RemoteTerminalView extends View {
   @androidx.annotation.VisibleForTesting
   int maxScrollOffsetPixels(@Nullable RemoteTerminalModel.RenderSnapshot snapshot) {
     if (snapshot == null || snapshot.activeBuffer == TerminalBufferKind.ALTERNATE) return 0;
-    TerminalLine[] screen = snapshot.screen;
-    int screenRows = screen != null ? screen.length : 0;
+    int screenRows = snapshot.screenView.size();
     int historyRows = snapshot.history.size();
     int totalRows = historyRows + screenRows;
     float contentHeight = totalRows * lineHeight();
@@ -982,7 +979,7 @@ public final class RemoteTerminalView extends View {
       boolean geometryChanged,
       @NonNull InvalidationPlan plan) {
     plan.reset();
-    if (getWidth() <= 0 || getHeight() <= 0 || snapshot.screen == null
+    if (getWidth() <= 0 || getHeight() <= 0
         || snapshot.activeBuffer == null
         || dirty.fullInvalidate || geometryChanged || dirty.geometryChanged
         || dirty.activeBufferChanged || dirty.paletteChanged || dirty.modesChanged) {
@@ -1000,9 +997,9 @@ public final class RemoteTerminalView extends View {
     int snapshotViewportOffset = viewport.derivedScrollOffsetPixels(
         snapshot, lineHeight, maxScrollOffsetPixels(snapshot));
     float screenTop = lineHeight > 0f ? RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
-        snapshot.screen.length, lineHeight, renderer.getTopInset(),
+        snapshot.screenView.size(), lineHeight, renderer.getTopInset(),
         snapshotViewportOffset) : 0f;
-    float screenBottom = screenTop + snapshot.screen.length * lineHeight;
+    float screenBottom = screenTop + snapshot.screenView.size() * lineHeight;
     // 历史可见区域只可能是 [topInset, screenTop)，当 followTail 时 screenTop == topInset，
     // 该区域为空，因此 history-only 不应触发任何重绘。
     boolean visibleHistoryChanged = dirty.historyChanged
@@ -1045,7 +1042,7 @@ public final class RemoteTerminalView extends View {
         buildScreenRegion(plan, screenTop, screenBottom);
         return plan;
       }
-      buildPartialRows(plan, dirty, snapshot.screen.length, screenTop, lineHeight);
+      buildPartialRows(plan, dirty, snapshot.screenView.size(), screenTop, lineHeight);
       if (plan.result == InvalidationResult.FULL) {
         buildScreenRegion(plan, screenTop, screenBottom);
       }
@@ -1053,7 +1050,7 @@ public final class RemoteTerminalView extends View {
     }
 
     if (dirty.cursorChanged) {
-      buildPartialRows(plan, dirty, snapshot.screen.length, screenTop, lineHeight);
+      buildPartialRows(plan, dirty, snapshot.screenView.size(), screenTop, lineHeight);
       return plan;
     }
 
@@ -1184,7 +1181,7 @@ public final class RemoteTerminalView extends View {
 
   private void expandSelectionToWord() {
     if (selectionStart == null) return;
-    TerminalLine line = lineAt(selectionStart);
+    RenderLine line = lineAt(selectionStart);
     if (line == null) return;
     int startCol = selectionStart.col;
     int endCol = selectionStart.col + 1;
@@ -1294,10 +1291,10 @@ public final class RemoteTerminalView extends View {
     if (cellW <= 0 || lineH <= 0) return null;
     int col = Math.max(0, Math.min(cols - 1, (int) (x / cellW)));
 
-    TerminalLine[] screen = snapshot.screen;
-    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+    RenderLine[] screen = snapshot.screenView.copyLines();
+    HistoryRenderView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
-    int screenRows = screen != null ? screen.length : 0;
+    int screenRows = screen.length;
     int historyRows = history.size();
     if (screenRows == 0 && historyRows == 0) return null;
     float scrollOffset = viewportOffset(snapshot);
@@ -1315,7 +1312,7 @@ public final class RemoteTerminalView extends View {
     if (historyRows == 0) return null;
     int historyIndex = (int) ((y - contentTopY) / lineH);
     historyIndex = Math.max(0, Math.min(historyRows - 1, historyIndex));
-    TerminalLine line = history.lineAt(historyIndex);
+    RenderLine line = history.renderLineAt(historyIndex);
     // 稀疏分页历史下，命中的逻辑行可能尚未加载（UNLOADED）或已被裁剪（UNAVAILABLE），
     // lineAt 返回 null。此时无法锚定选择，安全返回 null 让上层（selectWordAt/长按）退出。
     if (line == null) return null;
@@ -1324,11 +1321,11 @@ public final class RemoteTerminalView extends View {
     return new TerminalSelection.Anchor(historySeq, -1, normalizeSelectionColumn(line, col));
   }
 
-  private int normalizeSelectionColumn(@Nullable TerminalLine line, int col) {
+  private int normalizeSelectionColumn(@Nullable RenderLine line, int col) {
     if (line == null || col <= 0 || col >= line.length()) return col;
-    TerminalCell cell = line.at(col);
+    CellValue cell = line.at(col);
     if (cell != null && cell.isSpacer()) {
-      TerminalCell previous = line.at(col - 1);
+      CellValue previous = line.at(col - 1);
       if (previous != null && previous.isWideStart()) return col - 1;
     }
     return col;
@@ -1337,7 +1334,7 @@ public final class RemoteTerminalView extends View {
   private void selectWordAt(float x, float y) {
     TerminalSelection.Anchor anchor = pointToAnchor(x, y);
     if (anchor == null) return;
-    TerminalLine line = lineAt(anchor);
+    RenderLine line = lineAt(anchor);
     if (line == null) return;
     int startCol = anchor.col;
     int endCol = anchor.col + 1;
@@ -1353,22 +1350,21 @@ public final class RemoteTerminalView extends View {
     invalidateSelectionTransition();
   }
 
-  private boolean isWordBoundary(TerminalCell cell) {
+  private boolean isWordBoundary(CellValue cell) {
     if (cell == null) return true;
-    String text = cell.text;
+    String text = cell.text();
     return text == null || text.isEmpty() || text.equals(" ") || text.equals("\t");
   }
 
-  private TerminalLine lineAt(TerminalSelection.Anchor anchor) {
+  private RenderLine lineAt(TerminalSelection.Anchor anchor) {
     if (renderedSnapshot == null) return null;
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (anchor.historySeq != 0) {
       int index = snapshot.history.findSeqIndex(anchor.historySeq);
-      return index >= 0 ? snapshot.history.lineAt(index) : null;
+      return index >= 0 ? snapshot.history.renderLineAt(index) : null;
     }
-    TerminalLine[] screen = snapshot.screen;
-    if (screen != null && anchor.screenRow >= 0 && anchor.screenRow < screen.length) {
-      return screen[anchor.screenRow];
+    if (anchor.screenRow >= 0 && anchor.screenRow < snapshot.screenView.size()) {
+      return snapshot.screenView.lineAt(anchor.screenRow);
     }
     return null;
   }
@@ -1377,9 +1373,10 @@ public final class RemoteTerminalView extends View {
     if (selectionStart == null || selectionEnd == null || renderedSnapshot == null) return "";
     TerminalSelection normalized = new TerminalSelection(selectionStart, selectionEnd).normalized();
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
+    HistoryRenderView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
-    return TerminalSelectionTextExtractor.extract(normalized, history, snapshot.screen);
+    return TerminalSelectionTextExtractor.extract(
+        normalized, history, snapshot.screenView.copyLines());
   }
 
   private void copySelectionToClipboard() {
@@ -1571,7 +1568,7 @@ public final class RemoteTerminalView extends View {
   }
 
   private float contentTopY(@NonNull RemoteTerminalModel.RenderSnapshot snapshot) {
-    int screenRows = snapshot.screen != null ? snapshot.screen.length : 0;
+    int screenRows = snapshot.screenView.size();
     int historyRows = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? 0 : snapshot.history.size();
     return RemoteTerminalRenderer.contentTopY(getHeight(), historyRows, screenRows,
@@ -1604,8 +1601,8 @@ public final class RemoteTerminalView extends View {
   private static int cursorRow(
       @Nullable RemoteTerminalModel.RenderSnapshot snapshot) {
     if (snapshot == null || snapshot.cursor == null || !snapshot.cursor.visible
-        || snapshot.screen == null || snapshot.cursor.row < 0
-        || snapshot.cursor.row >= snapshot.screen.length) {
+        || snapshot.cursor.row < 0
+        || snapshot.cursor.row >= snapshot.screenView.size()) {
       return -1;
     }
     return snapshot.cursor.row;
@@ -1630,19 +1627,19 @@ public final class RemoteTerminalView extends View {
 
   private void invalidateCursorRows(int previousRow, int currentRow) {
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    if (snapshot == null || snapshot.screen == null
+    if (snapshot == null
         || getWidth() <= 0 || getHeight() <= 0) {
       return;
     }
-    boolean previousValid = previousRow >= 0 && previousRow < snapshot.screen.length;
-    boolean currentValid = currentRow >= 0 && currentRow < snapshot.screen.length;
+    boolean previousValid = previousRow >= 0 && previousRow < snapshot.screenView.size();
+    boolean currentValid = currentRow >= 0 && currentRow < snapshot.screenView.size();
     if (!previousValid && !currentValid) return;
     TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : snapshot.history;
     float rowHeight = renderer.getLineHeight();
     if (rowHeight <= 0f) return;
     float screenTop = RemoteTerminalRenderer.screenTopY(
-        getHeight(), history.size(), snapshot.screen.length, rowHeight,
+        getHeight(), history.size(), snapshot.screenView.size(), rowHeight,
         renderer.getTopInset(),
         viewportOffset(snapshot));
     int firstRow = previousValid ? previousRow : currentRow;
@@ -1676,8 +1673,8 @@ public final class RemoteTerminalView extends View {
   public float getKeyboardProtectedBottomY() {
     if (renderedSnapshot == null) return 0f;
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    TerminalLine[] screen = snapshot.screen;
-    if (screen == null || screen.length == 0) return 0f;
+    RenderLine[] screen = snapshot.screenView.copyLines();
+    if (screen.length == 0) return 0f;
     int screenRows = screen.length;
     int lastContentRow = 0;
     for (int row = screenRows - 1; row >= 0; row--) {
@@ -1697,12 +1694,12 @@ public final class RemoteTerminalView extends View {
     return contentTop + (historyRows + protectedRow + 1) * lineH;
   }
 
-  private boolean isLineBlank(@Nullable TerminalLine line) {
+  private boolean isLineBlank(@Nullable RenderLine line) {
     if (line == null) return true;
     for (int i = 0; i < line.length(); i++) {
-      TerminalCell cell = line.at(i);
+      CellValue cell = line.at(i);
       if (cell == null || cell.isSpacer()) continue;
-      String text = cell.text;
+      String text = cell.text();
       if (text != null && !text.isEmpty() && !text.equals(" ") && !text.equals("\t")) return false;
     }
     return true;

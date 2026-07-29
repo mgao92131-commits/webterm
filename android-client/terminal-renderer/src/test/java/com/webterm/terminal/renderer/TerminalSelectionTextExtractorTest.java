@@ -1,6 +1,10 @@
 package com.webterm.terminal.renderer;
 
 import com.webterm.terminal.model.TerminalCell;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.PagedTerminalHistory;
@@ -251,7 +255,25 @@ public class TerminalSelectionTextExtractorTest {
   }
 
   private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {
-    return TerminalSelectionTextExtractor.extract(sel, snapshot(history), screen);
+    RenderLine[] renderScreen = null;
+    if (screen != null) {
+      renderScreen = new RenderLine[screen.length];
+      for (int row = 0; row < screen.length; row++) {
+        TerminalLine line = screen[row];
+        if (line == null) continue;
+        CellValue[] cells = new CellValue[Math.max(1, line.length())];
+        Arrays.fill(cells, CellValue.EMPTY);
+        for (int column = 0; column < line.length(); column++) {
+          TerminalCell cell = line.at(column);
+          cells[column] = new CellValue(
+              cell.text, cell.width, null, null);
+        }
+        renderScreen[row] = new RenderLine(
+            new LineKey(100_000L + row, Math.max(1, line.version)),
+            new LineBody(cells.length, line.wrapped, cells));
+      }
+    }
+    return TerminalSelectionTextExtractor.extract(sel, snapshot(history), renderScreen);
   }
 
   private static TerminalHistorySnapshot snapshot(List<TerminalLine> lines) {
