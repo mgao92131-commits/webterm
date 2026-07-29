@@ -23,7 +23,7 @@ public final class TerminalRuntimeKey {
     this.relayDeviceId = clean(relayDeviceId);
     // 归一化为本地会话 ID：上游入口可能传 "d2:s6" 或 "s6"，两者指向同一终端，
     // 通道层（TerminalChannel）也会剥离前缀，Key 必须同样归一，避免双 Runtime 互相接管。
-    this.sessionId = SessionIds.local(clean(sessionId), this.relayDeviceId);
+    this.sessionId = SessionIds.agentLocal(clean(sessionId), this.relayDeviceId);
   }
 
   private static String clean(String value) {

@@ -649,8 +649,8 @@ public final class AppFlowCoordinator implements
     private static boolean sameTerminalSessionId(String a, String b, String deviceId) {
         if (a == null || b == null) return false;
         if (a.equals(b)) return true;
-        return SessionIds.local(a, deviceId)
-            .equals(SessionIds.local(b, deviceId));
+        return SessionIds.agentLocal(a, deviceId)
+            .equals(SessionIds.agentLocal(b, deviceId));
     }
 
     // ── Terminal preferences ───────────────────────────────────────

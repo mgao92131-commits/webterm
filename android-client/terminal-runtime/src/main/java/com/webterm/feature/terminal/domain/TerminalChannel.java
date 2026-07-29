@@ -5,6 +5,7 @@ import android.os.Handler;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.webterm.core.api.SessionIds;
 import com.webterm.core.session.ChannelFailure;
 import com.webterm.core.session.ConnectionCloseReason;
 import com.webterm.core.session.DeviceConnection;
@@ -262,7 +263,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
       }
       deviceConnection.updateCookie(cookie);
     }
-    String localSessionId = DeviceConnection.localSessionId(sessionId, relayDeviceId);
+    String localSessionId = SessionIds.agentLocal(sessionId, relayDeviceId);
     // 每次显式重建都使用新的 logical tunnel owner。ws-connected 不携带本地代际，
     // 若复用旧 tunnel id，旧握手的迟到控制帧可能被误认成新连接。
     String logicalChannelOwnerId = UUID.randomUUID().toString();
@@ -368,7 +369,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   /** 现场捕获专用：与 screen 通道一致的 localSessionId，使 capture 通道路由到同一 Agent 会话。 */
   @NonNull
   public String captureLocalSessionId() {
-    return DeviceConnection.localSessionId(sessionId, relayDeviceId);
+    return SessionIds.agentLocal(sessionId, relayDeviceId);
   }
 
   private static TerminalScreenV2Proto.MouseButton mouseButtonFromString(@NonNull String button) {

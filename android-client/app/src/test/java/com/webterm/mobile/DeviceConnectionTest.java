@@ -21,4 +21,9 @@ public class DeviceConnectionTest {
     public void localSessionIdStripsMatchingRelayPrefix() {
         assertEquals("s1", DeviceConnection.localSessionId("d1:s1", "d1"));
     }
+
+    @Test
+    public void screenLocalSessionIdUsesSharedAgentResolver() {
+        assertEquals("s1", DeviceConnection.localSessionId("relay:d1:s1", "d1"));
+    }
 }

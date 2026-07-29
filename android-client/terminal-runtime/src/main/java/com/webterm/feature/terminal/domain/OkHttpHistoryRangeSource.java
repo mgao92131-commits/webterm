@@ -3,6 +3,7 @@ package com.webterm.feature.terminal.domain;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.webterm.core.api.SessionIds;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryBodyEntry;
@@ -32,7 +33,7 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
   private final Executor callbackExecutor;
   private final String baseUrl;
   private final String cookie;
-  private final String sessionId;
+  private final String localSessionId;
   private final String deviceId;
   private final AtomicBoolean closed = new AtomicBoolean();
 
@@ -44,8 +45,8 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
     this.callbackExecutor = callbackExecutor;
     this.baseUrl = stripTrailingSlash(baseUrl);
     this.cookie = cookie == null ? "" : cookie;
-    this.sessionId = sessionId;
     this.deviceId = deviceId == null ? "" : deviceId;
+    this.localSessionId = SessionIds.agentLocal(sessionId, this.deviceId);
   }
 
   @NonNull @Override
@@ -56,7 +57,7 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
           new Failure(FailureKind.SESSION_GONE, 0, range.generation)));
       return () -> {};
     }
-    String url = baseUrl + "/api/sessions/" + WebTermUrls.encodePath(apiSessionId(sessionId))
+    String url = baseUrl + "/api/sessions/" + WebTermUrls.encodePath(localSessionId)
         + "/history/range?instanceId=" + WebTermUrls.encodePath(range.instanceId)
         + "&layoutEpoch=" + range.layoutEpoch
         + "&generation=" + range.generation
@@ -169,9 +170,5 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
     int end = value.length();
     while (end > 0 && value.charAt(end - 1) == '/') end--;
     return value.substring(0, end);
-  }
-
-  private static String apiSessionId(String value) {
-    return value.startsWith("relay:") ? value.substring("relay:".length()) : value;
   }
 }

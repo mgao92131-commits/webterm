@@ -93,7 +93,7 @@ public final class TerminalDiskCache {
     void updateCwdBlocking(ServerConfig server, String sessionId, String cwd) {
         if (server == null || sessionId == null || sessionId.isEmpty()) return;
         String deviceId = server.getDeviceId() == null ? "" : server.getDeviceId();
-        String localSessionId = SessionIds.local(sessionId, deviceId);
+        String localSessionId = SessionIds.agentLocal(sessionId, deviceId);
         File[] files = cacheDir.listFiles();
         if (files == null) return;
         for (File file : files) {
@@ -101,7 +101,7 @@ public final class TerminalDiskCache {
             Metadata metadata = readMetadata(file);
             if (metadata == null
                 || !TerminalCacheScope.matches(server, metadata.baseUrl, metadata.sessionId)
-                || !localSessionId.equals(SessionIds.local(metadata.sessionId, deviceId))) {
+                || !localSessionId.equals(SessionIds.agentLocal(metadata.sessionId, deviceId))) {
                 continue;
             }
             metadata.cwd = cwd == null ? "" : cwd;

@@ -4,6 +4,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.webterm.core.api.SessionIds;
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import com.webterm.core.contract.diagnostics.Diagnostics;
@@ -1373,18 +1374,11 @@ public final class DeviceConnection {
     }
 
     public static String localSessionId(String sessionId, String deviceId) {
-        if (sessionId == null) return "";
-        String prefix = deviceId == null || deviceId.isEmpty() ? "" : deviceId + ":";
-        if (!prefix.isEmpty() && sessionId.startsWith(prefix)) {
-            return sessionId.substring(prefix.length());
-        }
-        return sessionId;
+        return SessionIds.agentLocal(sessionId, deviceId);
     }
 
     public static String canonicalSessionId(String sessionId, String deviceId) {
-        if (sessionId == null) return "";
-        if (deviceId == null || deviceId.isEmpty() || sessionId.contains(":")) return sessionId;
-        return deviceId + ":" + sessionId;
+        return SessionIds.canonical(sessionId, deviceId);
     }
 
     private void reconcileChannels() {

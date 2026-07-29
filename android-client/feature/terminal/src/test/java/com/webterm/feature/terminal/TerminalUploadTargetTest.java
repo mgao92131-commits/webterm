@@ -19,7 +19,7 @@ public class TerminalUploadTargetTest {
         String sessionId = "dev-abc:s1";
         String deviceId = "dev-abc";
 
-        assertEquals("s1", SessionIds.local(sessionId, deviceId));
+        assertEquals("s1", SessionIds.agentLocal(sessionId, deviceId));
 
         String connectionKey = DeviceConnectionKeys.resolve(
             false, "cfg-1", "https://relay.example.com/", deviceId);
@@ -32,7 +32,7 @@ public class TerminalUploadTargetTest {
         String configId = "direct_1";
 
         // Direct 不带设备前缀，sessionId 原样使用。
-        assertEquals("s1", SessionIds.local(sessionId, ""));
+        assertEquals("s1", SessionIds.agentLocal(sessionId, ""));
 
         // Direct 上传键为 direct:{configId}，而非 Relay 的 baseUrl\n 形式。
         String connectionKey = DeviceConnectionKeys.resolve(

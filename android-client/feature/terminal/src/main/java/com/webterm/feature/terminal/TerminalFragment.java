@@ -152,7 +152,7 @@ public final class TerminalFragment extends Fragment {
         // 与后台服务 EndpointResolver 的索引保持一致。
         pendingUploadConnectionKey = args.connectionKey;
         pendingUploadSessionId =
-            SessionIds.local(args.sessionId, args.relayDeviceId);
+            SessionIds.agentLocal(args.sessionId, args.relayDeviceId);
 
         uploadLauncher.launch(new String[]{"*/*"});
     }

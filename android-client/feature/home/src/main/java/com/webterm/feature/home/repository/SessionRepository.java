@@ -654,7 +654,7 @@ public final class SessionRepository {
     }
 
     private static String normalizeSessionId(ServerConfig server, String sessionId) {
-        return SessionIds.local(sessionId, server.getDeviceId());
+        return SessionIds.agentLocal(sessionId, server.getDeviceId());
     }
 
     private static void upsertSession(JSONArray sessions, JSONObject normalizedData) {
