@@ -123,6 +123,21 @@ public final class TerminalPipelineDiagnosticsRegistry {
         long renderSuccessCount = 0L;
         long renderFailureCount = 0L;
         long stateOnlyHandledCount = 0L;
+        long inBandResyncCount = 0L;
+        long forceBaselineCount = 0L;
+        long channelRebuildCount = 0L;
+        long transportReconnectCount = 0L;
+        long recoveryStartedCount = 0L;
+        long recoveryCompletedCount = 0L;
+        long recoveryFailedCount = 0L;
+        long recoveryUpgradeCount = 0L;
+        long duplicateTriggerSuppressedCount = 0L;
+        long projectionArrivalCount = 0L;
+        long projectionDrainCount = 0L;
+        long projectionPendingMessagesHighWater = 0L;
+        long projectionPendingBytesHighWater = 0L;
+        long overflowByFrameBudgetCount = 0L;
+        long overflowByByteBudgetCount = 0L;
         for (SessionDiagnosticsSnapshot session : sessions) {
             Map<String, Object> pipeline = session.pipeline;
             receivedFrameCount += longOf(pipeline, "receivedFrameCount");
@@ -139,6 +154,26 @@ public final class TerminalPipelineDiagnosticsRegistry {
             renderSuccessCount += longOf(pipeline, "renderSuccessCount");
             renderFailureCount += longOf(pipeline, "renderFailureCount");
             stateOnlyHandledCount += longOf(pipeline, "stateOnlyHandledCount");
+            inBandResyncCount += longOf(pipeline, "inBandResyncCount");
+            forceBaselineCount += longOf(pipeline, "forceBaselineCount");
+            channelRebuildCount += longOf(pipeline, "channelRebuildCount");
+            transportReconnectCount += longOf(pipeline, "transportReconnectCount");
+            recoveryStartedCount += longOf(pipeline, "recoveryStartedCount");
+            recoveryCompletedCount += longOf(pipeline, "recoveryCompletedCount");
+            recoveryFailedCount += longOf(pipeline, "recoveryFailedCount");
+            recoveryUpgradeCount += longOf(pipeline, "recoveryUpgradeCount");
+            duplicateTriggerSuppressedCount +=
+                longOf(pipeline, "duplicateTriggerSuppressedCount");
+            projectionArrivalCount += longOf(pipeline, "projectionArrivalCount");
+            projectionDrainCount += longOf(pipeline, "projectionDrainCount");
+            projectionPendingMessagesHighWater = Math.max(
+                projectionPendingMessagesHighWater,
+                longOf(pipeline, "projectionPendingMessagesHighWater"));
+            projectionPendingBytesHighWater = Math.max(
+                projectionPendingBytesHighWater,
+                longOf(pipeline, "projectionPendingBytesHighWater"));
+            overflowByFrameBudgetCount += longOf(pipeline, "overflowByFrameBudgetCount");
+            overflowByByteBudgetCount += longOf(pipeline, "overflowByByteBudgetCount");
         }
         receivedFrameCount += archived.receivedFrameCount;
         receivedBytes += archived.receivedBytes;
@@ -154,6 +189,25 @@ public final class TerminalPipelineDiagnosticsRegistry {
         renderSuccessCount += archived.renderSuccessCount;
         renderFailureCount += archived.renderFailureCount;
         stateOnlyHandledCount += archived.stateOnlyHandledCount;
+        inBandResyncCount += archived.inBandResyncCount;
+        forceBaselineCount += archived.forceBaselineCount;
+        channelRebuildCount += archived.channelRebuildCount;
+        transportReconnectCount += archived.transportReconnectCount;
+        recoveryStartedCount += archived.recoveryStartedCount;
+        recoveryCompletedCount += archived.recoveryCompletedCount;
+        recoveryFailedCount += archived.recoveryFailedCount;
+        recoveryUpgradeCount += archived.recoveryUpgradeCount;
+        duplicateTriggerSuppressedCount += archived.duplicateTriggerSuppressedCount;
+        projectionArrivalCount += archived.projectionArrivalCount;
+        projectionDrainCount += archived.projectionDrainCount;
+        projectionPendingMessagesHighWater = Math.max(
+            projectionPendingMessagesHighWater,
+            archived.projectionPendingMessagesHighWater);
+        projectionPendingBytesHighWater = Math.max(
+            projectionPendingBytesHighWater,
+            archived.projectionPendingBytesHighWater);
+        overflowByFrameBudgetCount += archived.overflowByFrameBudgetCount;
+        overflowByByteBudgetCount += archived.overflowByByteBudgetCount;
 
         Map<String, Long> out = new LinkedHashMap<>();
         out.putAll(lifetimeSessionCounts());
@@ -172,6 +226,21 @@ public final class TerminalPipelineDiagnosticsRegistry {
         out.put("renderSuccessCount", renderSuccessCount);
         out.put("renderFailureCount", renderFailureCount);
         out.put("stateOnlyHandledCount", stateOnlyHandledCount);
+        out.put("inBandResyncCount", inBandResyncCount);
+        out.put("forceBaselineCount", forceBaselineCount);
+        out.put("channelRebuildCount", channelRebuildCount);
+        out.put("transportReconnectCount", transportReconnectCount);
+        out.put("recoveryStartedCount", recoveryStartedCount);
+        out.put("recoveryCompletedCount", recoveryCompletedCount);
+        out.put("recoveryFailedCount", recoveryFailedCount);
+        out.put("recoveryUpgradeCount", recoveryUpgradeCount);
+        out.put("duplicateTriggerSuppressedCount", duplicateTriggerSuppressedCount);
+        out.put("projectionArrivalCount", projectionArrivalCount);
+        out.put("projectionDrainCount", projectionDrainCount);
+        out.put("projectionPendingMessagesHighWater", projectionPendingMessagesHighWater);
+        out.put("projectionPendingBytesHighWater", projectionPendingBytesHighWater);
+        out.put("overflowByFrameBudgetCount", overflowByFrameBudgetCount);
+        out.put("overflowByByteBudgetCount", overflowByByteBudgetCount);
         return out;
     }
 
@@ -387,6 +456,21 @@ public final class TerminalPipelineDiagnosticsRegistry {
         long renderSuccessCount;
         long renderFailureCount;
         long stateOnlyHandledCount;
+        long inBandResyncCount;
+        long forceBaselineCount;
+        long channelRebuildCount;
+        long transportReconnectCount;
+        long recoveryStartedCount;
+        long recoveryCompletedCount;
+        long recoveryFailedCount;
+        long recoveryUpgradeCount;
+        long duplicateTriggerSuppressedCount;
+        long projectionArrivalCount;
+        long projectionDrainCount;
+        long projectionPendingMessagesHighWater;
+        long projectionPendingBytesHighWater;
+        long overflowByFrameBudgetCount;
+        long overflowByByteBudgetCount;
         long inputAttemptCount;
         long inputRejectedNotLiveCount;
         long inputRejectedNoLeaseCount;
@@ -422,6 +506,26 @@ public final class TerminalPipelineDiagnosticsRegistry {
             renderSuccessCount += longOf(pipeline, "renderSuccessCount");
             renderFailureCount += longOf(pipeline, "renderFailureCount");
             stateOnlyHandledCount += longOf(pipeline, "stateOnlyHandledCount");
+            inBandResyncCount += longOf(pipeline, "inBandResyncCount");
+            forceBaselineCount += longOf(pipeline, "forceBaselineCount");
+            channelRebuildCount += longOf(pipeline, "channelRebuildCount");
+            transportReconnectCount += longOf(pipeline, "transportReconnectCount");
+            recoveryStartedCount += longOf(pipeline, "recoveryStartedCount");
+            recoveryCompletedCount += longOf(pipeline, "recoveryCompletedCount");
+            recoveryFailedCount += longOf(pipeline, "recoveryFailedCount");
+            recoveryUpgradeCount += longOf(pipeline, "recoveryUpgradeCount");
+            duplicateTriggerSuppressedCount +=
+                longOf(pipeline, "duplicateTriggerSuppressedCount");
+            projectionArrivalCount += longOf(pipeline, "projectionArrivalCount");
+            projectionDrainCount += longOf(pipeline, "projectionDrainCount");
+            projectionPendingMessagesHighWater = Math.max(
+                projectionPendingMessagesHighWater,
+                longOf(pipeline, "projectionPendingMessagesHighWater"));
+            projectionPendingBytesHighWater = Math.max(
+                projectionPendingBytesHighWater,
+                longOf(pipeline, "projectionPendingBytesHighWater"));
+            overflowByFrameBudgetCount += longOf(pipeline, "overflowByFrameBudgetCount");
+            overflowByByteBudgetCount += longOf(pipeline, "overflowByByteBudgetCount");
 
             Map<String, Long> input = snapshot.inputDelivery;
             inputAttemptCount += longOf(input, "inputAttemptCount");
@@ -460,6 +564,21 @@ public final class TerminalPipelineDiagnosticsRegistry {
             renderSuccessCount = 0L;
             renderFailureCount = 0L;
             stateOnlyHandledCount = 0L;
+            inBandResyncCount = 0L;
+            forceBaselineCount = 0L;
+            channelRebuildCount = 0L;
+            transportReconnectCount = 0L;
+            recoveryStartedCount = 0L;
+            recoveryCompletedCount = 0L;
+            recoveryFailedCount = 0L;
+            recoveryUpgradeCount = 0L;
+            duplicateTriggerSuppressedCount = 0L;
+            projectionArrivalCount = 0L;
+            projectionDrainCount = 0L;
+            projectionPendingMessagesHighWater = 0L;
+            projectionPendingBytesHighWater = 0L;
+            overflowByFrameBudgetCount = 0L;
+            overflowByByteBudgetCount = 0L;
             inputAttemptCount = 0L;
             inputRejectedNotLiveCount = 0L;
             inputRejectedNoLeaseCount = 0L;
@@ -495,6 +614,21 @@ public final class TerminalPipelineDiagnosticsRegistry {
             out.renderSuccessCount = renderSuccessCount;
             out.renderFailureCount = renderFailureCount;
             out.stateOnlyHandledCount = stateOnlyHandledCount;
+            out.inBandResyncCount = inBandResyncCount;
+            out.forceBaselineCount = forceBaselineCount;
+            out.channelRebuildCount = channelRebuildCount;
+            out.transportReconnectCount = transportReconnectCount;
+            out.recoveryStartedCount = recoveryStartedCount;
+            out.recoveryCompletedCount = recoveryCompletedCount;
+            out.recoveryFailedCount = recoveryFailedCount;
+            out.recoveryUpgradeCount = recoveryUpgradeCount;
+            out.duplicateTriggerSuppressedCount = duplicateTriggerSuppressedCount;
+            out.projectionArrivalCount = projectionArrivalCount;
+            out.projectionDrainCount = projectionDrainCount;
+            out.projectionPendingMessagesHighWater = projectionPendingMessagesHighWater;
+            out.projectionPendingBytesHighWater = projectionPendingBytesHighWater;
+            out.overflowByFrameBudgetCount = overflowByFrameBudgetCount;
+            out.overflowByByteBudgetCount = overflowByByteBudgetCount;
             out.inputAttemptCount = inputAttemptCount;
             out.inputRejectedNotLiveCount = inputRejectedNotLiveCount;
             out.inputRejectedNoLeaseCount = inputRejectedNoLeaseCount;

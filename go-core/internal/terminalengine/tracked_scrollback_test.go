@@ -4,11 +4,60 @@ import (
 	"image/color"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 	"unsafe"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
 )
+
+func TestIndexWindowIsAtomicDuringConcurrentTrim(t *testing.T) {
+	sb := NewTrackedScrollback(32, nil)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	start := make(chan struct{})
+	writerDone := make(chan struct{})
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 1; i <= 2_000; i++ {
+			sb.Push(headlessterm.ScrollbackLine{
+				LineID: uint64(i), LineVersion: 1,
+			})
+		}
+		close(writerDone)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for {
+			window, _ := sb.IndexWindowIfChanged(0)
+			expected := uint64(0)
+			if window.LastSeq >= window.FirstSeq {
+				expected = window.LastSeq - window.FirstSeq + 1
+			}
+			if uint64(len(window.Entries)) != expected {
+				t.Errorf("atomic window entries=%d extent=%d..%d",
+					len(window.Entries), window.FirstSeq, window.LastSeq)
+				return
+			}
+			for index, entry := range window.Entries {
+				want := window.FirstSeq + uint64(index)
+				if entry.HistorySeq != want {
+					t.Errorf("entry[%d].seq=%d want=%d", index, entry.HistorySeq, want)
+					return
+				}
+			}
+			select {
+			case <-writerDone:
+				return
+			default:
+			}
+		}
+	}()
+	close(start)
+	wg.Wait()
+}
 
 func TestTrackedScrollback_LineID(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)

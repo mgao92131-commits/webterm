@@ -10,6 +10,8 @@ import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import org.junit.Test;
 
+import java.util.Map;
+
 public final class ScreenMailboxTest {
   @Test
   public void overflowDiscardsCommitChainAndEmitsFenceBeforeNewMessages() {
@@ -378,6 +380,56 @@ public final class ScreenMailboxTest {
     assertEquals(1, mailbox.poll().message.payload[0]);
     assertEquals(2, mailbox.poll().message.payload[0]);
     assertEquals(3, mailbox.poll().message.payload[0]);
+  }
+
+  @Test
+  public void projectionMetricsTrackArrivalDrainHighWaterAndOverflowCause() {
+    ScreenMailbox mailbox = new ScreenMailbox(2, 8L);
+    TerminalSessionRuntime.ScreenConnection source =
+        mock(TerminalSessionRuntime.ScreenConnection.class);
+    mailbox.offer(1L, source, new byte[] {1, 2}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {3, 4}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    assertEquals(1, mailbox.poll().message.payload[0]);
+    mailbox.offer(1L, source, new byte[] {5}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {6}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+
+    ScreenMailbox.Drain overflow = mailbox.poll();
+    assertNotNull(overflow.fence);
+    assertEquals(ScreenMailbox.OverflowKind.PROJECTION_FRAME_BUDGET,
+        overflow.fence.overflowKind);
+    Map<String, Object> metrics = mailbox.diagnosticsSnapshot();
+    assertEquals(4L, metrics.get("projectionArrivalCount"));
+    assertEquals(1L, metrics.get("projectionDrainCount"));
+    assertEquals(2L, metrics.get("projectionPendingMessagesHighWater"));
+    assertEquals(4L, metrics.get("projectionPendingBytesHighWater"));
+    assertEquals(1L, metrics.get("overflowByFrameBudgetCount"));
+    assertEquals(0L, metrics.get("overflowByByteBudgetCount"));
+    assertTrue(((Double) metrics.get("projectionArrivalRate")) > 0.0d);
+    assertTrue(((Double) metrics.get("projectionDrainRate")) > 0.0d);
+  }
+
+  @Test
+  public void projectionByteOverflowIsClassifiedSeparatelyAndRemainsBounded() {
+    ScreenMailbox mailbox = new ScreenMailbox(8, 3L);
+    TerminalSessionRuntime.ScreenConnection source =
+        mock(TerminalSessionRuntime.ScreenConnection.class);
+    mailbox.offer(1L, source, new byte[] {1, 2}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+    mailbox.offer(1L, source, new byte[] {3, 4}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+
+    ScreenMailbox.Drain overflow = mailbox.poll();
+    assertEquals(ScreenMailbox.OverflowKind.PROJECTION_BYTE_BUDGET,
+        overflow.fence.overflowKind);
+    Map<String, Object> metrics = mailbox.diagnosticsSnapshot();
+    assertEquals(0L, metrics.get("overflowByFrameBudgetCount"));
+    assertEquals(1L, metrics.get("overflowByByteBudgetCount"));
+    assertEquals(0, mailbox.pendingMessages());
+    assertEquals(0L, mailbox.pendingBytes());
   }
 
   private static void offer(ScreenMailbox mailbox,

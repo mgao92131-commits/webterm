@@ -1,6 +1,7 @@
 package screenprotocolv2
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -8,6 +9,60 @@ import (
 	pb "webterm/go-core/internal/screenprotocol/generatedv2"
 	"webterm/go-core/internal/terminalengine"
 )
+
+func TestEncodeBaselineSelfValidationRejectsInconsistentState(t *testing.T) {
+	base := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, SessionID: "s", InstanceID: "i",
+		Epoch: 1, Seq: 1, Rows: 1, Cols: 2,
+		DictionaryGeneration: 1, HistoryGeneration: 1,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1,
+			FirstIncludedHistorySeq:  1,
+			LastIncludedHistorySeq:   1,
+		},
+		Screen: []terminalengine.Line{{
+			ID: 1, Version: 1, PhysicalColumns: 2,
+		}},
+		ScrollbackLineage: []terminalengine.HistoryPush{{
+			HistorySeq: 1, LineID: 20, LineVersion: 1,
+		}},
+	}
+	tests := []struct {
+		name string
+		edit func(*terminalengine.ScreenFrame)
+		code string
+	}{
+		{"binding count", func(frame *terminalengine.ScreenFrame) {
+			frame.ScrollbackLineage = nil
+		}, "HISTORY_BINDING_COUNT_MISMATCH"},
+		{"columns", func(frame *terminalengine.ScreenFrame) {
+			frame.Screen[0].PhysicalColumns = 1
+		}, "LINE_COLUMN_COUNT_MISMATCH"},
+		{"active history conflict", func(frame *terminalengine.ScreenFrame) {
+			frame.ScrollbackLineage[0].LineID = 1
+		}, "ACTIVE_HISTORY_KEY_CONFLICT"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			frame := base
+			frame.Screen = append([]terminalengine.Line(nil), base.Screen...)
+			frame.ScrollbackLineage = append(
+				[]terminalengine.HistoryPush(nil), base.ScrollbackLineage...)
+			test.edit(&frame)
+			wire, err := EncodeBaseline(frame, 0)
+			if err == nil || wire != nil {
+				t.Fatal("invalid Baseline was serialized")
+			}
+			var validation *BaselineValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("error=%v is not BaselineValidationError", err)
+			}
+			if validation.Code != test.code {
+				t.Fatalf("error=%v code=%q want=%q", err, validation.Code, test.code)
+			}
+		})
+	}
+}
 
 func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T) {
 	frame := terminalengine.ScreenFrame{
@@ -18,7 +73,7 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 			LastIncludedHistorySeq:   3,
 		},
 		Screen: []terminalengine.Line{{
-			ID: 7, Version: 1,
+			ID: 7, Version: 1, PhysicalColumns: 2,
 			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
 				{Text: "x", Width: 1}, {Text: " ", Width: 1},
 			}}},
@@ -44,6 +99,32 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 	}
 }
 
+func TestEncodeBaselineAcceptsAlternateBufferZeroHistoryExtent(t *testing.T) {
+	frame := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, SessionID: "s1", InstanceID: "i1",
+		Epoch: 3, Seq: 9, Rows: 1, Cols: 2, DictionaryGeneration: 1, HistoryGeneration: 1,
+		ActiveBuffer: terminalengine.BufferAlternate,
+		Screen: []terminalengine.Line{{
+			ID: 7, Version: 1, PhysicalColumns: 2,
+		}},
+	}
+	wire, err := EncodeBaseline(frame, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env pb.ScreenEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.GetBaseline().GetHistoryExtent(); got.GetFirstSeq() != 1 || got.GetLastSeq() != 0 {
+		t.Fatalf("alternate history extent=%d..%d, want canonical 1..0",
+			got.GetFirstSeq(), got.GetLastSeq())
+	}
+	if len(env.GetBaseline().GetHistoryBindings()) != 0 {
+		t.Fatal("alternate baseline carried main-buffer history bindings")
+	}
+}
+
 func TestEncodeBaselineNeverCarriesHistoryBodies(t *testing.T) {
 	history := make([]terminalengine.Line, 200)
 	for i := range history {
@@ -63,7 +144,7 @@ func TestEncodeBaselineNeverCarriesHistoryBodies(t *testing.T) {
 			FirstAvailableHistorySeq: 1, FirstIncludedHistorySeq: 1,
 			LastIncludedHistorySeq: 200, Lines: history,
 		},
-		Screen: []terminalengine.Line{{ID: 1, Version: 1}},
+		Screen: []terminalengine.Line{{ID: 1, Version: 1, PhysicalColumns: 1}},
 	}
 	for i := range history {
 		frame.ScrollbackLineage = append(frame.ScrollbackLineage, terminalengine.HistoryPush{
@@ -179,6 +260,48 @@ func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {
 	}
 }
 
+func TestHandlerDispatchesValidInBandResync(t *testing.T) {
+	var got *pb.ResyncRequest
+	handler := NewHandler(WithResyncCallback(func(request *pb.ResyncRequest) {
+		got = request
+	}))
+	wire, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: ProtocolVersion,
+		Payload: &pb.ScreenEnvelope_ResyncRequest{ResyncRequest: &pb.ResyncRequest{
+			LayoutEpoch: 7, ScreenRevision: 19,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.HandleMessage(wire); err != nil {
+		t.Fatalf("valid resync rejected: %v", err)
+	}
+	if got == nil || got.GetLayoutEpoch() != 7 || got.GetScreenRevision() != 19 {
+		t.Fatalf("resync callback=%+v", got)
+	}
+}
+
+func TestHandlerAllowsInBandResyncBeforeFirstBaseline(t *testing.T) {
+	called := false
+	handler := NewHandler(WithResyncCallback(func(request *pb.ResyncRequest) {
+		called = request.GetLayoutEpoch() == 0 && request.GetScreenRevision() == 0
+	}))
+	wire, err := proto.Marshal(&pb.ScreenEnvelope{
+		ProtocolVersion: ProtocolVersion,
+		Payload:         &pb.ScreenEnvelope_ResyncRequest{ResyncRequest: &pb.ResyncRequest{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.HandleMessage(wire); err != nil {
+		t.Fatalf("pre-baseline resync rejected: %v", err)
+	}
+	if !called {
+		t.Fatal("pre-baseline resync callback not invoked")
+	}
+}
+
 func TestHandlerAcceptsBestEffortInputWithoutDeliveryIdentity(t *testing.T) {
 	called := false
 	handler := NewHandler(WithInputCallback(func(input *pb.TerminalInput) {
@@ -286,6 +409,17 @@ func TestTerminalCommitAndBaselineDoNotCarryTitleOrWorkingDirectory(t *testing.T
 
 	frame.Kind = terminalengine.FrameSnapshot
 	frame.BaseRevision = 0
+	frame.SessionID = "s1"
+	frame.DictionaryGeneration = 1
+	frame.HistoryGeneration = 1
+	frame.History = terminalengine.HistoryWindow{
+		FirstAvailableHistorySeq: 1,
+		FirstIncludedHistorySeq:  1,
+		LastIncludedHistorySeq:   0,
+	}
+	frame.Screen = []terminalengine.Line{{
+		ID: 1, Version: 1, PhysicalColumns: 1,
+	}}
 	wire, err = EncodeBaseline(frame, 1)
 	if err != nil {
 		t.Fatal(err)

@@ -16,13 +16,22 @@ public final class ScreenProjectionReducer {
 
   public ProjectionResult applyBaseline(ScreenBaseline baseline) {
     if (baseline == null || baseline.instanceId == null || baseline.instanceId.isEmpty()
-        || baseline.layoutEpoch < 1 || baseline.screenRevision < 1
-        || baseline.dictionaryGeneration < 1 || baseline.historyGeneration < 1
-        || baseline.rows < 1 || baseline.cols < 1
-        || baseline.screen == null || baseline.screen.size() != baseline.rows
-        || baseline.historyExtent == null || baseline.historyBindings == null
+        || baseline.layoutEpoch < 1) {
+      return needs(ProjectionFault.INVALID_IDENTITY);
+    }
+    if (baseline.screenRevision < 1 || baseline.dictionaryGeneration < 1
+        || baseline.historyGeneration < 1) {
+      return needs(ProjectionFault.INVALID_GENERATION);
+    }
+    if (baseline.rows < 1 || baseline.cols < 1) {
+      return needs(ProjectionFault.INVALID_GEOMETRY);
+    }
+    if (baseline.screen == null || baseline.screen.size() != baseline.rows) {
+      return needs(ProjectionFault.SCREEN_LINE_COUNT_MISMATCH);
+    }
+    if (baseline.historyExtent == null || baseline.historyBindings == null
         || baseline.historyExtent.logicalSize() != baseline.historyBindings.size()) {
-      return new ProjectionResult.NeedsBaseline(ProjectionFault.INVALID_BASELINE);
+      return needs(ProjectionFault.HISTORY_BINDING_COUNT_MISMATCH);
     }
     try {
       TerminalSurfaceState surface = new TerminalSurfaceState(historyBudget);
@@ -35,9 +44,17 @@ public final class ScreenProjectionReducer {
       long previousSeq = 0;
       Set<LineKey> historical = new HashSet<>();
       for (HistoryPush binding : baseline.historyBindings) {
-        if (binding == null || binding.historySeq <= previousSeq
-            || !historical.add(binding.key)) {
-          return new ProjectionResult.NeedsBaseline(ProjectionFault.INVALID_BASELINE);
+        if (binding == null || binding.key == null) {
+          return needs(ProjectionFault.INVALID_LINE_BODY);
+        }
+        if (binding.historySeq <= previousSeq) {
+          return needs(ProjectionFault.HISTORY_SEQ_OUT_OF_ORDER);
+        }
+        if (!baseline.historyExtent.contains(binding.historySeq)) {
+          return needs(ProjectionFault.HISTORY_SEQ_OUT_OF_EXTENT);
+        }
+        if (!historical.add(binding.key)) {
+          return needs(ProjectionFault.DUPLICATE_HISTORY_KEY);
         }
         tx.historyCatalog().bindNew(binding.historySeq, binding.key);
         previousSeq = binding.historySeq;
@@ -47,9 +64,17 @@ public final class ScreenProjectionReducer {
       Set<LineKey> activeSet = new HashSet<>();
       for (int row = 0; row < baseline.rows; row++) {
         ScreenLineContent line = baseline.screen.get(row);
-        if (line == null || line.body().physicalColumns != baseline.cols
-            || !activeSet.add(line.key()) || historical.contains(line.key())) {
-          return new ProjectionResult.NeedsBaseline(ProjectionFault.INVALID_BASELINE);
+        if (line == null || line.key() == null || line.body() == null) {
+          return needs(ProjectionFault.INVALID_LINE_BODY);
+        }
+        if (line.body().physicalColumns != baseline.cols) {
+          return needs(ProjectionFault.LINE_COLUMN_COUNT_MISMATCH);
+        }
+        if (!activeSet.add(line.key())) {
+          return needs(ProjectionFault.DUPLICATE_ACTIVE_KEY);
+        }
+        if (historical.contains(line.key())) {
+          return needs(ProjectionFault.ACTIVE_HISTORY_KEY_CONFLICT);
         }
         tx.bodyCache().putBody(line.key(), line.body());
         active[row] = line.key();
@@ -76,9 +101,15 @@ public final class ScreenProjectionReducer {
           baseline.palette == null ? TerminalPalette.defaults() : baseline.palette);
       return new ProjectionResult.Applied(
           state, new ProjectionDelta(true, true, true, true));
-    } catch (CommitValidationException | RuntimeException invalid) {
-      return new ProjectionResult.NeedsBaseline(ProjectionFault.INVALID_BASELINE);
+    } catch (CommitValidationException invalid) {
+      return needs(ProjectionFault.MODEL_REJECTED_BASELINE);
+    } catch (RuntimeException invalid) {
+      return needs(ProjectionFault.MODEL_REJECTED_BASELINE);
     }
+  }
+
+  private static ProjectionResult.NeedsBaseline needs(ProjectionFault fault) {
+    return new ProjectionResult.NeedsBaseline(fault);
   }
 
   public ProjectionResult applyCommit(ProjectionState current, TerminalCommit commit) {

@@ -1,13 +1,7 @@
-package com.webterm.terminal.model;
+package com.webterm.terminal.protocol;
 
-/** 只有 WS 权威投影连续性错误可以产生这些故障。 */
-public enum ProjectionFault {
-  IDENTITY_MISMATCH,
-  LAYOUT_EPOCH_MISMATCH,
-  REVISION_GAP,
-  DICTIONARY_GENERATION_MISMATCH,
-  HISTORY_GENERATION_MISMATCH,
-  INVALID_BASELINE,
+/** Baseline wire 校验失败的稳定分类；不得包含终端正文。 */
+public enum BaselineFaultCode {
   INVALID_IDENTITY,
   INVALID_GENERATION,
   INVALID_GEOMETRY,
@@ -23,7 +17,5 @@ public enum ProjectionFault {
   INVALID_LINE_BODY,
   INVALID_DICTIONARY,
   MAPPER_FAILURE,
-  MODEL_REJECTED_BASELINE,
-  INVALID_SCREEN_MUTATION,
-  INVALID_HISTORY_MUTATION
+  MODEL_REJECTED_BASELINE
 }

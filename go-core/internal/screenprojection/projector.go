@@ -278,18 +278,22 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		p.changeIndex.resetForEpoch(seq)
 	}
 	if p.scrollback != nil {
-		generation := p.scrollback.Generation()
+		gap := p.historyChangeIndex.sync(p.scrollback, seq)
+		generation := p.historyChangeIndex.generation
 		if generation == 0 {
 			generation = 1
 		}
 		if p.observedHistoryGeneration != 0 && generation != p.observedHistoryGeneration {
-			p.historyChangeIndex = HistoryChangeIndex{}
 			p.changeIndex.advanceBarrier(seq)
 		}
 		p.observedHistoryGeneration = generation
 		p.historyGeneration = generation
-	}
-	if p.historyChangeIndex.sync(p.scrollback, seq) {
+		if gap {
+			// LineID 跳号或索引遗漏意味着旧投影无法准确修复。推进持久 barrier，
+			// 并确保在线客户端也收到同 revision snapshot。
+			p.changeIndex.advanceBarrier(seq)
+		}
+	} else if p.historyChangeIndex.sync(nil, seq) {
 		// LineID 跳号或索引遗漏意味着旧投影无法准确修复。推进持久 barrier，
 		// 并确保在线客户端也收到同 revision snapshot。
 		p.changeIndex.advanceBarrier(seq)
@@ -361,10 +365,21 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	rowChangedRevision := make([]uint64, len(p.changeIndex.RowChangedRevision))
 	copy(rowChangedRevision, p.changeIndex.RowChangedRevision)
 	history := terminalengine.HistoryWindow{}
+	var lineage []terminalengine.HistoryPush
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
 	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
 	if s.activeBuffer == terminalengine.BufferMain {
-		history = historyExtentWindow(p.scrollback)
+		first := p.historyChangeIndex.firstSeq
+		last := p.historyChangeIndex.lastSeq
+		if first == 0 {
+			first = 1
+		}
+		history = terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: first,
+			FirstIncludedHistorySeq:  first,
+			LastIncludedHistorySeq:   last,
+		}
+		lineage = p.historyChangeIndex.lineage
 	}
 
 	return terminalengine.ScreenFrame{
@@ -393,7 +408,7 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 		RowChangedRevision:    rowChangedRevision,
 		DictionaryGeneration:  p.dictGeneration,
 		HistoryGeneration:     p.historyGeneration,
-		ScrollbackLineage:     p.historyChangeIndex.lineage,
+		ScrollbackLineage:     lineage,
 		HistoryLineageVersion: p.historyChangeIndex.mutationVersion,
 	}
 }

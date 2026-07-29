@@ -21,15 +21,26 @@ public interface HistoryRangeSource {
     public final long historyGeneration;
     public final HistoryExtent currentExtent;
     public final List<HistoryBodyEntry> lines;
+    /** HTTP 响应完成解析并准备派发 callback 的单调时钟时间。 */
+    public final long completedAtNanos;
 
     public Result(@NonNull String instanceId, long layoutEpoch, long historyGeneration,
                   @NonNull HistoryExtent currentExtent,
                   @NonNull List<HistoryBodyEntry> lines) {
+      this(instanceId, layoutEpoch, historyGeneration, currentExtent, lines,
+          System.nanoTime());
+    }
+
+    public Result(@NonNull String instanceId, long layoutEpoch, long historyGeneration,
+                  @NonNull HistoryExtent currentExtent,
+                  @NonNull List<HistoryBodyEntry> lines,
+                  long completedAtNanos) {
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
       this.historyGeneration = historyGeneration;
       this.currentExtent = currentExtent;
       this.lines = lines;
+      this.completedAtNanos = completedAtNanos;
     }
   }
 
@@ -37,11 +48,19 @@ public interface HistoryRangeSource {
     public final FailureKind kind;
     public final long retryAfterMs;
     public final long historyGeneration;
+    /** HTTP 失败已确定并准备派发 callback 的单调时钟时间。 */
+    public final long completedAtNanos;
 
     public Failure(@NonNull FailureKind kind, long retryAfterMs, long historyGeneration) {
+      this(kind, retryAfterMs, historyGeneration, System.nanoTime());
+    }
+
+    public Failure(@NonNull FailureKind kind, long retryAfterMs, long historyGeneration,
+                   long completedAtNanos) {
       this.kind = kind;
       this.retryAfterMs = Math.max(0, retryAfterMs);
       this.historyGeneration = historyGeneration;
+      this.completedAtNanos = completedAtNanos;
     }
   }
 

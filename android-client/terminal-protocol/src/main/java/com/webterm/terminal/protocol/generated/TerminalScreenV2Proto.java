@@ -1248,6 +1248,21 @@ public final class TerminalScreenV2Proto {
      */
     com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeAcceptedOrBuilder getResumeAcceptedOrBuilder();
 
+    /**
+     * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+     * @return Whether the resyncRequest field is set.
+     */
+    boolean hasResyncRequest();
+    /**
+     * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+     * @return The resyncRequest.
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest getResyncRequest();
+    /**
+     * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder getResyncRequestOrBuilder();
+
     com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ScreenEnvelope.PayloadCase getPayloadCase();
   }
   /**
@@ -1312,6 +1327,7 @@ public final class TerminalScreenV2Proto {
       PONG(21),
       TERMINAL_COMMIT(22),
       RESUME_ACCEPTED(23),
+      RESYNC_REQUEST(18),
       PAYLOAD_NOT_SET(0);
       private final int value;
       private PayloadCase(int value) {
@@ -1343,6 +1359,7 @@ public final class TerminalScreenV2Proto {
           case 21: return PONG;
           case 22: return TERMINAL_COMMIT;
           case 23: return RESUME_ACCEPTED;
+          case 18: return RESYNC_REQUEST;
           case 0: return PAYLOAD_NOT_SET;
           default: return null;
         }
@@ -1807,6 +1824,37 @@ public final class TerminalScreenV2Proto {
       return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResumeAccepted.getDefaultInstance();
     }
 
+    public static final int RESYNC_REQUEST_FIELD_NUMBER = 18;
+    /**
+     * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+     * @return Whether the resyncRequest field is set.
+     */
+    @java.lang.Override
+    public boolean hasResyncRequest() {
+      return payloadCase_ == 18;
+    }
+    /**
+     * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+     * @return The resyncRequest.
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest getResyncRequest() {
+      if (payloadCase_ == 18) {
+         return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_;
+      }
+      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+    }
+    /**
+     * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder getResyncRequestOrBuilder() {
+      if (payloadCase_ == 18) {
+         return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_;
+      }
+      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -1850,6 +1898,9 @@ public final class TerminalScreenV2Proto {
       }
       if (payloadCase_ == 17) {
         output.writeMessage(17, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ClipboardResponse) payload_);
+      }
+      if (payloadCase_ == 18) {
+        output.writeMessage(18, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_);
       }
       if (payloadCase_ == 19) {
         output.writeMessage(19, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Exit) payload_);
@@ -1914,6 +1965,10 @@ public final class TerminalScreenV2Proto {
       if (payloadCase_ == 17) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(17, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ClipboardResponse) payload_);
+      }
+      if (payloadCase_ == 18) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(18, (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_);
       }
       if (payloadCase_ == 19) {
         size += com.google.protobuf.CodedOutputStream
@@ -2010,6 +2065,10 @@ public final class TerminalScreenV2Proto {
           if (!getResumeAccepted()
               .equals(other.getResumeAccepted())) return false;
           break;
+        case 18:
+          if (!getResyncRequest()
+              .equals(other.getResyncRequest())) return false;
+          break;
         case 0:
         default:
       }
@@ -2082,6 +2141,10 @@ public final class TerminalScreenV2Proto {
         case 23:
           hash = (37 * hash) + RESUME_ACCEPTED_FIELD_NUMBER;
           hash = (53 * hash) + getResumeAccepted().hashCode();
+          break;
+        case 18:
+          hash = (37 * hash) + RESYNC_REQUEST_FIELD_NUMBER;
+          hash = (53 * hash) + getResyncRequest().hashCode();
           break;
         case 0:
         default:
@@ -2265,6 +2328,9 @@ public final class TerminalScreenV2Proto {
         if (resumeAcceptedBuilder_ != null) {
           resumeAcceptedBuilder_.clear();
         }
+        if (resyncRequestBuilder_ != null) {
+          resyncRequestBuilder_.clear();
+        }
         payloadCase_ = 0;
         payload_ = null;
         return this;
@@ -2365,6 +2431,10 @@ public final class TerminalScreenV2Proto {
             resumeAcceptedBuilder_ != null) {
           result.payload_ = resumeAcceptedBuilder_.build();
         }
+        if (payloadCase_ == 18 &&
+            resyncRequestBuilder_ != null) {
+          result.payload_ = resyncRequestBuilder_.build();
+        }
       }
 
       @java.lang.Override
@@ -2437,6 +2507,10 @@ public final class TerminalScreenV2Proto {
           }
           case RESUME_ACCEPTED: {
             mergeResumeAccepted(other.getResumeAccepted());
+            break;
+          }
+          case RESYNC_REQUEST: {
+            mergeResyncRequest(other.getResyncRequest());
             break;
           }
           case PAYLOAD_NOT_SET: {
@@ -2537,6 +2611,13 @@ public final class TerminalScreenV2Proto {
                 payloadCase_ = 17;
                 break;
               } // case 138
+              case 146: {
+                input.readMessage(
+                    getResyncRequestFieldBuilder().getBuilder(),
+                    extensionRegistry);
+                payloadCase_ = 18;
+                break;
+              } // case 146
               case 154: {
                 input.readMessage(
                     getExitFieldBuilder().getBuilder(),
@@ -4636,6 +4717,148 @@ public final class TerminalScreenV2Proto {
         return resumeAcceptedBuilder_;
       }
 
+      private com.google.protobuf.SingleFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder> resyncRequestBuilder_;
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       * @return Whether the resyncRequest field is set.
+       */
+      @java.lang.Override
+      public boolean hasResyncRequest() {
+        return payloadCase_ == 18;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       * @return The resyncRequest.
+       */
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest getResyncRequest() {
+        if (resyncRequestBuilder_ == null) {
+          if (payloadCase_ == 18) {
+            return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_;
+          }
+          return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+        } else {
+          if (payloadCase_ == 18) {
+            return resyncRequestBuilder_.getMessage();
+          }
+          return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+        }
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      public Builder setResyncRequest(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest value) {
+        if (resyncRequestBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          payload_ = value;
+          onChanged();
+        } else {
+          resyncRequestBuilder_.setMessage(value);
+        }
+        payloadCase_ = 18;
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      public Builder setResyncRequest(
+          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder builderForValue) {
+        if (resyncRequestBuilder_ == null) {
+          payload_ = builderForValue.build();
+          onChanged();
+        } else {
+          resyncRequestBuilder_.setMessage(builderForValue.build());
+        }
+        payloadCase_ = 18;
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      public Builder mergeResyncRequest(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest value) {
+        if (resyncRequestBuilder_ == null) {
+          if (payloadCase_ == 18 &&
+              payload_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance()) {
+            payload_ = com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.newBuilder((com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_)
+                .mergeFrom(value).buildPartial();
+          } else {
+            payload_ = value;
+          }
+          onChanged();
+        } else {
+          if (payloadCase_ == 18) {
+            resyncRequestBuilder_.mergeFrom(value);
+          } else {
+            resyncRequestBuilder_.setMessage(value);
+          }
+        }
+        payloadCase_ = 18;
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      public Builder clearResyncRequest() {
+        if (resyncRequestBuilder_ == null) {
+          if (payloadCase_ == 18) {
+            payloadCase_ = 0;
+            payload_ = null;
+            onChanged();
+          }
+        } else {
+          if (payloadCase_ == 18) {
+            payloadCase_ = 0;
+            payload_ = null;
+          }
+          resyncRequestBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder getResyncRequestBuilder() {
+        return getResyncRequestFieldBuilder().getBuilder();
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder getResyncRequestOrBuilder() {
+        if ((payloadCase_ == 18) && (resyncRequestBuilder_ != null)) {
+          return resyncRequestBuilder_.getMessageOrBuilder();
+        } else {
+          if (payloadCase_ == 18) {
+            return (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_;
+          }
+          return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+        }
+      }
+      /**
+       * <code>.webterm.terminal.screen.v2.ResyncRequest resync_request = 18;</code>
+       */
+      private com.google.protobuf.SingleFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder>
+          getResyncRequestFieldBuilder() {
+        if (resyncRequestBuilder_ == null) {
+          if (!(payloadCase_ == 18)) {
+            payload_ = com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+          }
+          resyncRequestBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder>(
+                  (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) payload_,
+                  getParentForChildren(),
+                  isClean());
+          payload_ = null;
+        }
+        payloadCase_ = 18;
+        onChanged();
+        return resyncRequestBuilder_;
+      }
+
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v2.ScreenEnvelope)
     }
 
@@ -5557,6 +5780,544 @@ public final class TerminalScreenV2Proto {
 
     @java.lang.Override
     public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Hello getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
+  public interface ResyncRequestOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v2.ResyncRequest)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <pre>
+     * 客户端尚未建立首个 Baseline 时允许为 0；服务端不得把这两个水位当作恢复依据。
+     * </pre>
+     *
+     * <code>uint64 layout_epoch = 1;</code>
+     * @return The layoutEpoch.
+     */
+    long getLayoutEpoch();
+
+    /**
+     * <code>uint64 screen_revision = 2;</code>
+     * @return The screenRevision.
+     */
+    long getScreenRevision();
+  }
+  /**
+   * <pre>
+   * 已建立 screen channel 上的权威投影重同步请求。服务端必须返回完整 Baseline，
+   * 不重新附加 client、不重建 logical channel，也不改变 PTY 生命周期。
+   * </pre>
+   *
+   * Protobuf type {@code webterm.terminal.screen.v2.ResyncRequest}
+   */
+  public static final class ResyncRequest extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v2.ResyncRequest)
+      ResyncRequestOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 29,
+        /* patch= */ 2,
+        /* suffix= */ "",
+        ResyncRequest.class.getName());
+    }
+    // Use ResyncRequest.newBuilder() to construct.
+    private ResyncRequest(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private ResyncRequest() {
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_ResyncRequest_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_ResyncRequest_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.class, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder.class);
+    }
+
+    public static final int LAYOUT_EPOCH_FIELD_NUMBER = 1;
+    private long layoutEpoch_ = 0L;
+    /**
+     * <pre>
+     * 客户端尚未建立首个 Baseline 时允许为 0；服务端不得把这两个水位当作恢复依据。
+     * </pre>
+     *
+     * <code>uint64 layout_epoch = 1;</code>
+     * @return The layoutEpoch.
+     */
+    @java.lang.Override
+    public long getLayoutEpoch() {
+      return layoutEpoch_;
+    }
+
+    public static final int SCREEN_REVISION_FIELD_NUMBER = 2;
+    private long screenRevision_ = 0L;
+    /**
+     * <code>uint64 screen_revision = 2;</code>
+     * @return The screenRevision.
+     */
+    @java.lang.Override
+    public long getScreenRevision() {
+      return screenRevision_;
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (layoutEpoch_ != 0L) {
+        output.writeUInt64(1, layoutEpoch_);
+      }
+      if (screenRevision_ != 0L) {
+        output.writeUInt64(2, screenRevision_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (layoutEpoch_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(1, layoutEpoch_);
+      }
+      if (screenRevision_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(2, screenRevision_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest)) {
+        return super.equals(obj);
+      }
+      com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest other = (com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) obj;
+
+      if (getLayoutEpoch()
+          != other.getLayoutEpoch()) return false;
+      if (getScreenRevision()
+          != other.getScreenRevision()) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + LAYOUT_EPOCH_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+          getLayoutEpoch());
+      hash = (37 * hash) + SCREEN_REVISION_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+          getScreenRevision());
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * <pre>
+     * 已建立 screen channel 上的权威投影重同步请求。服务端必须返回完整 Baseline，
+     * 不重新附加 client、不重建 logical channel，也不改变 PTY 生命周期。
+     * </pre>
+     *
+     * Protobuf type {@code webterm.terminal.screen.v2.ResyncRequest}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v2.ResyncRequest)
+        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequestOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_ResyncRequest_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_ResyncRequest_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.class, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.Builder.class);
+      }
+
+      // Construct using com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        layoutEpoch_ = 0L;
+        screenRevision_ = 0L;
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.internal_static_webterm_terminal_screen_v2_ResyncRequest_descriptor;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest getDefaultInstanceForType() {
+        return com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest build() {
+        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest buildPartial() {
+        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest result = new com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.layoutEpoch_ = layoutEpoch_;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.screenRevision_ = screenRevision_;
+        }
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest) {
+          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest other) {
+        if (other == com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest.getDefaultInstance()) return this;
+        if (other.getLayoutEpoch() != 0L) {
+          setLayoutEpoch(other.getLayoutEpoch());
+        }
+        if (other.getScreenRevision() != 0L) {
+          setScreenRevision(other.getScreenRevision());
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 8: {
+                layoutEpoch_ = input.readUInt64();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 8
+              case 16: {
+                screenRevision_ = input.readUInt64();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 16
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private long layoutEpoch_ ;
+      /**
+       * <pre>
+       * 客户端尚未建立首个 Baseline 时允许为 0；服务端不得把这两个水位当作恢复依据。
+       * </pre>
+       *
+       * <code>uint64 layout_epoch = 1;</code>
+       * @return The layoutEpoch.
+       */
+      @java.lang.Override
+      public long getLayoutEpoch() {
+        return layoutEpoch_;
+      }
+      /**
+       * <pre>
+       * 客户端尚未建立首个 Baseline 时允许为 0；服务端不得把这两个水位当作恢复依据。
+       * </pre>
+       *
+       * <code>uint64 layout_epoch = 1;</code>
+       * @param value The layoutEpoch to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLayoutEpoch(long value) {
+
+        layoutEpoch_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 客户端尚未建立首个 Baseline 时允许为 0；服务端不得把这两个水位当作恢复依据。
+       * </pre>
+       *
+       * <code>uint64 layout_epoch = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLayoutEpoch() {
+        bitField0_ = (bitField0_ & ~0x00000001);
+        layoutEpoch_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private long screenRevision_ ;
+      /**
+       * <code>uint64 screen_revision = 2;</code>
+       * @return The screenRevision.
+       */
+      @java.lang.Override
+      public long getScreenRevision() {
+        return screenRevision_;
+      }
+      /**
+       * <code>uint64 screen_revision = 2;</code>
+       * @param value The screenRevision to set.
+       * @return This builder for chaining.
+       */
+      public Builder setScreenRevision(long value) {
+
+        screenRevision_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint64 screen_revision = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearScreenRevision() {
+        bitField0_ = (bitField0_ & ~0x00000002);
+        screenRevision_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v2.ResyncRequest)
+    }
+
+    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v2.ResyncRequest)
+    private static final com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest();
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<ResyncRequest>
+        PARSER = new com.google.protobuf.AbstractParser<ResyncRequest>() {
+      @java.lang.Override
+      public ResyncRequest parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<ResyncRequest> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<ResyncRequest> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.ResyncRequest getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -44264,6 +45025,11 @@ public final class TerminalScreenV2Proto {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_webterm_terminal_screen_v2_Hello_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_webterm_terminal_screen_v2_ResyncRequest_descriptor;
+  private static final
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_webterm_terminal_screen_v2_ResyncRequest_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_webterm_terminal_screen_v2_ResumeScreenLine_descriptor;
   private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -44493,7 +45259,7 @@ public final class TerminalScreenV2Proto {
   static {
     java.lang.String[] descriptorData = {
       "\n%shared/proto/terminal_screen_v2.proto\022" +
-      "\032webterm.terminal.screen.v2\"\277\007\n\016ScreenEn" +
+      "\032webterm.terminal.screen.v2\"\376\007\n\016ScreenEn" +
       "velope\022\030\n\020protocol_version\030\001 \001(\r\0222\n\005hell" +
       "o\030\002 \001(\0132!.webterm.terminal.screen.v2.Hel" +
       "loH\000\0228\n\010baseline\030\003 \001(\0132$.webterm.termina" +
@@ -44516,201 +45282,204 @@ public final class TerminalScreenV2Proto {
       "_commit\030\026 \001(\0132*.webterm.terminal.screen." +
       "v2.TerminalCommitH\000\022E\n\017resume_accepted\030\027" +
       " \001(\0132*.webterm.terminal.screen.v2.Resume" +
-      "AcceptedH\000B\t\n\007payloadJ\004\010\004\020\005J\004\010\005\020\006J\004\010\006\020\007J" +
-      "\004\010\007\020\010J\004\010\010\020\tJ\004\010\t\020\nJ\004\010\017\020\020J\004\010\022\020\023\"\354\001\n\005Hello\022" +
-      "7\n\006resume\030\004 \001(\0132\'.webterm.terminal.scree" +
-      "n.v2.ResumeToken\022>\n\020desired_geometry\030\007 \001" +
-      "(\0132$.webterm.terminal.screen.v2.Geometry" +
-      "\022F\n\021initial_sync_mode\030\t \001(\0162+.webterm.te" +
-      "rminal.screen.v2.InitialSyncModeJ\004\010\001\020\002J\004" +
-      "\010\002\020\003J\004\010\003\020\004J\004\010\005\020\006J\004\010\006\020\007J\004\010\010\020\t\"9\n\020ResumeSc" +
-      "reenLine\022\017\n\007line_id\030\001 \001(\004\022\024\n\014line_versio" +
-      "n\030\002 \001(\004\"\232\002\n\013ResumeToken\022\023\n\013instance_id\030\001" +
-      " \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\027\n\017screen_rev" +
-      "ision\030\003 \001(\004\022\035\n\025dictionary_generation\030\004 \001" +
-      "(\004\022\032\n\022history_generation\030\005 \001(\004\022=\n\ractive" +
-      "_buffer\030\007 \001(\0162&.webterm.terminal.screen." +
-      "v2.BufferKind\022A\n\013active_rows\030\010 \003(\0132,.web" +
-      "term.terminal.screen.v2.ResumeScreenLine" +
-      "J\004\010\006\020\007J\004\010\t\020\n\"\322\001\n\016ResumeAccepted\022\023\n\013insta" +
-      "nce_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\027\n\017sc" +
-      "reen_revision\030\003 \001(\004\022\035\n\025dictionary_genera" +
-      "tion\030\004 \001(\004\022\032\n\022history_generation\030\005 \001(\004\022A" +
-      "\n\016history_extent\030\006 \001(\0132).webterm.termina" +
-      "l.screen.v2.HistoryExtent\"&\n\010Geometry\022\014\n" +
-      "\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\"4\n\rHistoryExte" +
-      "nt\022\021\n\tfirst_seq\030\001 \001(\004\022\020\n\010last_seq\030\002 \001(\004\"" +
-      "}\n\nDictionary\0229\n\006styles\030\001 \003(\0132).webterm." +
-      "terminal.screen.v2.TerminalStyle\0224\n\005link" +
-      "s\030\002 \003(\0132%.webterm.terminal.screen.v2.Hyp" +
-      "erlink\"\211\006\n\010Baseline\022\022\n\nsession_id\030\001 \001(\t\022" +
-      "\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001" +
-      "(\004\022\027\n\017screen_revision\030\004 \001(\004\0226\n\010geometry\030" +
-      "\006 \001(\0132$.webterm.terminal.screen.v2.Geome" +
-      "try\022=\n\ractive_buffer\030\007 \001(\0162&.webterm.ter" +
-      "minal.screen.v2.BufferKind\022A\n\016history_ex" +
-      "tent\030\010 \001(\0132).webterm.terminal.screen.v2." +
-      "HistoryExtent\022?\n\rscreen_layout\030\n \001(\0132(.w" +
-      "ebterm.terminal.screen.v2.ScreenLayout\022:" +
-      "\n\014screen_lines\030\013 \003(\0132$.webterm.terminal." +
-      "screen.v2.LineData\0222\n\006cursor\030\014 \001(\0132\".web" +
+      "AcceptedH\000\022C\n\016resync_request\030\022 \001(\0132).web" +
+      "term.terminal.screen.v2.ResyncRequestH\000B" +
+      "\t\n\007payloadJ\004\010\004\020\005J\004\010\005\020\006J\004\010\006\020\007J\004\010\007\020\010J\004\010\010\020\t" +
+      "J\004\010\t\020\nJ\004\010\017\020\020\"\354\001\n\005Hello\0227\n\006resume\030\004 \001(\0132\'" +
+      ".webterm.terminal.screen.v2.ResumeToken\022" +
+      ">\n\020desired_geometry\030\007 \001(\0132$.webterm.term" +
+      "inal.screen.v2.Geometry\022F\n\021initial_sync_" +
+      "mode\030\t \001(\0162+.webterm.terminal.screen.v2." +
+      "InitialSyncModeJ\004\010\001\020\002J\004\010\002\020\003J\004\010\003\020\004J\004\010\005\020\006J" +
+      "\004\010\006\020\007J\004\010\010\020\t\">\n\rResyncRequest\022\024\n\014layout_e" +
+      "poch\030\001 \001(\004\022\027\n\017screen_revision\030\002 \001(\004\"9\n\020R" +
+      "esumeScreenLine\022\017\n\007line_id\030\001 \001(\004\022\024\n\014line" +
+      "_version\030\002 \001(\004\"\232\002\n\013ResumeToken\022\023\n\013instan" +
+      "ce_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\027\n\017scr" +
+      "een_revision\030\003 \001(\004\022\035\n\025dictionary_generat" +
+      "ion\030\004 \001(\004\022\032\n\022history_generation\030\005 \001(\004\022=\n" +
+      "\ractive_buffer\030\007 \001(\0162&.webterm.terminal." +
+      "screen.v2.BufferKind\022A\n\013active_rows\030\010 \003(" +
+      "\0132,.webterm.terminal.screen.v2.ResumeScr" +
+      "eenLineJ\004\010\006\020\007J\004\010\t\020\n\"\322\001\n\016ResumeAccepted\022\023" +
+      "\n\013instance_id\030\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(" +
+      "\004\022\027\n\017screen_revision\030\003 \001(\004\022\035\n\025dictionary" +
+      "_generation\030\004 \001(\004\022\032\n\022history_generation\030" +
+      "\005 \001(\004\022A\n\016history_extent\030\006 \001(\0132).webterm." +
+      "terminal.screen.v2.HistoryExtent\"&\n\010Geom" +
+      "etry\022\014\n\004rows\030\001 \001(\005\022\014\n\004cols\030\002 \001(\005\"4\n\rHist" +
+      "oryExtent\022\021\n\tfirst_seq\030\001 \001(\004\022\020\n\010last_seq" +
+      "\030\002 \001(\004\"}\n\nDictionary\0229\n\006styles\030\001 \003(\0132).w" +
+      "ebterm.terminal.screen.v2.TerminalStyle\022" +
+      "4\n\005links\030\002 \003(\0132%.webterm.terminal.screen" +
+      ".v2.Hyperlink\"\211\006\n\010Baseline\022\022\n\nsession_id" +
+      "\030\001 \001(\t\022\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_ep" +
+      "och\030\003 \001(\004\022\027\n\017screen_revision\030\004 \001(\004\0226\n\010ge" +
+      "ometry\030\006 \001(\0132$.webterm.terminal.screen.v" +
+      "2.Geometry\022=\n\ractive_buffer\030\007 \001(\0162&.webt" +
+      "erm.terminal.screen.v2.BufferKind\022A\n\016his" +
+      "tory_extent\030\010 \001(\0132).webterm.terminal.scr" +
+      "een.v2.HistoryExtent\022?\n\rscreen_layout\030\n " +
+      "\001(\0132(.webterm.terminal.screen.v2.ScreenL" +
+      "ayout\022:\n\014screen_lines\030\013 \003(\0132$.webterm.te" +
+      "rminal.screen.v2.LineData\0222\n\006cursor\030\014 \001(" +
+      "\0132\".webterm.terminal.screen.v2.Cursor\0220\n" +
+      "\005modes\030\r \001(\0132!.webterm.terminal.screen.v" +
+      "2.Modes\022<\n\007palette\030\016 \001(\0132+.webterm.termi" +
+      "nal.screen.v2.TerminalPalette\022:\n\ndiction" +
+      "ary\030\017 \001(\0132&.webterm.terminal.screen.v2.D" +
+      "ictionary\022\035\n\025dictionary_generation\030\020 \001(\004" +
+      "\022\032\n\022history_generation\030\021 \001(\004\022A\n\020history_" +
+      "bindings\030\022 \003(\0132\'.webterm.terminal.screen" +
+      ".v2.HistoryPushJ\004\010\005\020\006J\004\010\t\020\nJ\004\010\023\020\024\"\337\004\n\016Te" +
+      "rminalCommit\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014lay" +
+      "out_epoch\030\002 \001(\004\022\025\n\rbase_revision\030\004 \001(\004\022\020" +
+      "\n\010revision\030\005 \001(\004\022:\n\006screen\030\006 \001(\0132*.webte" +
+      "rm.terminal.screen.v2.ScreenMutation\022<\n\007" +
+      "history\030\007 \001(\0132+.webterm.terminal.screen." +
+      "v2.HistoryMutation\0222\n\006cursor\030\010 \001(\0132\".web" +
       "term.terminal.screen.v2.Cursor\0220\n\005modes\030" +
-      "\r \001(\0132!.webterm.terminal.screen.v2.Modes" +
-      "\022<\n\007palette\030\016 \001(\0132+.webterm.terminal.scr" +
-      "een.v2.TerminalPalette\022:\n\ndictionary\030\017 \001" +
-      "(\0132&.webterm.terminal.screen.v2.Dictiona" +
-      "ry\022\035\n\025dictionary_generation\030\020 \001(\004\022\032\n\022his" +
-      "tory_generation\030\021 \001(\004\022A\n\020history_binding" +
-      "s\030\022 \003(\0132\'.webterm.terminal.screen.v2.His" +
-      "toryPushJ\004\010\005\020\006J\004\010\t\020\nJ\004\010\023\020\024\"\337\004\n\016TerminalC" +
-      "ommit\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layout_epo" +
-      "ch\030\002 \001(\004\022\025\n\rbase_revision\030\004 \001(\004\022\020\n\010revis" +
-      "ion\030\005 \001(\004\022:\n\006screen\030\006 \001(\0132*.webterm.term" +
-      "inal.screen.v2.ScreenMutation\022<\n\007history" +
-      "\030\007 \001(\0132+.webterm.terminal.screen.v2.Hist" +
-      "oryMutation\0222\n\006cursor\030\010 \001(\0132\".webterm.te" +
-      "rminal.screen.v2.Cursor\0220\n\005modes\030\t \001(\0132!" +
-      ".webterm.terminal.screen.v2.Modes\022<\n\007pal" +
-      "ette\030\n \001(\0132+.webterm.terminal.screen.v2." +
-      "TerminalPalette\022D\n\024dictionary_additions\030" +
-      "\013 \001(\0132&.webterm.terminal.screen.v2.Dicti" +
-      "onary\022B\n\ractive_buffer\030\014 \001(\0162&.webterm.t" +
-      "erminal.screen.v2.BufferKindH\000\210\001\001\022\035\n\025dic" +
-      "tionary_generation\030\r \001(\004\022\032\n\022history_gene" +
-      "ration\030\016 \001(\004B\020\n\016_active_bufferJ\004\010\003\020\004\"\206\001\n" +
-      "\016ScreenMutation\0228\n\006scroll\030\001 \001(\0132(.webter" +
-      "m.terminal.screen.v2.ScreenScroll\022:\n\006wri" +
-      "tes\030\002 \003(\0132*.webterm.terminal.screen.v2.S" +
-      "creenRowWrite\"Q\n\014ScreenScroll\022\017\n\007top_row" +
-      "\030\001 \001(\005\022\034\n\024bottom_row_exclusive\030\002 \001(\005\022\022\n\n" +
-      "delta_rows\030\003 \001(\005\"Q\n\016ScreenRowWrite\022\013\n\003ro" +
-      "w\030\001 \001(\005\0222\n\004line\030\002 \001(\0132$.webterm.terminal" +
-      ".screen.v2.LineData\"\227\001\n\017HistoryMutation\022" +
-      "?\n\014final_extent\030\001 \001(\0132).webterm.terminal" +
-      ".screen.v2.HistoryExtent\0227\n\006pushes\030\002 \003(\013" +
-      "2\'.webterm.terminal.screen.v2.HistoryPus" +
-      "hJ\004\010\003\020\004J\004\010\004\020\005\"I\n\013HistoryPush\022\023\n\013history_" +
-      "seq\030\001 \001(\004\022\017\n\007line_id\030\002 \001(\004\022\024\n\014line_versi" +
-      "on\030\003 \001(\004\" \n\014ScreenLayout\022\020\n\010line_ids\030\001 \003" +
-      "(\004\"\332\001\n\010LineData\022\017\n\007line_id\030\001 \001(\004\022\024\n\014line" +
-      "_version\030\002 \001(\004\022\017\n\007wrapped\030\003 \001(\010\022\021\n\tutf8_" +
-      "text\030\004 \001(\014\022:\n\013style_spans\030\005 \003(\0132%.webter" +
-      "m.terminal.screen.v2.StyleSpan\022\023\n\013histor" +
-      "y_seq\030\007 \001(\004\022\022\n\nglyph_meta\030\010 \001(\014\022\030\n\020physi" +
-      "cal_columns\030\t \001(\rJ\004\010\006\020\007\"R\n\tStyleSpan\022\021\n\t" +
-      "start_col\030\001 \001(\005\022\017\n\007end_col\030\002 \001(\005\022\020\n\010styl" +
-      "e_id\030\003 \001(\r\022\017\n\007link_id\030\004 \001(\r\"X\n\005Color\0223\n\004" +
-      "kind\030\001 \001(\0162%.webterm.terminal.screen.v2." +
-      "ColorKind\022\r\n\005index\030\002 \001(\005\022\013\n\003rgb\030\003 \001(\r\"\353\001" +
-      "\n\rTerminalStyle\022\n\n\002id\030\001 \001(\r\022-\n\002fg\030\002 \001(\0132" +
-      "!.webterm.terminal.screen.v2.Color\022-\n\002bg" +
-      "\030\003 \001(\0132!.webterm.terminal.screen.v2.Colo" +
-      "r\022:\n\017underline_color\030\004 \001(\0132!.webterm.ter" +
-      "minal.screen.v2.Color\0224\n\005attrs\030\005 \001(\0132%.w" +
-      "ebterm.terminal.screen.v2.CellAttrs\"\211\002\n\t" +
-      "CellAttrs\022\014\n\004bold\030\001 \001(\010\022\013\n\003dim\030\002 \001(\010\022\016\n\006" +
-      "italic\030\003 \001(\010\022\021\n\tunderline\030\004 \001(\010\022\030\n\020doubl" +
-      "e_underline\030\005 \001(\010\022\027\n\017curly_underline\030\006 \001" +
-      "(\010\022\030\n\020dotted_underline\030\007 \001(\010\022\030\n\020dashed_u" +
-      "nderline\030\010 \001(\010\022\022\n\nblink_slow\030\t \001(\010\022\022\n\nbl" +
-      "ink_fast\030\n \001(\010\022\017\n\007reverse\030\013 \001(\010\022\016\n\006hidde" +
-      "n\030\014 \001(\010\022\016\n\006strike\030\r \001(\010\"4\n\tHyperlink\022\n\n\002" +
-      "id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t\022\016\n\006params\030\003 \001(\t\"z\n" +
-      "\006Cursor\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\022\017\n\007vis" +
-      "ible\030\003 \001(\010\0226\n\005shape\030\004 \001(\0162\'.webterm.term" +
-      "inal.screen.v2.CursorShape\022\r\n\005blink\030\005 \001(" +
-      "\010\"\367\001\n\005Modes\022\032\n\022application_cursor\030\001 \001(\010\022" +
-      "\032\n\022application_keypad\030\002 \001(\010\022\027\n\017bracketed" +
-      "_paste\030\003 \001(\010\022A\n\016mouse_tracking\030\004 \001(\0162).w" +
-      "ebterm.terminal.screen.v2.MouseTracking\022" +
-      "A\n\016mouse_encoding\030\005 \001(\0162).webterm.termin" +
-      "al.screen.v2.MouseEncoding\022\027\n\017focus_repo" +
-      "rting\030\006 \001(\010\"\254\002\n\017TerminalPalette\0225\n\ndefau" +
-      "lt_fg\030\001 \001(\0132!.webterm.terminal.screen.v2" +
-      ".Color\0225\n\ndefault_bg\030\002 \001(\0132!.webterm.ter" +
-      "minal.screen.v2.Color\0227\n\014cursor_color\030\003 " +
-      "\001(\0132!.webterm.terminal.screen.v2.Color\022\025" +
-      "\n\rreverse_video\030\004 \001(\010\022G\n\016indexed_colors\030" +
-      "\005 \003(\0132/.webterm.terminal.screen.v2.Index" +
-      "edPaletteColor\022\022\n\ngeneration\030\006 \001(\004\"1\n\023In" +
-      "dexedPaletteColor\022\r\n\005index\030\001 \001(\005\022\013\n\003rgb\030" +
-      "\002 \001(\r\"8\n\rAcquireLayout\022\022\n\nrequest_id\030\001 \001" +
-      "(\t\022\023\n\013interactive\030\002 \001(\010\"\250\001\n\013LayoutLease\022" +
-      "\022\n\nrequest_id\030\001 \001(\t\022\020\n\010lease_id\030\002 \001(\t\022\017\n" +
-      "\007granted\030\003 \001(\010\022\023\n\013interactive\030\004 \001(\010\0226\n\010g" +
-      "eometry\030\005 \001(\0132$.webterm.terminal.screen." +
-      "v2.Geometry\022\025\n\rexpires_at_ms\030\006 \001(\004\"!\n\rRe" +
-      "leaseLayout\022\020\n\010lease_id\030\001 \001(\t\"J\n\006Resize\022" +
-      "\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010lease_id\030" +
-      "\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\315\002\n\rTerminalIn" +
-      "put\022\020\n\010lease_id\030\001 \001(\t\0225\n\004text\030\n \001(\0132%.we" +
-      "bterm.terminal.screen.v2.TextInputH\000\0223\n\003" +
-      "key\030\013 \001(\0132$.webterm.terminal.screen.v2.K" +
-      "eyInputH\000\0227\n\005paste\030\014 \001(\0132&.webterm.termi" +
-      "nal.screen.v2.PasteInputH\000\0227\n\005mouse\030\r \001(" +
-      "\0132&.webterm.terminal.screen.v2.MouseInpu" +
-      "tH\000\0227\n\005focus\030\016 \001(\0132&.webterm.terminal.sc" +
-      "reen.v2.FocusInputH\000B\007\n\005inputJ\004\010\002\020\003J\004\010\003\020" +
-      "\004\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInput" +
-      "\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132\'.webte" +
-      "rm.terminal.screen.v2.ModifierSet\022\017\n\007pre" +
-      "ssed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004data\030\001 \001(\t\"\301" +
-      "\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\022" +
-      "7\n\006button\030\003 \001(\0162\'.webterm.terminal.scree" +
-      "n.v2.MouseButton\022\023\n\013wheel_delta\030\004 \001(\005\022:\n" +
-      "\tmodifiers\030\005 \001(\0132\'.webterm.terminal.scre" +
-      "en.v2.ModifierSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFo" +
-      "cusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013ModifierSet" +
-      "\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001" +
-      "(\010\022\014\n\004meta\030\004 \001(\010\"\365\002\n\016TerminalEffect\022\023\n\013i" +
-      "nstance_id\030\001 \001(\t\022\027\n\017screen_revision\030\002 \001(" +
-      "\004\0220\n\004bell\030\n \001(\0132 .webterm.terminal.scree" +
-      "n.v2.BellH\000\022J\n\016clipboard_read\030\r \001(\01320.we" +
-      "bterm.terminal.screen.v2.ClipboardReadRe" +
-      "questH\000\022L\n\017clipboard_write\030\016 \001(\01321.webte" +
-      "rm.terminal.screen.v2.ClipboardWriteRequ" +
-      "estH\000\022G\n\014notification\030\017 \001(\0132/.webterm.te" +
-      "rminal.screen.v2.DesktopNotificationH\000B\010" +
-      "\n\006effectJ\004\010\013\020\014J\004\010\014\020\rJ\004\010\020\020\021J\004\010\021\020\022\"\006\n\004Bell" +
-      "\"=\n\024ClipboardReadRequest\022\022\n\nrequest_id\030\001" +
-      " \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025ClipboardWrit" +
-      "eRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboar" +
-      "d\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopNotifica" +
-      "tion\022\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t\"W\n\021Cli" +
-      "pboardResponse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007al" +
-      "lowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001" +
-      "(\014\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005\"\037\n\004Ping\022\027\n\017scre" +
-      "en_revision\030\001 \001(\004\"\037\n\004Pong\022\027\n\017screen_revi" +
-      "sion\030\001 \001(\004*S\n\017InitialSyncMode\022\032\n\026INITIAL" +
-      "_SYNC_MODE_AUTO\020\000\022$\n INITIAL_SYNC_MODE_F" +
-      "ORCE_BASELINE\020\001*Z\n\nBufferKind\022\033\n\027BUFFER_" +
-      "KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND_MAIN\020\001" +
-      "\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tColorKin" +
-      "d\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025COLOR_K" +
-      "IND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DEFAULT_B" +
-      "G\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COLOR_KIND" +
-      "_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n\013Cursor" +
-      "Shape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED\020\000\022\026\n\022C" +
-      "URSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHAPE_BAR\020" +
-      "\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n\rMouseT" +
-      "racking\022\036\n\032MOUSE_TRACKING_UNSPECIFIED\020\000\022" +
-      "\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE_TRACKI" +
-      "NG_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020\003\022\"\n\036MO" +
-      "USE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n\033MOUSE_" +
-      "TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_TRACKIN" +
-      "G_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_SGR_PIXE" +
-      "LS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_ENCODING" +
-      "_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_X10\020\001\022\027" +
-      "\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_ENCODIN" +
-      "G_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004*\242\001\n\013Mo" +
-      "useButton\022\034\n\030MOUSE_BUTTON_UNSPECIFIED\020\000\022" +
-      "\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTTON_M" +
-      "IDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MOUSE" +
-      "_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020\005Bu" +
-      "\n\'com.webterm.terminal.protocol.generate" +
-      "dB\025TerminalScreenV2ProtoZ3webterm/go-cor" +
-      "e/internal/screenprotocol/generatedv2b\006p" +
-      "roto3"
+      "\t \001(\0132!.webterm.terminal.screen.v2.Modes" +
+      "\022<\n\007palette\030\n \001(\0132+.webterm.terminal.scr" +
+      "een.v2.TerminalPalette\022D\n\024dictionary_add" +
+      "itions\030\013 \001(\0132&.webterm.terminal.screen.v" +
+      "2.Dictionary\022B\n\ractive_buffer\030\014 \001(\0162&.we" +
+      "bterm.terminal.screen.v2.BufferKindH\000\210\001\001" +
+      "\022\035\n\025dictionary_generation\030\r \001(\004\022\032\n\022histo" +
+      "ry_generation\030\016 \001(\004B\020\n\016_active_bufferJ\004\010" +
+      "\003\020\004\"\206\001\n\016ScreenMutation\0228\n\006scroll\030\001 \001(\0132(" +
+      ".webterm.terminal.screen.v2.ScreenScroll" +
+      "\022:\n\006writes\030\002 \003(\0132*.webterm.terminal.scre" +
+      "en.v2.ScreenRowWrite\"Q\n\014ScreenScroll\022\017\n\007" +
+      "top_row\030\001 \001(\005\022\034\n\024bottom_row_exclusive\030\002 " +
+      "\001(\005\022\022\n\ndelta_rows\030\003 \001(\005\"Q\n\016ScreenRowWrit" +
+      "e\022\013\n\003row\030\001 \001(\005\0222\n\004line\030\002 \001(\0132$.webterm.t" +
+      "erminal.screen.v2.LineData\"\227\001\n\017HistoryMu" +
+      "tation\022?\n\014final_extent\030\001 \001(\0132).webterm.t" +
+      "erminal.screen.v2.HistoryExtent\0227\n\006pushe" +
+      "s\030\002 \003(\0132\'.webterm.terminal.screen.v2.His" +
+      "toryPushJ\004\010\003\020\004J\004\010\004\020\005\"I\n\013HistoryPush\022\023\n\013h" +
+      "istory_seq\030\001 \001(\004\022\017\n\007line_id\030\002 \001(\004\022\024\n\014lin" +
+      "e_version\030\003 \001(\004\" \n\014ScreenLayout\022\020\n\010line_" +
+      "ids\030\001 \003(\004\"\332\001\n\010LineData\022\017\n\007line_id\030\001 \001(\004\022" +
+      "\024\n\014line_version\030\002 \001(\004\022\017\n\007wrapped\030\003 \001(\010\022\021" +
+      "\n\tutf8_text\030\004 \001(\014\022:\n\013style_spans\030\005 \003(\0132%" +
+      ".webterm.terminal.screen.v2.StyleSpan\022\023\n" +
+      "\013history_seq\030\007 \001(\004\022\022\n\nglyph_meta\030\010 \001(\014\022\030" +
+      "\n\020physical_columns\030\t \001(\rJ\004\010\006\020\007\"R\n\tStyleS" +
+      "pan\022\021\n\tstart_col\030\001 \001(\005\022\017\n\007end_col\030\002 \001(\005\022" +
+      "\020\n\010style_id\030\003 \001(\r\022\017\n\007link_id\030\004 \001(\r\"X\n\005Co" +
+      "lor\0223\n\004kind\030\001 \001(\0162%.webterm.terminal.scr" +
+      "een.v2.ColorKind\022\r\n\005index\030\002 \001(\005\022\013\n\003rgb\030\003" +
+      " \001(\r\"\353\001\n\rTerminalStyle\022\n\n\002id\030\001 \001(\r\022-\n\002fg" +
+      "\030\002 \001(\0132!.webterm.terminal.screen.v2.Colo" +
+      "r\022-\n\002bg\030\003 \001(\0132!.webterm.terminal.screen." +
+      "v2.Color\022:\n\017underline_color\030\004 \001(\0132!.webt" +
+      "erm.terminal.screen.v2.Color\0224\n\005attrs\030\005 " +
+      "\001(\0132%.webterm.terminal.screen.v2.CellAtt" +
+      "rs\"\211\002\n\tCellAttrs\022\014\n\004bold\030\001 \001(\010\022\013\n\003dim\030\002 " +
+      "\001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tunderline\030\004 \001(\010\022\030" +
+      "\n\020double_underline\030\005 \001(\010\022\027\n\017curly_underl" +
+      "ine\030\006 \001(\010\022\030\n\020dotted_underline\030\007 \001(\010\022\030\n\020d" +
+      "ashed_underline\030\010 \001(\010\022\022\n\nblink_slow\030\t \001(" +
+      "\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007reverse\030\013 \001(\010\022\016" +
+      "\n\006hidden\030\014 \001(\010\022\016\n\006strike\030\r \001(\010\"4\n\tHyperl" +
+      "ink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t\022\016\n\006params\030\003" +
+      " \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005" +
+      "\022\017\n\007visible\030\003 \001(\010\0226\n\005shape\030\004 \001(\0162\'.webte" +
+      "rm.terminal.screen.v2.CursorShape\022\r\n\005bli" +
+      "nk\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022application_cursor" +
+      "\030\001 \001(\010\022\032\n\022application_keypad\030\002 \001(\010\022\027\n\017br" +
+      "acketed_paste\030\003 \001(\010\022A\n\016mouse_tracking\030\004 " +
+      "\001(\0162).webterm.terminal.screen.v2.MouseTr" +
+      "acking\022A\n\016mouse_encoding\030\005 \001(\0162).webterm" +
+      ".terminal.screen.v2.MouseEncoding\022\027\n\017foc" +
+      "us_reporting\030\006 \001(\010\"\254\002\n\017TerminalPalette\0225" +
+      "\n\ndefault_fg\030\001 \001(\0132!.webterm.terminal.sc" +
+      "reen.v2.Color\0225\n\ndefault_bg\030\002 \001(\0132!.webt" +
+      "erm.terminal.screen.v2.Color\0227\n\014cursor_c" +
+      "olor\030\003 \001(\0132!.webterm.terminal.screen.v2." +
+      "Color\022\025\n\rreverse_video\030\004 \001(\010\022G\n\016indexed_" +
+      "colors\030\005 \003(\0132/.webterm.terminal.screen.v" +
+      "2.IndexedPaletteColor\022\022\n\ngeneration\030\006 \001(" +
+      "\004\"1\n\023IndexedPaletteColor\022\r\n\005index\030\001 \001(\005\022" +
+      "\013\n\003rgb\030\002 \001(\r\"8\n\rAcquireLayout\022\022\n\nrequest" +
+      "_id\030\001 \001(\t\022\023\n\013interactive\030\002 \001(\010\"\250\001\n\013Layou" +
+      "tLease\022\022\n\nrequest_id\030\001 \001(\t\022\020\n\010lease_id\030\002" +
+      " \001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013interactive\030\004 \001" +
+      "(\010\0226\n\010geometry\030\005 \001(\0132$.webterm.terminal." +
+      "screen.v2.Geometry\022\025\n\rexpires_at_ms\030\006 \001(" +
+      "\004\"!\n\rReleaseLayout\022\020\n\010lease_id\030\001 \001(\t\"J\n\006" +
+      "Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010le" +
+      "ase_id\030\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\315\002\n\rTer" +
+      "minalInput\022\020\n\010lease_id\030\001 \001(\t\0225\n\004text\030\n \001" +
+      "(\0132%.webterm.terminal.screen.v2.TextInpu" +
+      "tH\000\0223\n\003key\030\013 \001(\0132$.webterm.terminal.scre" +
+      "en.v2.KeyInputH\000\0227\n\005paste\030\014 \001(\0132&.webter" +
+      "m.terminal.screen.v2.PasteInputH\000\0227\n\005mou" +
+      "se\030\r \001(\0132&.webterm.terminal.screen.v2.Mo" +
+      "useInputH\000\0227\n\005focus\030\016 \001(\0132&.webterm.term" +
+      "inal.screen.v2.FocusInputH\000B\007\n\005inputJ\004\010\002" +
+      "\020\003J\004\010\003\020\004\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"d\n\010K" +
+      "eyInput\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132" +
+      "\'.webterm.terminal.screen.v2.ModifierSet" +
+      "\022\017\n\007pressed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004data\030" +
+      "\001 \001(\t\"\301\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col" +
+      "\030\002 \001(\005\0227\n\006button\030\003 \001(\0162\'.webterm.termina" +
+      "l.screen.v2.MouseButton\022\023\n\013wheel_delta\030\004" +
+      " \001(\005\022:\n\tmodifiers\030\005 \001(\0132\'.webterm.termin" +
+      "al.screen.v2.ModifierSet\022\017\n\007pressed\030\006 \001(" +
+      "\010\"\035\n\nFocusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013Modi" +
+      "fierSet\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004c" +
+      "trl\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"\365\002\n\016TerminalEffe" +
+      "ct\022\023\n\013instance_id\030\001 \001(\t\022\027\n\017screen_revisi" +
+      "on\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 .webterm.termina" +
+      "l.screen.v2.BellH\000\022J\n\016clipboard_read\030\r \001" +
+      "(\01320.webterm.terminal.screen.v2.Clipboar" +
+      "dReadRequestH\000\022L\n\017clipboard_write\030\016 \001(\0132" +
+      "1.webterm.terminal.screen.v2.ClipboardWr" +
+      "iteRequestH\000\022G\n\014notification\030\017 \001(\0132/.web" +
+      "term.terminal.screen.v2.DesktopNotificat" +
+      "ionH\000B\010\n\006effectJ\004\010\013\020\014J\004\010\014\020\rJ\004\010\020\020\021J\004\010\021\020\022\"" +
+      "\006\n\004Bell\"=\n\024ClipboardReadRequest\022\022\n\nreque" +
+      "st_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025Clipbo" +
+      "ardWriteRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tc" +
+      "lipboard\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopN" +
+      "otification\022\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t" +
+      "\"W\n\021ClipboardResponse\022\022\n\nrequest_id\030\001 \001(" +
+      "\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004d" +
+      "ata\030\004 \001(\014\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005\"\037\n\004Ping\022" +
+      "\027\n\017screen_revision\030\001 \001(\004\"\037\n\004Pong\022\027\n\017scre" +
+      "en_revision\030\001 \001(\004*S\n\017InitialSyncMode\022\032\n\026" +
+      "INITIAL_SYNC_MODE_AUTO\020\000\022$\n INITIAL_SYNC" +
+      "_MODE_FORCE_BASELINE\020\001*Z\n\nBufferKind\022\033\n\027" +
+      "BUFFER_KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND" +
+      "_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tC" +
+      "olorKind\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025" +
+      "COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DE" +
+      "FAULT_BG\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COL" +
+      "OR_KIND_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n" +
+      "\013CursorShape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED" +
+      "\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHA" +
+      "PE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n" +
+      "\rMouseTracking\022\036\n\032MOUSE_TRACKING_UNSPECI" +
+      "FIED\020\000\022\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE" +
+      "_TRACKING_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020" +
+      "\003\022\"\n\036MOUSE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n" +
+      "\033MOUSE_TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_" +
+      "TRACKING_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_S" +
+      "GR_PIXELS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_E" +
+      "NCODING_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_" +
+      "X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_" +
+      "ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004" +
+      "*\242\001\n\013MouseButton\022\034\n\030MOUSE_BUTTON_UNSPECI" +
+      "FIED\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_B" +
+      "UTTON_MIDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026" +
+      "\n\022MOUSE_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_M" +
+      "OVE\020\005Bu\n\'com.webterm.terminal.protocol.g" +
+      "eneratedB\025TerminalScreenV2ProtoZ3webterm" +
+      "/go-core/internal/screenprotocol/generat" +
+      "edv2b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -44721,273 +45490,279 @@ public final class TerminalScreenV2Proto {
     internal_static_webterm_terminal_screen_v2_ScreenEnvelope_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ScreenEnvelope_descriptor,
-        new java.lang.String[] { "ProtocolVersion", "Hello", "Baseline", "AcquireLayout", "LayoutLease", "ReleaseLayout", "Resize", "Input", "Effect", "ClipboardResponse", "Exit", "Ping", "Pong", "TerminalCommit", "ResumeAccepted", "Payload", });
+        new java.lang.String[] { "ProtocolVersion", "Hello", "Baseline", "AcquireLayout", "LayoutLease", "ReleaseLayout", "Resize", "Input", "Effect", "ClipboardResponse", "Exit", "Ping", "Pong", "TerminalCommit", "ResumeAccepted", "ResyncRequest", "Payload", });
     internal_static_webterm_terminal_screen_v2_Hello_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_webterm_terminal_screen_v2_Hello_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Hello_descriptor,
         new java.lang.String[] { "Resume", "DesiredGeometry", "InitialSyncMode", });
-    internal_static_webterm_terminal_screen_v2_ResumeScreenLine_descriptor =
+    internal_static_webterm_terminal_screen_v2_ResyncRequest_descriptor =
       getDescriptor().getMessageTypes().get(2);
+    internal_static_webterm_terminal_screen_v2_ResyncRequest_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_webterm_terminal_screen_v2_ResyncRequest_descriptor,
+        new java.lang.String[] { "LayoutEpoch", "ScreenRevision", });
+    internal_static_webterm_terminal_screen_v2_ResumeScreenLine_descriptor =
+      getDescriptor().getMessageTypes().get(3);
     internal_static_webterm_terminal_screen_v2_ResumeScreenLine_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ResumeScreenLine_descriptor,
         new java.lang.String[] { "LineId", "LineVersion", });
     internal_static_webterm_terminal_screen_v2_ResumeToken_descriptor =
-      getDescriptor().getMessageTypes().get(3);
+      getDescriptor().getMessageTypes().get(4);
     internal_static_webterm_terminal_screen_v2_ResumeToken_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ResumeToken_descriptor,
         new java.lang.String[] { "InstanceId", "LayoutEpoch", "ScreenRevision", "DictionaryGeneration", "HistoryGeneration", "ActiveBuffer", "ActiveRows", });
     internal_static_webterm_terminal_screen_v2_ResumeAccepted_descriptor =
-      getDescriptor().getMessageTypes().get(4);
+      getDescriptor().getMessageTypes().get(5);
     internal_static_webterm_terminal_screen_v2_ResumeAccepted_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ResumeAccepted_descriptor,
         new java.lang.String[] { "InstanceId", "LayoutEpoch", "ScreenRevision", "DictionaryGeneration", "HistoryGeneration", "HistoryExtent", });
     internal_static_webterm_terminal_screen_v2_Geometry_descriptor =
-      getDescriptor().getMessageTypes().get(5);
+      getDescriptor().getMessageTypes().get(6);
     internal_static_webterm_terminal_screen_v2_Geometry_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Geometry_descriptor,
         new java.lang.String[] { "Rows", "Cols", });
     internal_static_webterm_terminal_screen_v2_HistoryExtent_descriptor =
-      getDescriptor().getMessageTypes().get(6);
+      getDescriptor().getMessageTypes().get(7);
     internal_static_webterm_terminal_screen_v2_HistoryExtent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_HistoryExtent_descriptor,
         new java.lang.String[] { "FirstSeq", "LastSeq", });
     internal_static_webterm_terminal_screen_v2_Dictionary_descriptor =
-      getDescriptor().getMessageTypes().get(7);
+      getDescriptor().getMessageTypes().get(8);
     internal_static_webterm_terminal_screen_v2_Dictionary_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Dictionary_descriptor,
         new java.lang.String[] { "Styles", "Links", });
     internal_static_webterm_terminal_screen_v2_Baseline_descriptor =
-      getDescriptor().getMessageTypes().get(8);
+      getDescriptor().getMessageTypes().get(9);
     internal_static_webterm_terminal_screen_v2_Baseline_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Baseline_descriptor,
         new java.lang.String[] { "SessionId", "InstanceId", "LayoutEpoch", "ScreenRevision", "Geometry", "ActiveBuffer", "HistoryExtent", "ScreenLayout", "ScreenLines", "Cursor", "Modes", "Palette", "Dictionary", "DictionaryGeneration", "HistoryGeneration", "HistoryBindings", });
     internal_static_webterm_terminal_screen_v2_TerminalCommit_descriptor =
-      getDescriptor().getMessageTypes().get(9);
+      getDescriptor().getMessageTypes().get(10);
     internal_static_webterm_terminal_screen_v2_TerminalCommit_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalCommit_descriptor,
         new java.lang.String[] { "InstanceId", "LayoutEpoch", "BaseRevision", "Revision", "Screen", "History", "Cursor", "Modes", "Palette", "DictionaryAdditions", "ActiveBuffer", "DictionaryGeneration", "HistoryGeneration", });
     internal_static_webterm_terminal_screen_v2_ScreenMutation_descriptor =
-      getDescriptor().getMessageTypes().get(10);
+      getDescriptor().getMessageTypes().get(11);
     internal_static_webterm_terminal_screen_v2_ScreenMutation_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ScreenMutation_descriptor,
         new java.lang.String[] { "Scroll", "Writes", });
     internal_static_webterm_terminal_screen_v2_ScreenScroll_descriptor =
-      getDescriptor().getMessageTypes().get(11);
+      getDescriptor().getMessageTypes().get(12);
     internal_static_webterm_terminal_screen_v2_ScreenScroll_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ScreenScroll_descriptor,
         new java.lang.String[] { "TopRow", "BottomRowExclusive", "DeltaRows", });
     internal_static_webterm_terminal_screen_v2_ScreenRowWrite_descriptor =
-      getDescriptor().getMessageTypes().get(12);
+      getDescriptor().getMessageTypes().get(13);
     internal_static_webterm_terminal_screen_v2_ScreenRowWrite_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ScreenRowWrite_descriptor,
         new java.lang.String[] { "Row", "Line", });
     internal_static_webterm_terminal_screen_v2_HistoryMutation_descriptor =
-      getDescriptor().getMessageTypes().get(13);
+      getDescriptor().getMessageTypes().get(14);
     internal_static_webterm_terminal_screen_v2_HistoryMutation_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_HistoryMutation_descriptor,
         new java.lang.String[] { "FinalExtent", "Pushes", });
     internal_static_webterm_terminal_screen_v2_HistoryPush_descriptor =
-      getDescriptor().getMessageTypes().get(14);
+      getDescriptor().getMessageTypes().get(15);
     internal_static_webterm_terminal_screen_v2_HistoryPush_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_HistoryPush_descriptor,
         new java.lang.String[] { "HistorySeq", "LineId", "LineVersion", });
     internal_static_webterm_terminal_screen_v2_ScreenLayout_descriptor =
-      getDescriptor().getMessageTypes().get(15);
+      getDescriptor().getMessageTypes().get(16);
     internal_static_webterm_terminal_screen_v2_ScreenLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ScreenLayout_descriptor,
         new java.lang.String[] { "LineIds", });
     internal_static_webterm_terminal_screen_v2_LineData_descriptor =
-      getDescriptor().getMessageTypes().get(16);
+      getDescriptor().getMessageTypes().get(17);
     internal_static_webterm_terminal_screen_v2_LineData_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_LineData_descriptor,
         new java.lang.String[] { "LineId", "LineVersion", "Wrapped", "Utf8Text", "StyleSpans", "HistorySeq", "GlyphMeta", "PhysicalColumns", });
     internal_static_webterm_terminal_screen_v2_StyleSpan_descriptor =
-      getDescriptor().getMessageTypes().get(17);
+      getDescriptor().getMessageTypes().get(18);
     internal_static_webterm_terminal_screen_v2_StyleSpan_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_StyleSpan_descriptor,
         new java.lang.String[] { "StartCol", "EndCol", "StyleId", "LinkId", });
     internal_static_webterm_terminal_screen_v2_Color_descriptor =
-      getDescriptor().getMessageTypes().get(18);
+      getDescriptor().getMessageTypes().get(19);
     internal_static_webterm_terminal_screen_v2_Color_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Color_descriptor,
         new java.lang.String[] { "Kind", "Index", "Rgb", });
     internal_static_webterm_terminal_screen_v2_TerminalStyle_descriptor =
-      getDescriptor().getMessageTypes().get(19);
+      getDescriptor().getMessageTypes().get(20);
     internal_static_webterm_terminal_screen_v2_TerminalStyle_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalStyle_descriptor,
         new java.lang.String[] { "Id", "Fg", "Bg", "UnderlineColor", "Attrs", });
     internal_static_webterm_terminal_screen_v2_CellAttrs_descriptor =
-      getDescriptor().getMessageTypes().get(20);
+      getDescriptor().getMessageTypes().get(21);
     internal_static_webterm_terminal_screen_v2_CellAttrs_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_CellAttrs_descriptor,
         new java.lang.String[] { "Bold", "Dim", "Italic", "Underline", "DoubleUnderline", "CurlyUnderline", "DottedUnderline", "DashedUnderline", "BlinkSlow", "BlinkFast", "Reverse", "Hidden", "Strike", });
     internal_static_webterm_terminal_screen_v2_Hyperlink_descriptor =
-      getDescriptor().getMessageTypes().get(21);
+      getDescriptor().getMessageTypes().get(22);
     internal_static_webterm_terminal_screen_v2_Hyperlink_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Hyperlink_descriptor,
         new java.lang.String[] { "Id", "Uri", "Params", });
     internal_static_webterm_terminal_screen_v2_Cursor_descriptor =
-      getDescriptor().getMessageTypes().get(22);
+      getDescriptor().getMessageTypes().get(23);
     internal_static_webterm_terminal_screen_v2_Cursor_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Cursor_descriptor,
         new java.lang.String[] { "Row", "Col", "Visible", "Shape", "Blink", });
     internal_static_webterm_terminal_screen_v2_Modes_descriptor =
-      getDescriptor().getMessageTypes().get(23);
+      getDescriptor().getMessageTypes().get(24);
     internal_static_webterm_terminal_screen_v2_Modes_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Modes_descriptor,
         new java.lang.String[] { "ApplicationCursor", "ApplicationKeypad", "BracketedPaste", "MouseTracking", "MouseEncoding", "FocusReporting", });
     internal_static_webterm_terminal_screen_v2_TerminalPalette_descriptor =
-      getDescriptor().getMessageTypes().get(24);
+      getDescriptor().getMessageTypes().get(25);
     internal_static_webterm_terminal_screen_v2_TerminalPalette_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalPalette_descriptor,
         new java.lang.String[] { "DefaultFg", "DefaultBg", "CursorColor", "ReverseVideo", "IndexedColors", "Generation", });
     internal_static_webterm_terminal_screen_v2_IndexedPaletteColor_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(26);
     internal_static_webterm_terminal_screen_v2_IndexedPaletteColor_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_IndexedPaletteColor_descriptor,
         new java.lang.String[] { "Index", "Rgb", });
     internal_static_webterm_terminal_screen_v2_AcquireLayout_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_webterm_terminal_screen_v2_AcquireLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_AcquireLayout_descriptor,
         new java.lang.String[] { "RequestId", "Interactive", });
     internal_static_webterm_terminal_screen_v2_LayoutLease_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_webterm_terminal_screen_v2_LayoutLease_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_LayoutLease_descriptor,
         new java.lang.String[] { "RequestId", "LeaseId", "Granted", "Interactive", "Geometry", "ExpiresAtMs", });
     internal_static_webterm_terminal_screen_v2_ReleaseLayout_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_webterm_terminal_screen_v2_ReleaseLayout_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ReleaseLayout_descriptor,
         new java.lang.String[] { "LeaseId", });
     internal_static_webterm_terminal_screen_v2_Resize_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_webterm_terminal_screen_v2_Resize_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Resize_descriptor,
         new java.lang.String[] { "Cols", "Rows", "LeaseId", "RequestId", });
     internal_static_webterm_terminal_screen_v2_TerminalInput_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_webterm_terminal_screen_v2_TerminalInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalInput_descriptor,
         new java.lang.String[] { "LeaseId", "Text", "Key", "Paste", "Mouse", "Focus", "Input", });
     internal_static_webterm_terminal_screen_v2_TextInput_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_webterm_terminal_screen_v2_TextInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TextInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v2_KeyInput_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_webterm_terminal_screen_v2_KeyInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_KeyInput_descriptor,
         new java.lang.String[] { "Key", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v2_PasteInput_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_webterm_terminal_screen_v2_PasteInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_PasteInput_descriptor,
         new java.lang.String[] { "Data", });
     internal_static_webterm_terminal_screen_v2_MouseInput_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_webterm_terminal_screen_v2_MouseInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_MouseInput_descriptor,
         new java.lang.String[] { "Row", "Col", "Button", "WheelDelta", "Modifiers", "Pressed", });
     internal_static_webterm_terminal_screen_v2_FocusInput_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_webterm_terminal_screen_v2_FocusInput_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_FocusInput_descriptor,
         new java.lang.String[] { "Focused", });
     internal_static_webterm_terminal_screen_v2_ModifierSet_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_webterm_terminal_screen_v2_ModifierSet_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ModifierSet_descriptor,
         new java.lang.String[] { "Shift", "Alt", "Ctrl", "Meta", });
     internal_static_webterm_terminal_screen_v2_TerminalEffect_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_webterm_terminal_screen_v2_TerminalEffect_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_TerminalEffect_descriptor,
         new java.lang.String[] { "InstanceId", "ScreenRevision", "Bell", "ClipboardRead", "ClipboardWrite", "Notification", "Effect", });
     internal_static_webterm_terminal_screen_v2_Bell_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_webterm_terminal_screen_v2_Bell_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Bell_descriptor,
         new java.lang.String[] { });
     internal_static_webterm_terminal_screen_v2_ClipboardReadRequest_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_webterm_terminal_screen_v2_ClipboardReadRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ClipboardReadRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", });
     internal_static_webterm_terminal_screen_v2_ClipboardWriteRequest_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_webterm_terminal_screen_v2_ClipboardWriteRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ClipboardWriteRequest_descriptor,
         new java.lang.String[] { "RequestId", "Clipboard", "Data", });
     internal_static_webterm_terminal_screen_v2_DesktopNotification_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_webterm_terminal_screen_v2_DesktopNotification_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_DesktopNotification_descriptor,
         new java.lang.String[] { "Title", "Body", });
     internal_static_webterm_terminal_screen_v2_ClipboardResponse_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_webterm_terminal_screen_v2_ClipboardResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_ClipboardResponse_descriptor,
         new java.lang.String[] { "RequestId", "Allowed", "Timeout", "Data", });
     internal_static_webterm_terminal_screen_v2_Exit_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_webterm_terminal_screen_v2_Exit_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Exit_descriptor,
         new java.lang.String[] { "Code", });
     internal_static_webterm_terminal_screen_v2_Ping_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_webterm_terminal_screen_v2_Ping_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Ping_descriptor,
         new java.lang.String[] { "ScreenRevision", });
     internal_static_webterm_terminal_screen_v2_Pong_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(46);
     internal_static_webterm_terminal_screen_v2_Pong_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Pong_descriptor,

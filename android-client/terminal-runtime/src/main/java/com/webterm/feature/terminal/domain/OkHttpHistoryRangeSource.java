@@ -133,9 +133,10 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
               previous = line.getHistorySeq();
               lines.add(ScreenMessageV2Mapper.mapHistoryLine(line, dictionary));
             }
+            long completedAtNanos = System.nanoTime();
             callbackExecutor.execute(() -> callback.onResult(
                 new Result(pb.getInstanceId(), pb.getLayoutEpoch(),
-                    pb.getHistoryGeneration(), extent, lines)));
+                    pb.getHistoryGeneration(), extent, lines, completedAtNanos)));
           } catch (RuntimeException invalidRange) {
             emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
           }
@@ -147,8 +148,9 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
 
   private void emitFailure(
       Callback callback, FailureKind kind, long retryAfterMs, long generation) {
+    long completedAtNanos = System.nanoTime();
     callbackExecutor.execute(() -> callback.onFailure(
-        new Failure(kind, retryAfterMs, generation)));
+        new Failure(kind, retryAfterMs, generation, completedAtNanos)));
   }
 
   @Override public void close() {

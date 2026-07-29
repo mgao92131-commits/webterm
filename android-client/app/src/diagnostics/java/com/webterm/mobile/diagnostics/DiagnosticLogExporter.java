@@ -505,6 +505,10 @@ public final class DiagnosticLogExporter {
             inbound.put("tunnelDecodeFailed", drops.tunnelDecodeFailed);
             inbound.put("unknownChannelDropped", drops.unknownChannelDropped);
             inbound.put("channelNotOpenDropped", drops.channelNotOpenDropped);
+            inbound.put("normalCloseTailDropped", drops.normalCloseTailDropped);
+            inbound.put("staleChannelLifecycleDropped", drops.staleChannelLifecycleDropped);
+            inbound.put("channelIdReusedDropped", drops.channelIdReusedDropped);
+            inbound.put("wrongConnectionMappingDropped", drops.wrongConnectionMappingDropped);
             json.put("inboundDrops", inbound);
         }
         return json;

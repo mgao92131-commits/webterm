@@ -21,6 +21,7 @@ type HistoryChangeIndex struct {
 	lastSeq                  uint64
 	nextSeq                  uint64
 	mutationVersion          uint64
+	generation               uint64
 	lineage                  []terminalengine.HistoryPush
 }
 
@@ -31,12 +32,29 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	if scrollback == nil {
 		return false
 	}
+	oldFirstSeq := h.firstSeq
 	w, changed := scrollback.IndexWindowIfChanged(h.mutationVersion)
-	if !changed {
+	generationChanged := h.generation != 0 && w.Generation != h.generation
+	if generationChanged && !changed {
+		w, changed = scrollback.IndexWindowIfChanged(0)
+	}
+	if generationChanged {
+		h.Changes = nil
+		h.lineage = nil
+		h.GapRevision = 0
+		h.WatermarkChangedRevision = 0
+		h.firstSeq = 0
+		h.lastSeq = 0
+		h.nextSeq = 0
+		h.mutationVersion = 0
+	}
+	h.generation = w.Generation
+	h.firstSeq, h.lastSeq, h.nextSeq = w.FirstSeq, w.LastSeq, w.NextSeq
+	if !changed && !generationChanged {
 		return false
 	}
 	gap := false
-	if h.firstSeq != 0 && w.FirstSeq > h.firstSeq {
+	if !generationChanged && oldFirstSeq != 0 && w.FirstSeq > oldFirstSeq {
 		h.WatermarkChangedRevision = revision
 	}
 
@@ -80,7 +98,6 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 	if gap {
 		h.GapRevision = revision
 	}
-	h.firstSeq, h.lastSeq, h.nextSeq = w.FirstSeq, w.LastSeq, w.NextSeq
 	h.mutationVersion = w.MutationVersion
 	return gap
 }

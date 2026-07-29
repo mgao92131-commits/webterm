@@ -184,6 +184,33 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
     }
 
     @Test
+    public void cookieUpdateDuringEofRecoveryKeepsOneRecoveryTransaction() {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                handler.handler, "http://example.com", "cookie-a", "device-cookie-race",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        transport.simulateClose(1001, "EOF");
+        String recoveryId = connection.recoveryIdForDiagnostics();
+        assertNotNull(recoveryId);
+
+        connection.updateCookie("cookie-b");
+
+        assertEquals("cookie rotation must join the active EOF recovery",
+                recoveryId, connection.recoveryIdForDiagnostics());
+        assertEquals("only one replacement transport should start", 2, transport.startCount);
+        connection.updateCookie("cookie-b");
+        assertEquals("same cookie must not start another replacement", 2, transport.startCount);
+
+        transport.simulateOpen();
+        assertFalse(connection.hasActiveRecovery());
+    }
+
+    @Test
     public void successfulReconnectClearsRecoveryViaTransportRecovered() {
         CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport transport = new FakeMuxTransport();

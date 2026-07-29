@@ -36,4 +36,16 @@ public final class ScreenMessageV2BuilderTest {
     assertEquals(TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE,
         envelope.getHello().getInitialSyncMode());
   }
+
+  @Test
+  public void resyncCarriesCurrentProjectionWatermarks() throws Exception {
+    TerminalScreenV2Proto.ScreenEnvelope envelope =
+        TerminalScreenV2Proto.ScreenEnvelope.parseFrom(
+            ScreenMessageV2Builder.resync(8, 42));
+
+    assertEquals(2, envelope.getProtocolVersion());
+    assertTrue(envelope.hasResyncRequest());
+    assertEquals(8, envelope.getResyncRequest().getLayoutEpoch());
+    assertEquals(42, envelope.getResyncRequest().getScreenRevision());
+  }
 }

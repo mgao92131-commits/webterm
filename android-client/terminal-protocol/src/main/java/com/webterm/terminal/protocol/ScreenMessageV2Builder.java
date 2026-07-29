@@ -28,6 +28,15 @@ public final class ScreenMessageV2Builder {
     return envelope().setHello(builder).build().toByteArray();
   }
 
+  /** 在当前 logical channel 内请求完整权威 Baseline，不重新发送 Hello。 */
+  @NonNull
+  public static byte[] resync(long layoutEpoch, long screenRevision) {
+    return envelope().setResyncRequest(TerminalScreenV2Proto.ResyncRequest.newBuilder()
+        .setLayoutEpoch(layoutEpoch)
+        .setScreenRevision(screenRevision))
+        .build().toByteArray();
+  }
+
   @NonNull
   public static byte[] textInput(@NonNull String leaseId, @NonNull String text) {
     return input(TerminalScreenV2Proto.TerminalInput.newBuilder()

@@ -13,6 +13,7 @@ const (
 
 type Handler struct {
 	onHello         func(*pb.Hello)
+	onResync        func(*pb.ResyncRequest)
 	onInput         func(*pb.TerminalInput)
 	onResize        func(*pb.Resize)
 	onAcquireLayout func(*pb.AcquireLayout)
@@ -25,6 +26,9 @@ type HandlerOption func(*Handler)
 
 func WithHelloCallback(fn func(*pb.Hello)) HandlerOption {
 	return func(h *Handler) { h.onHello = fn }
+}
+func WithResyncCallback(fn func(*pb.ResyncRequest)) HandlerOption {
+	return func(h *Handler) { h.onResync = fn }
 }
 func WithInputCallback(fn func(*pb.TerminalInput)) HandlerOption {
 	return func(h *Handler) { h.onInput = fn }
@@ -71,6 +75,10 @@ func (h *Handler) HandleMessage(data []byte) error {
 		}
 		if h.onHello != nil {
 			h.onHello(payload.Hello)
+		}
+	case *pb.ScreenEnvelope_ResyncRequest:
+		if h.onResync != nil {
+			h.onResync(payload.ResyncRequest)
 		}
 	case *pb.ScreenEnvelope_Input:
 		if h.onInput != nil {

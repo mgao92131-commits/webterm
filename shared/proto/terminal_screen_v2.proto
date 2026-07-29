@@ -11,7 +11,7 @@ option java_outer_classname = "TerminalScreenV2Proto";
 message ScreenEnvelope {
   uint32 protocol_version = 1; // 固定为 2
   // 6/7 曾为 WS HistoryRange request/response；历史正文统一走 HTTP Range。
-  reserved 4, 5, 6, 7, 8, 9, 15, 18;
+  reserved 4, 5, 6, 7, 8, 9, 15;
 
   oneof payload {
     Hello hello = 2;
@@ -28,6 +28,7 @@ message ScreenEnvelope {
     Pong pong = 21;
     TerminalCommit terminal_commit = 22;
     ResumeAccepted resume_accepted = 23;
+    ResyncRequest resync_request = 18;
   }
 }
 
@@ -41,6 +42,14 @@ message Hello {
 enum InitialSyncMode {
   INITIAL_SYNC_MODE_AUTO = 0;
   INITIAL_SYNC_MODE_FORCE_BASELINE = 1;
+}
+
+// 已建立 screen channel 上的权威投影重同步请求。服务端必须返回完整 Baseline，
+// 不重新附加 client、不重建 logical channel，也不改变 PTY 生命周期。
+message ResyncRequest {
+  // 客户端尚未建立首个 Baseline 时允许为 0；服务端不得把这两个水位当作恢复依据。
+  uint64 layout_epoch = 1;
+  uint64 screen_revision = 2;
 }
 
 message ResumeScreenLine {

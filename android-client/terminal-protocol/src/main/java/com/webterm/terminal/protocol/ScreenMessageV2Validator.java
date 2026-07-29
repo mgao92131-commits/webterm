@@ -9,40 +9,119 @@ public final class ScreenMessageV2Validator {
   private ScreenMessageV2Validator() {}
 
   public static void validateBaseline(TerminalScreenV2Proto.Baseline baseline) {
-    requireIdentity(baseline.getInstanceId(), baseline.getLayoutEpoch());
+    if (baseline == null || baseline.getInstanceId().isEmpty()
+        || baseline.getLayoutEpoch() < 1) {
+      throw baselineFault(BaselineFaultCode.INVALID_IDENTITY);
+    }
     if (baseline.getScreenRevision() < 1 || baseline.getDictionaryGeneration() < 1
         || baseline.getHistoryGeneration() < 1) {
-      throw new IllegalArgumentException("invalid Baseline generation/revision");
+      throw baselineFault(BaselineFaultCode.INVALID_GENERATION);
     }
     int rows = baseline.getGeometry().getRows();
     int cols = baseline.getGeometry().getCols();
-    if (rows < 1 || rows > 200 || cols < 1 || cols > 500
-        || baseline.getScreenLinesCount() != rows
-        || baseline.getScreenLayout().getLineIdsCount() != rows) {
-      throw new IllegalArgumentException("invalid Baseline bounds");
+    if (rows < 1 || rows > 200 || cols < 1 || cols > 500) {
+      throw baselineFault(BaselineFaultCode.INVALID_GEOMETRY);
     }
-    validateExtent(baseline.getHistoryExtent());
+    if (baseline.getScreenLinesCount() != rows) {
+      throw baselineFault(BaselineFaultCode.SCREEN_LINE_COUNT_MISMATCH);
+    }
+    if (baseline.getScreenLayout().getLineIdsCount() != rows) {
+      throw baselineFault(BaselineFaultCode.SCREEN_LAYOUT_COUNT_MISMATCH);
+    }
+    try {
+      validateExtent(baseline.getHistoryExtent());
+    } catch (IllegalArgumentException invalidExtent) {
+      throw new BaselineValidationException(
+          BaselineFaultCode.HISTORY_BINDING_COUNT_MISMATCH, invalidExtent);
+    }
     long historyFirst = baseline.getHistoryExtent().getFirstSeq();
     long historyLast = baseline.getHistoryExtent().getLastSeq();
     long expectedBindings = historyLast >= historyFirst ? historyLast - historyFirst + 1 : 0;
     if (baseline.getHistoryBindingsCount() != expectedBindings) {
-      throw new IllegalArgumentException("incomplete Baseline history catalog");
+      throw baselineFault(BaselineFaultCode.HISTORY_BINDING_COUNT_MISMATCH);
     }
     long previousHistorySeq = 0;
-    java.util.HashSet<Long> historyLineIds = new java.util.HashSet<>();
+    java.util.HashSet<String> historyKeys = new java.util.HashSet<>();
     for (TerminalScreenV2Proto.HistoryPush binding :
         baseline.getHistoryBindingsList()) {
-      if (binding.getHistorySeq() <= previousHistorySeq
-          || binding.getHistorySeq() < historyFirst
-          || binding.getHistorySeq() > historyLast
-          || binding.getLineId() <= 0 || binding.getLineVersion() <= 0
-          || !historyLineIds.add(binding.getLineId())) {
-        throw new IllegalArgumentException("invalid Baseline history binding");
+      if (binding.getHistorySeq() <= previousHistorySeq) {
+        throw baselineFault(BaselineFaultCode.HISTORY_SEQ_OUT_OF_ORDER);
+      }
+      if (binding.getHistorySeq() < historyFirst
+          || binding.getHistorySeq() > historyLast) {
+        throw baselineFault(BaselineFaultCode.HISTORY_SEQ_OUT_OF_EXTENT);
+      }
+      if (binding.getLineId() <= 0 || binding.getLineVersion() <= 0) {
+        throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
+      }
+      String key = binding.getLineId() + ":" + binding.getLineVersion();
+      if (!historyKeys.add(key)) {
+        throw baselineFault(BaselineFaultCode.DUPLICATE_HISTORY_KEY);
       }
       previousHistorySeq = binding.getHistorySeq();
     }
-    validateDictionary(baseline.getDictionary());
-    for (TerminalScreenV2Proto.LineData line : baseline.getScreenLinesList()) validateLineData(line, cols);
+    java.util.HashSet<Integer> styleIds = new java.util.HashSet<>();
+    java.util.HashSet<Integer> linkIds = new java.util.HashSet<>();
+    try {
+      validateDictionary(baseline.getDictionary());
+      for (TerminalScreenV2Proto.TerminalStyle style :
+          baseline.getDictionary().getStylesList()) {
+        if (style.getId() <= 0 || !styleIds.add(style.getId())) {
+          throw new IllegalArgumentException("invalid style dictionary");
+        }
+      }
+      for (TerminalScreenV2Proto.Hyperlink link :
+          baseline.getDictionary().getLinksList()) {
+        if (link.getId() <= 0 || !linkIds.add(link.getId())) {
+          throw new IllegalArgumentException("invalid link dictionary");
+        }
+      }
+    } catch (IllegalArgumentException invalidDictionary) {
+      throw new BaselineValidationException(
+          BaselineFaultCode.INVALID_DICTIONARY, invalidDictionary);
+    }
+    java.util.HashSet<String> activeKeys = new java.util.HashSet<>();
+    java.util.HashSet<Long> activeLineIds = new java.util.HashSet<>();
+    for (TerminalScreenV2Proto.LineData line : baseline.getScreenLinesList()) {
+      if (line.getPhysicalColumns() != cols || line.getHistorySeq() != 0) {
+        throw baselineFault(BaselineFaultCode.LINE_COLUMN_COUNT_MISMATCH);
+      }
+      try {
+        validateLineData(line, cols);
+      } catch (IllegalArgumentException invalidLine) {
+        throw new BaselineValidationException(
+            BaselineFaultCode.INVALID_LINE_BODY, invalidLine);
+      }
+      for (TerminalScreenV2Proto.StyleSpan span : line.getStyleSpansList()) {
+        if ((span.getStyleId() != 0 && !styleIds.contains(span.getStyleId()))
+            || (span.getLinkId() != 0 && !linkIds.contains(span.getLinkId()))) {
+          throw baselineFault(BaselineFaultCode.INVALID_DICTIONARY);
+        }
+      }
+      String key = line.getLineId() + ":" + line.getLineVersion();
+      if (!activeKeys.add(key) || !activeLineIds.add(line.getLineId())) {
+        throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
+      }
+      if (historyKeys.contains(key)) {
+        throw baselineFault(BaselineFaultCode.ACTIVE_HISTORY_KEY_CONFLICT);
+      }
+    }
+    java.util.HashSet<Long> layoutLineIds = new java.util.HashSet<>();
+    for (long lineId : baseline.getScreenLayout().getLineIdsList()) {
+      if (!layoutLineIds.add(lineId)) {
+        throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
+      }
+      if (!activeLineIds.contains(lineId)) {
+        throw baselineFault(BaselineFaultCode.SCREEN_LAYOUT_COUNT_MISMATCH);
+      }
+    }
+    if (layoutLineIds.size() != activeLineIds.size()) {
+      throw baselineFault(BaselineFaultCode.SCREEN_LAYOUT_COUNT_MISMATCH);
+    }
+  }
+
+  private static BaselineValidationException baselineFault(BaselineFaultCode code) {
+    return new BaselineValidationException(code);
   }
 
   public static void validateTerminalCommit(

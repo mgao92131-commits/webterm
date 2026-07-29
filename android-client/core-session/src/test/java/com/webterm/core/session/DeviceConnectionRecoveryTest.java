@@ -689,6 +689,28 @@ public class DeviceConnectionRecoveryTest {
             0, transport.wsConnectCount(missingChannelId));
     }
 
+    @Test
+    public void staleTransportOpenCannotCloseReplacementTransport() {
+        FakeMuxTransport first = new FakeMuxTransport();
+        FakeMuxTransport replacement = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new RotatingTransportFactory(first, replacement));
+        connection.openScreenChannel("s1", new SimpleListener());
+        first.simulateOpen();
+
+        connection.requestTransportReconnect(
+                TransportReconnectTrigger.SCREEN_CHANNEL_REBUILD, "test replacement");
+        replacement.simulateOpen();
+        first.simulateOpen();
+
+        assertTrue(connection.isConnected());
+        assertEquals("stale callback may only close its source transport",
+                0, replacement.closeCount);
+        assertTrue(first.closeCount >= 2);
+        assertTrue(connection.inboundDropSnapshot().staleTransportGenerationDropped > 0);
+    }
+
     private static class FakeTransportFactory implements TransportFactory {
         private final FakeMuxTransport transport;
 
@@ -698,6 +720,19 @@ public class DeviceConnectionRecoveryTest {
 
         @Override public MuxTransport create(String url, String cookie, String protocol) {
             return transport;
+        }
+    }
+
+    private static final class RotatingTransportFactory implements TransportFactory {
+        private final FakeMuxTransport[] transports;
+        private int next;
+
+        RotatingTransportFactory(FakeMuxTransport... transports) {
+            this.transports = transports;
+        }
+
+        @Override public MuxTransport create(String url, String cookie, String protocol) {
+            return transports[Math.min(next++, transports.length - 1)];
         }
     }
 
@@ -875,6 +910,25 @@ public class DeviceConnectionRecoveryTest {
 
         assertTrue("binary payload must reach the logical channel", received.get() != null);
         assertEquals(2, received.get().length);
+    }
+
+    @Test
+    public void binaryFrameAfterChannelCloseIsClassifiedAsNormalTail() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        connection.closeChannel(channelId);
+        transport.simulateBinary(
+                WebTermProtocol.encodeTunnelFrame(channelId, new byte[] {1}, true));
+
+        DeviceConnection.InboundDropSnapshot drops = connection.inboundDropSnapshot();
+        assertEquals(1L, drops.normalCloseTailDropped);
+        assertEquals(0L, drops.unknownChannelDropped);
     }
 
     @Test

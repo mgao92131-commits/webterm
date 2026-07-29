@@ -9,33 +9,72 @@ import com.webterm.terminal.model.SlotState;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
-/** 每会话单在途、只保留最新视口 Demand 的历史 Range 状态机。 */
+/** 每会话单主请求在途、只保留最新视口 Demand 的历史 Range 状态机。 */
 public final class HistoryRangeLoader {
-  private static final long PREFETCH_LINES = 64;
+  enum RequestState {
+    FETCHING, RESPONSE_QUEUED, APPLYING, CANCELLED, TIMED_OUT, COMPLETED
+  }
+
+  enum CompletionDisposition {
+    CURRENT, PARTIAL, OBSOLETE
+  }
 
   public static final class Demand {
     public final long visibleFromSeq, visibleToSeq, anchorSeq;
     public final int direction;
+    public final int visibleRowCount;
+    public final long demandEpoch;
+    public final long createdAtNanos;
 
     public Demand(long visibleFromSeq, long visibleToSeq, long anchorSeq, int direction) {
+      this(visibleFromSeq, visibleToSeq, anchorSeq, direction,
+          (int) Math.max(1L, visibleToSeq - visibleFromSeq + 1L),
+          0, System.nanoTime());
+    }
+
+    public Demand(
+        long visibleFromSeq, long visibleToSeq, long anchorSeq, int direction,
+        int visibleRowCount, long demandEpoch, long createdAtNanos) {
       this.visibleFromSeq = visibleFromSeq;
       this.visibleToSeq = visibleToSeq;
       this.anchorSeq = anchorSeq;
       this.direction = direction;
+      this.visibleRowCount = Math.max(1, visibleRowCount);
+      this.demandEpoch = demandEpoch;
+      this.createdAtNanos = createdAtNanos;
     }
   }
 
   public static final class Range {
     public final String instanceId;
-    public final long layoutEpoch, generation, fromSeq, toSeq;
+    public final long layoutEpoch, generation, fromSeq, toSeq, demandEpoch;
+    public final long visibleMissingLineCount;
 
     public Range(String instanceId, long layoutEpoch, long generation, long fromSeq, long toSeq) {
+      this(instanceId, layoutEpoch, generation, fromSeq, toSeq, 0,
+          Math.max(1L, toSeq - fromSeq + 1L));
+    }
+
+    public Range(
+        String instanceId, long layoutEpoch, long generation,
+        long fromSeq, long toSeq, long demandEpoch) {
+      this(instanceId, layoutEpoch, generation, fromSeq, toSeq, demandEpoch,
+          Math.max(1L, toSeq - fromSeq + 1L));
+    }
+
+    Range(
+        String instanceId, long layoutEpoch, long generation,
+        long fromSeq, long toSeq, long demandEpoch, long visibleMissingLineCount) {
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
       this.generation = generation;
       this.fromSeq = fromSeq;
       this.toSeq = toSeq;
+      this.demandEpoch = demandEpoch;
+      this.visibleMissingLineCount = visibleMissingLineCount;
     }
   }
 
@@ -43,6 +82,9 @@ public final class HistoryRangeLoader {
     public final long callId, lifecycleEpoch, startedAtNanos;
     public final Range range;
     public final HistoryRangeSource.RequestHandle handle;
+    private final AtomicReference<RequestState> state =
+        new AtomicReference<>(RequestState.FETCHING);
+    private final AtomicLong responseArrivedAtNanos = new AtomicLong();
 
     ActiveRequest(long callId, long lifecycleEpoch, Range range,
                   HistoryRangeSource.RequestHandle handle) {
@@ -52,39 +94,63 @@ public final class HistoryRangeLoader {
       this.handle = handle;
       this.startedAtNanos = System.nanoTime();
     }
+
+    RequestState state() { return state.get(); }
+    long responseArrivedAtNanos() { return responseArrivedAtNanos.get(); }
+
+    void responseArrived(long atNanos) {
+      responseArrivedAtNanos.compareAndSet(0, atNanos);
+      state.compareAndSet(RequestState.FETCHING, RequestState.RESPONSE_QUEUED);
+    }
   }
 
+  private final HistoryFetchPolicy fetchPolicy = new HistoryFetchPolicy();
+  private final HistoryRangeMetrics metrics = new HistoryRangeMetrics();
   @Nullable private Demand latestDemand;
   @Nullable private ActiveRequest activeRequest;
   private long lifecycleEpoch = 1;
   private long nextCallId = 1;
+  private long nextDemandEpoch = 1;
   private String observedInstanceId = "";
   private long observedLayoutEpoch;
   private long observedGeneration;
   private long observedServerFirstSeq;
   private final UnavailableIntervalSet unavailable = new UnavailableIntervalSet();
+  private long tailDebounceToken;
+  private long tailDebounceDemandEpoch;
+  private long tailDebounceSatisfiedEpoch;
   private boolean closed;
 
+  /** 测试和旧调用兼容入口；生产 demand 由 acceptDemand 分配 epoch。 */
   public synchronized void setDemand(@Nullable Demand demand) {
     if (closed) return;
     latestDemand = demand;
+    if (demand != null) nextDemandEpoch = Math.max(nextDemandEpoch, demand.demandEpoch + 1);
+    clearTailDebounce();
   }
 
-  @Nullable public synchronized Demand latestDemand() {
-    return latestDemand;
+  @Nullable
+  public synchronized Demand acceptDemand(
+      long visibleFromSeq, long visibleToSeq, long anchorSeq, int direction,
+      int visibleRowCount, long createdAtNanos) {
+    if (closed) return null;
+    Demand demand = new Demand(
+        visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount,
+        nextDemandEpoch++, createdAtNanos);
+    latestDemand = demand;
+    metrics.onDemandApplied(System.nanoTime() - createdAtNanos);
+    if (activeRequest != null && activeRequest.state() == RequestState.FETCHING) {
+      metrics.onDemandChangedWhileFetching();
+    }
+    tailDebounceSatisfiedEpoch = 0;
+    return demand;
   }
 
-  @Nullable public synchronized ActiveRequest activeRequest() {
-    return activeRequest;
-  }
-
-  public synchronized long lifecycleEpoch() {
-    return lifecycleEpoch;
-  }
-
-  public synchronized boolean closed() {
-    return closed;
-  }
+  @Nullable public synchronized Demand latestDemand() { return latestDemand; }
+  @Nullable public synchronized ActiveRequest activeRequest() { return activeRequest; }
+  public synchronized long lifecycleEpoch() { return lifecycleEpoch; }
+  public synchronized boolean closed() { return closed; }
+  HistoryRangeMetrics metrics() { return metrics; }
 
   public synchronized Map<String, Object> diagnosticsSnapshot() {
     Map<String, Object> out = new LinkedHashMap<>();
@@ -93,21 +159,31 @@ public final class HistoryRangeLoader {
     out.put("hasDemand", latestDemand != null);
     out.put("hasActiveRequest", activeRequest != null);
     out.put("hasUnavailableRange", !unavailable.isEmpty());
+    if (latestDemand != null) out.put("latestDemandEpoch", latestDemand.demandEpoch);
     if (activeRequest != null) {
       out.put("activeCallId", activeRequest.callId);
       out.put("activeFromSeq", activeRequest.range.fromSeq);
       out.put("activeToSeq", activeRequest.range.toSeq);
+      out.put("activeDemandEpoch", activeRequest.range.demandEpoch);
+      out.put("activeRequestState", activeRequest.state().name());
     }
+    out.putAll(metrics.snapshot());
     return out;
   }
 
   public synchronized void clearDemand() {
     latestDemand = null;
+    clearTailDebounce();
   }
 
   public synchronized void resetLifecycle() {
-    if (activeRequest != null && activeRequest.handle != null) activeRequest.handle.cancel();
+    if (activeRequest != null && activeRequest.handle != null) {
+      activeRequest.state.set(RequestState.CANCELLED);
+      activeRequest.handle.cancel();
+      metrics.onRequestCancelled();
+    }
     activeRequest = null;
+    clearTailDebounce();
     clearObservedServerExtent();
     lifecycleEpoch++;
   }
@@ -145,19 +221,95 @@ public final class HistoryRangeLoader {
       if (seq == Long.MAX_VALUE) break;
     }
     if (missingFrom == 0) return null;
-    if (demand.direction < 0) {
-      long barrier = unavailable.lowerBarrier(missingFrom);
-      missingFrom = Math.max(
-          Math.max(extent.firstSeq, missingFrom - PREFETCH_LINES),
-          barrier == Long.MAX_VALUE ? Long.MAX_VALUE : barrier + 1);
+
+    long minAllowed = extent.firstSeq;
+    long lowerBarrier = unavailable.lowerBarrier(missingFrom);
+    if (lowerBarrier > 0) minAllowed = Math.max(minAllowed, lowerBarrier + 1);
+    long maxAllowed = extent.lastSeq;
+    long upperBarrier = unavailable.upperBarrier(missingTo);
+    if (upperBarrier != Long.MAX_VALUE) maxAllowed = Math.min(maxAllowed, upperBarrier - 1);
+    long desired = Math.max(
+        missingTo - missingFrom + 1, fetchPolicy.desiredBatchLines(demand));
+    long[] expanded = expand(
+        missingFrom, missingTo, minAllowed, maxAllowed, desired, demand.direction);
+    return new Range(
+        instanceId, layoutEpoch, generation, expanded[0], expanded[1], demand.demandEpoch,
+        missingTo - missingFrom + 1);
+  }
+
+  public synchronized boolean shouldCancelFor(@NonNull Demand next) {
+    return activeRequest != null
+        && activeRequest.state() == RequestState.FETCHING
+        && fetchPolicy.shouldCancel(activeRequest.range, next);
+  }
+
+  public synchronized boolean cancelActiveForDemand() {
+    return cancelActive(RequestState.CANCELLED);
+  }
+
+  public synchronized boolean timeout(@NonNull ActiveRequest expected) {
+    if (activeRequest != expected || expected.state() != RequestState.FETCHING) return false;
+    return cancelActive(RequestState.TIMED_OUT);
+  }
+
+  public synchronized void responseArrived(
+      @NonNull ActiveRequest request, long arrivedAtNanos) {
+    request.responseArrived(arrivedAtNanos);
+  }
+
+  public synchronized boolean beginApplying(@NonNull ActiveRequest expected) {
+    return activeRequest == expected
+        && expected.state.compareAndSet(RequestState.RESPONSE_QUEUED, RequestState.APPLYING);
+  }
+
+  public synchronized boolean sameLifecycle(@NonNull ActiveRequest request) {
+    return !closed && request.lifecycleEpoch == lifecycleEpoch;
+  }
+
+  public synchronized boolean usefulForLatestDemand(@NonNull ActiveRequest request) {
+    return completionDisposition(request) != CompletionDisposition.OBSOLETE;
+  }
+
+  @NonNull
+  public synchronized CompletionDisposition completionDisposition(
+      @NonNull ActiveRequest request) {
+    Demand demand = latestDemand;
+    if (demand == null || !HistoryFetchPolicy.overlaps(
+        request.range.fromSeq, request.range.toSeq,
+        demand.visibleFromSeq, demand.visibleToSeq)) {
+      return CompletionDisposition.OBSOLETE;
     }
-    if (demand.direction > 0) {
-      long barrier = unavailable.upperBarrier(missingTo);
-      missingTo = Math.min(
-          Math.min(extent.lastSeq, missingTo + PREFETCH_LINES),
-          barrier == Long.MAX_VALUE ? Long.MAX_VALUE : barrier - 1);
+    return request.range.demandEpoch == demand.demandEpoch
+        ? CompletionDisposition.CURRENT : CompletionDisposition.PARTIAL;
+  }
+
+  public synchronized long armTailDebounce(
+      @NonNull Range range, @NonNull HistoryExtent extent) {
+    Demand demand = latestDemand;
+    if (demand == null) return 0;
+    if (!fetchPolicy.shouldDebounceTail(range, demand, extent.lastSeq)) {
+      if (tailDebounceDemandEpoch != 0) clearTailDebounce();
+      return 0;
     }
-    return new Range(instanceId, layoutEpoch, generation, missingFrom, missingTo);
+    if (tailDebounceSatisfiedEpoch == demand.demandEpoch) return 0;
+    if (tailDebounceDemandEpoch != 0) {
+      tailDebounceDemandEpoch = demand.demandEpoch;
+      return -1;
+    }
+    tailDebounceDemandEpoch = demand.demandEpoch;
+    tailDebounceToken++;
+    metrics.onTailDebounce();
+    return tailDebounceToken;
+  }
+
+  public synchronized boolean releaseTailDebounce(long token) {
+    if (token <= 0 || token != tailDebounceToken || latestDemand == null
+        || tailDebounceDemandEpoch != latestDemand.demandEpoch) {
+      return false;
+    }
+    tailDebounceSatisfiedEpoch = latestDemand.demandEpoch;
+    tailDebounceDemandEpoch = 0;
+    return true;
   }
 
   /**
@@ -187,13 +339,48 @@ public final class HistoryRangeLoader {
         fault);
   }
 
-  /**
-   * WS 已权威声明该位置的新绑定；旧正文故障不应阻止为新 LineKey 再次取回正文。
-   */
+  /** WS 已权威声明该位置的新绑定，旧正文故障不再阻止新 LineKey 加载。 */
   public synchronized void onAuthoritativeBinding(
       @NonNull String instanceId, long layoutEpoch, long generation, long historySeq) {
     ensureObservedProjection(instanceId, layoutEpoch, generation);
     unavailable.remove(historySeq);
+  }
+
+  public synchronized boolean begin(
+      @NonNull Range range, @NonNull HistoryRangeSource.RequestHandle handle) {
+    if (closed || activeRequest != null) {
+      handle.cancel();
+      return false;
+    }
+    activeRequest = new ActiveRequest(nextCallId++, lifecycleEpoch, range, handle);
+    metrics.onRequestStarted(range.toSeq - range.fromSeq + 1);
+    return true;
+  }
+
+  public synchronized boolean isActive(@NonNull ActiveRequest expected) {
+    RequestState state = expected.state();
+    return !closed && activeRequest == expected && expected.lifecycleEpoch == lifecycleEpoch
+        && state != RequestState.CANCELLED && state != RequestState.TIMED_OUT
+        && state != RequestState.COMPLETED;
+  }
+
+  public synchronized boolean complete(@NonNull ActiveRequest expected) {
+    if (activeRequest != expected) return false;
+    expected.state.set(RequestState.COMPLETED);
+    activeRequest = null;
+    return true;
+  }
+
+  private boolean cancelActive(RequestState terminalState) {
+    ActiveRequest active = activeRequest;
+    if (active == null
+        || !active.state.compareAndSet(RequestState.FETCHING, terminalState)) {
+      return false;
+    }
+    activeRequest = null;
+    active.handle.cancel();
+    metrics.onRequestCancelled();
+    return true;
   }
 
   private void ensureObservedProjection(
@@ -215,23 +402,36 @@ public final class HistoryRangeLoader {
     unavailable.clear();
   }
 
-  public synchronized boolean begin(
-      @NonNull Range range, @NonNull HistoryRangeSource.RequestHandle handle) {
-    if (closed || activeRequest != null) {
-      handle.cancel();
-      return false;
+  private void clearTailDebounce() {
+    tailDebounceDemandEpoch = 0;
+    tailDebounceSatisfiedEpoch = 0;
+    tailDebounceToken++;
+  }
+
+  private static long[] expand(
+      long from, long to, long min, long max, long desired, int direction) {
+    long targetFrom = from;
+    long targetTo = to;
+    if (direction < 0) {
+      long add = Math.min(desired - size(targetFrom, targetTo), targetFrom - min);
+      targetFrom -= Math.max(0, add);
+    } else if (direction > 0) {
+      long add = Math.min(desired - size(targetFrom, targetTo), max - targetTo);
+      targetTo += Math.max(0, add);
+    } else {
+      long remaining = desired - size(targetFrom, targetTo);
+      long older = Math.min((remaining + 1) / 2, targetFrom - min);
+      targetFrom -= Math.max(0, older);
+      remaining = desired - size(targetFrom, targetTo);
+      long newer = Math.min(remaining, max - targetTo);
+      targetTo += Math.max(0, newer);
+      remaining = desired - size(targetFrom, targetTo);
+      targetFrom -= Math.min(Math.max(0, remaining), targetFrom - min);
     }
-    activeRequest = new ActiveRequest(nextCallId++, lifecycleEpoch, range, handle);
-    return true;
+    return new long[] {targetFrom, targetTo};
   }
 
-  public synchronized boolean isActive(@NonNull ActiveRequest expected) {
-    return !closed && activeRequest == expected && expected.lifecycleEpoch == lifecycleEpoch;
-  }
-
-  public synchronized boolean complete(@NonNull ActiveRequest expected) {
-    if (activeRequest != expected) return false;
-    activeRequest = null;
-    return true;
+  private static long size(long from, long to) {
+    return to - from + 1;
   }
 }

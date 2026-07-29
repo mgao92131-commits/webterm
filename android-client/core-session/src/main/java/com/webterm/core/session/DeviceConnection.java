@@ -101,6 +101,10 @@ public final class DeviceConnection {
     private long tunnelDecodeFailed;
     private long unknownChannelDropped;
     private long channelNotOpenDropped;
+    private long normalCloseTailDropped;
+    private long staleChannelLifecycleDropped;
+    private long channelIdReusedDropped;
+    private long wrongConnectionMappingDropped;
     /** Agent recoveryHash 清除失败后，待下次控制发送机会重试。 */
     private boolean agentRecoveryContextClearPending;
     private boolean clearingAgentRecoveryContext;
@@ -112,13 +116,23 @@ public final class DeviceConnection {
         public final long tunnelDecodeFailed;
         public final long unknownChannelDropped;
         public final long channelNotOpenDropped;
+        public final long normalCloseTailDropped;
+        public final long staleChannelLifecycleDropped;
+        public final long channelIdReusedDropped;
+        public final long wrongConnectionMappingDropped;
 
         InboundDropSnapshot(long staleTransportGenerationDropped, long tunnelDecodeFailed,
-                            long unknownChannelDropped, long channelNotOpenDropped) {
+                            long unknownChannelDropped, long channelNotOpenDropped,
+                            long normalCloseTailDropped, long staleChannelLifecycleDropped,
+                            long channelIdReusedDropped, long wrongConnectionMappingDropped) {
             this.staleTransportGenerationDropped = staleTransportGenerationDropped;
             this.tunnelDecodeFailed = tunnelDecodeFailed;
             this.unknownChannelDropped = unknownChannelDropped;
             this.channelNotOpenDropped = channelNotOpenDropped;
+            this.normalCloseTailDropped = normalCloseTailDropped;
+            this.staleChannelLifecycleDropped = staleChannelLifecycleDropped;
+            this.channelIdReusedDropped = channelIdReusedDropped;
+            this.wrongConnectionMappingDropped = wrongConnectionMappingDropped;
         }
     }
 
@@ -294,7 +308,8 @@ public final class DeviceConnection {
         if (stopped) return;
         physicalDesired = true;
         if (transport == null) {
-            handlePhysicalDisconnected(transportGeneration, 0, "transport unavailable");
+            handlePhysicalDisconnected(
+                transportGeneration, transport, 0, "transport unavailable");
             return;
         }
         if (physicalConnected || physicalConnecting) return;
@@ -303,6 +318,7 @@ public final class DeviceConnection {
         connectionStartedAtNanos = System.nanoTime();
         connectedAtNanos = 0L;
         int generation = transportGeneration;
+        MuxTransport sourceTransport = transport;
         if (recoveryId != null) {
             recoveryAttemptCount++;
         }
@@ -312,21 +328,22 @@ public final class DeviceConnection {
         publishDiagnosticsSnapshot();
         stateHandler.postDelayed(
             () -> onPhysicalConnectTimeout(generation), PHYSICAL_CONNECT_TIMEOUT_MS);
-        transport.start(new MuxTransport.Listener() {
+        sourceTransport.start(new MuxTransport.Listener() {
             @Override public void onOpen() {
-                runOnState(() -> onPhysicalOpen(generation));
+                runOnState(() -> onPhysicalOpen(generation, sourceTransport));
             }
 
             @Override public void onText(String text) {
-                runOnState(() -> handleControlMessage(generation, text));
+                runOnState(() -> handleControlMessage(generation, sourceTransport, text));
             }
 
             @Override public void onBinary(byte[] data) {
-                runOnState(() -> dispatchBinaryFrame(generation, data));
+                runOnState(() -> dispatchBinaryFrame(generation, sourceTransport, data));
             }
 
             @Override public void onClosed(int code, String reason) {
-                runOnState(() -> handlePhysicalDisconnected(generation, code, reason));
+                runOnState(() ->
+                    handlePhysicalDisconnected(generation, sourceTransport, code, reason));
             }
 
             @Override public void onError(String message) {
@@ -334,14 +351,17 @@ public final class DeviceConnection {
             }
 
             @Override public void onError(int code, String message) {
-                runOnState(() -> handlePhysicalDisconnected(generation, code, message));
+                runOnState(() ->
+                    handlePhysicalDisconnected(generation, sourceTransport, code, message));
             }
         });
     }
 
-    private void onPhysicalOpen(int generation) {
-        if (generation != transportGeneration || !physicalDesired) {
-            if (transport != null) transport.close();
+    private void onPhysicalOpen(int generation, MuxTransport sourceTransport) {
+        if (generation != transportGeneration || sourceTransport != transport || !physicalDesired) {
+            staleTransportGenerationDropped++;
+            if (sourceTransport != null) sourceTransport.close();
+            publishDiagnosticsSnapshot();
             return;
         }
         physicalConnecting = false;
@@ -458,8 +478,13 @@ public final class DeviceConnection {
         schedulePhysicalReconnect();
     }
 
-    private void handlePhysicalDisconnected(int generation, int code, String reason) {
-        if (generation != transportGeneration || !physicalDesired) return;
+    private void handlePhysicalDisconnected(
+            int generation, MuxTransport sourceTransport, int code, String reason) {
+        if (generation != transportGeneration || sourceTransport != transport || !physicalDesired) {
+            staleTransportGenerationDropped++;
+            publishDiagnosticsSnapshot();
+            return;
+        }
         boolean wasConnecting = physicalConnecting;
         boolean wasConnected = physicalConnected;
         long connectDurationMs = connectDurationMs();
@@ -549,8 +574,14 @@ public final class DeviceConnection {
         }, delayMs);
     }
 
-    private void handleControlMessage(int generation, String text) {
-        if (generation != transportGeneration || !physicalConnected) return;
+    private void handleControlMessage(
+            int generation, MuxTransport sourceTransport, String text) {
+        if (generation != transportGeneration || sourceTransport != transport
+                || !physicalConnected) {
+            staleTransportGenerationDropped++;
+            publishDiagnosticsSnapshot();
+            return;
+        }
         MuxControlCodec.Message msg = controlCodec.decode(text);
         if (msg == null) return;
         String type = msg.type;
@@ -569,11 +600,18 @@ public final class DeviceConnection {
 
     private void onTunnelConnected(String tunnelId) {
         LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
-        if (channel != null && channel.desiredOpen && channel.state == LogicalChannelRegistry.Channel.State.OPENING) {
+        if (channel == null) {
+            classifyMissingChannel(tunnelId, transportGeneration);
+            publishDiagnosticsSnapshot();
+            return;
+        }
+        if (channel.desiredOpen && channel.state == LogicalChannelRegistry.Channel.State.OPENING) {
             channel.openGeneration++;
             channel.retryGeneration++;
             channel.retryAttempt = 0;
             channel.state = LogicalChannelRegistry.Channel.State.OPEN;
+            channel.openedTransportGeneration = transportGeneration;
+            channelRegistry.acknowledgeLifecycle(channel.id, channel.lifecycleId);
             Diagnostics.info("device_connection", "channel_connected", channelFields(channel,
                 "stateBefore", "OPENING", "stateAfter", "OPEN"));
             notifyConnected(channel);
@@ -582,7 +620,11 @@ public final class DeviceConnection {
 
     private void onTunnelError(String tunnelId, int code, String message) {
         LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
-        if (channel == null) return;
+        if (channel == null) {
+            classifyMissingChannel(tunnelId, transportGeneration);
+            publishDiagnosticsSnapshot();
+            return;
+        }
         Diagnostics.warn("device_connection", "channel_failed", channelFields(channel,
             "failureKind", channelFailureKind(code),
             "closeCode", code,
@@ -603,7 +645,11 @@ public final class DeviceConnection {
 
     private void onTunnelClosed(String tunnelId, int code, String reason) {
         LogicalChannelRegistry.Channel channel = channelRegistry.get(tunnelId);
-        if (channel == null) return;
+        if (channel == null) {
+            classifyMissingChannel(tunnelId, transportGeneration);
+            publishDiagnosticsSnapshot();
+            return;
+        }
         Diagnostics.info("device_connection", "channel_closed", channelFields(channel,
             "closeCode", code,
             "stateBefore", channel.state.name(),
@@ -625,8 +671,10 @@ public final class DeviceConnection {
         }
     }
 
-    private void dispatchBinaryFrame(int generation, byte[] data) {
-        if (generation != transportGeneration || !physicalConnected) {
+    private void dispatchBinaryFrame(
+            int generation, MuxTransport sourceTransport, byte[] data) {
+        if (generation != transportGeneration || sourceTransport != transport
+                || !physicalConnected) {
             staleTransportGenerationDropped++;
             publishDiagnosticsSnapshot();
             return;
@@ -639,15 +687,29 @@ public final class DeviceConnection {
         }
         LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.tunnelId);
         if (channel == null) {
-            unknownChannelDropped++;
+            classifyMissingChannel(frame.tunnelId, generation);
             publishDiagnosticsSnapshot();
             return;
         }
         if (channel.state != LogicalChannelRegistry.Channel.State.OPEN) {
             channelNotOpenDropped++;
+            LogicalChannelRegistry.Tombstone tombstone =
+                channelRegistry.tombstone(frame.tunnelId);
+            if (tombstone != null
+                    && "CHANNEL_ID_REUSED".equals(tombstone.closeReason)) {
+                channelIdReusedDropped++;
+            } else {
+                staleChannelLifecycleDropped++;
+            }
             publishDiagnosticsSnapshot();
             return;
         }
+        if (channel.openedTransportGeneration != generation) {
+            wrongConnectionMappingDropped++;
+            publishDiagnosticsSnapshot();
+            return;
+        }
+        channel.lastFrameAtNanos = System.nanoTime();
         boolean binary = (frame.extraByte & 0xff) == WebTermProtocol.WS_DATA_BINARY;
         channel.listener.onData(frame.tunnelId, frame.payload, binary);
     }
@@ -655,7 +717,48 @@ public final class DeviceConnection {
     InboundDropSnapshot inboundDropSnapshot() {
         return new InboundDropSnapshot(
             staleTransportGenerationDropped, tunnelDecodeFailed,
-            unknownChannelDropped, channelNotOpenDropped);
+            unknownChannelDropped, channelNotOpenDropped,
+            normalCloseTailDropped, staleChannelLifecycleDropped,
+            channelIdReusedDropped, wrongConnectionMappingDropped);
+    }
+
+    private void classifyMissingChannel(String channelId, int generation) {
+        LogicalChannelRegistry.MissingClassification classification =
+            channelRegistry.classifyMissing(channelId, generation);
+        switch (classification) {
+            case NORMAL_CLOSE_TAIL:
+                normalCloseTailDropped++;
+                break;
+            case STALE_TRANSPORT_GENERATION:
+                staleTransportGenerationDropped++;
+                break;
+            case STALE_CHANNEL_LIFECYCLE:
+                staleChannelLifecycleDropped++;
+                break;
+            case CHANNEL_ID_REUSED:
+                channelIdReusedDropped++;
+                break;
+            case WRONG_CONNECTION_MAPPING:
+                wrongConnectionMappingDropped++;
+                break;
+            case UNKNOWN_CHANNEL:
+            default:
+                unknownChannelDropped++;
+                break;
+        }
+        LogicalChannelRegistry.Tombstone tombstone = channelRegistry.tombstone(channelId);
+        if (tombstone == null) {
+            Diagnostics.info("device_connection", "inbound_channel_frame_dropped", physicalFields(
+                "channelHash", DiagnosticIdHasher.processHash(channelId),
+                "dropClassification", classification.name()));
+        } else {
+            Diagnostics.info("device_connection", "inbound_channel_frame_dropped", physicalFields(
+                "channelHash", DiagnosticIdHasher.processHash(channelId),
+                "channelLifecycleId", tombstone.lifecycleId,
+                "tombstoneTransportGeneration", tombstone.transportGeneration,
+                "closeReason", tombstone.closeReason,
+                "dropClassification", classification.name()));
+        }
     }
 
     MuxOutboundQueue.Snapshot outboundQueueSnapshot() {
@@ -722,6 +825,15 @@ public final class DeviceConnection {
     }
 
     private void stopPhysical(ConnectionCloseReason reason) {
+        stopPhysical(reason, false, true);
+    }
+
+    private void stopPhysical(ConnectionCloseReason reason, boolean preserveRecovery) {
+        stopPhysical(reason, preserveRecovery, true);
+    }
+
+    private void stopPhysical(ConnectionCloseReason reason, boolean preserveRecovery,
+                              boolean closeInstalledTransport) {
         ConnectionCloseReason closeReason =
             reason != null ? reason : ConnectionCloseReason.CHANNELS_IDLE;
         boolean wasDesired = physicalDesired;
@@ -744,8 +856,8 @@ public final class DeviceConnection {
         physicalReconnectAttempts = 0;
         connectedAtNanos = 0L;
         agentRecoveryContextClearPending = false;
-        clearRecoveryState();
-        if (transport != null) transport.close();
+        if (!preserveRecovery) clearRecoveryState();
+        if (closeInstalledTransport && transport != null) transport.close();
         publishDiagnosticsSnapshot();
     }
 
@@ -797,6 +909,11 @@ public final class DeviceConnection {
     }
 
     int transportGenerationForDiagnostics() {
+        return transportGeneration;
+    }
+
+    /** Screen runtime 恢复仲裁只读使用；不得据此修改 transport 状态。 */
+    public int transportGeneration() {
         return transportGeneration;
     }
 
@@ -1030,12 +1147,19 @@ public final class DeviceConnection {
                 : (physicalConnecting ? "CONNECTING" : "DISCONNECTED"),
             "stateAfter", "RECONNECTING"));
         ChannelFailure failure = ChannelFailure.muxTemporary(0, resolvedLog);
+        // Cookie/EOF/send failure 若属于同一恢复链，沿用 recoveryId；后续 ws_open
+        // 统一闭合指标。不要在 stopPhysical 中把已有恢复事务清掉后另起一轮。
+        beginRecoveryIfNeeded(failure);
         for (LogicalChannelRegistry.Channel channel : snapshotChannels()) {
             markWaiting(channel);
             notifyFailure(channel, failure);
         }
-        stopPhysical(resolvedClose);
+        MuxTransport staleTransport = transport;
+        // 先结束旧状态但不触发 close callback；installTransport 发布新 generation 后，
+        // 旧 reader 的任何迟到回调都会被 sourceTransport + generation 双重隔离。
+        stopPhysical(resolvedClose, true, false);
         installTransport();
+        if (staleTransport != null) staleTransport.close();
         if (autoStart && (wasDesired || channelRegistry.size() > 0)) connectPhysical();
     }
 
@@ -1421,6 +1545,8 @@ public final class DeviceConnection {
         java.util.HashMap<String, Object> fields = new java.util.HashMap<>();
         fields.put("deviceHash", DiagnosticIdHasher.processHash(deviceId));
         fields.put("channelHash", DiagnosticIdHasher.processHash(channel.id));
+        fields.put("channelLifecycleId", channel.lifecycleId);
+        fields.put("channelTransportGeneration", channel.openedTransportGeneration);
         fields.put("transportGeneration", transportGeneration);
         fields.put("activeChannelCount", activeChannelCount);
         if (connectionId != null && !connectionId.isEmpty()) {

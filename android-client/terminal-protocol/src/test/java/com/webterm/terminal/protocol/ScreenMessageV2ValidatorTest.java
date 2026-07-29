@@ -90,6 +90,64 @@ public final class ScreenMessageV2ValidatorTest {
             .build());
   }
 
+  @Test
+  public void baselineReportsHistoryBindingCountMismatch() {
+    assertBaselineFault(
+        validBaseline().clearHistoryBindings().build(),
+        BaselineFaultCode.HISTORY_BINDING_COUNT_MISMATCH);
+  }
+
+  @Test
+  public void baselineReportsOutOfOrderHistorySequence() {
+    TerminalScreenV2Proto.Baseline baseline = validBaseline()
+        .clearHistoryBindings()
+        .setHistoryExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
+            .setFirstSeq(1).setLastSeq(2))
+        .addHistoryBindings(push(2, 20, 1))
+        .addHistoryBindings(push(1, 21, 1))
+        .build();
+    assertBaselineFault(baseline, BaselineFaultCode.HISTORY_SEQ_OUT_OF_ORDER);
+  }
+
+  @Test
+  public void baselineReportsDuplicateHistoryKey() {
+    TerminalScreenV2Proto.Baseline baseline = validBaseline()
+        .clearHistoryBindings()
+        .setHistoryExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
+            .setFirstSeq(1).setLastSeq(2))
+        .addHistoryBindings(push(1, 20, 1))
+        .addHistoryBindings(push(2, 20, 1))
+        .build();
+    assertBaselineFault(baseline, BaselineFaultCode.DUPLICATE_HISTORY_KEY);
+  }
+
+  @Test
+  public void baselineReportsDuplicateActiveKeyAndHistoryConflict() {
+    TerminalScreenV2Proto.Baseline duplicate = validBaseline()
+        .clearScreenLines()
+        .clearScreenLayout()
+        .addScreenLines(baselineLine(10, 2))
+        .addScreenLines(baselineLine(10, 2))
+        .setScreenLayout(TerminalScreenV2Proto.ScreenLayout.newBuilder()
+            .addLineIds(10).addLineIds(10))
+        .build();
+    assertBaselineFault(duplicate, BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
+
+    TerminalScreenV2Proto.Baseline conflict = validBaseline()
+        .clearHistoryBindings()
+        .addHistoryBindings(push(1, 10, 1))
+        .build();
+    assertBaselineFault(conflict, BaselineFaultCode.ACTIVE_HISTORY_KEY_CONFLICT);
+  }
+
+  @Test
+  public void baselineReportsPhysicalColumnMismatch() {
+    TerminalScreenV2Proto.Baseline baseline = validBaseline()
+        .setScreenLines(0, baselineLine(10, 3))
+        .build();
+    assertBaselineFault(baseline, BaselineFaultCode.LINE_COLUMN_COUNT_MISMATCH);
+  }
+
   private static TerminalScreenV2Proto.TerminalCommit.Builder commitBuilder() {
     return TerminalScreenV2Proto.TerminalCommit.newBuilder()
         .setInstanceId("i1").setLayoutEpoch(1)
@@ -106,6 +164,40 @@ public final class ScreenMessageV2ValidatorTest {
       long historySeq, long lineId, long lineVersion) {
     return TerminalScreenV2Proto.HistoryPush.newBuilder()
         .setHistorySeq(historySeq).setLineId(lineId).setLineVersion(lineVersion).build();
+  }
+
+  private static TerminalScreenV2Proto.Baseline.Builder validBaseline() {
+    return TerminalScreenV2Proto.Baseline.newBuilder()
+        .setSessionId("s1")
+        .setInstanceId("i1")
+        .setLayoutEpoch(1)
+        .setScreenRevision(1)
+        .setDictionaryGeneration(1)
+        .setHistoryGeneration(1)
+        .setGeometry(TerminalScreenV2Proto.Geometry.newBuilder().setRows(2).setCols(2))
+        .setActiveBuffer(TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN)
+        .setHistoryExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
+            .setFirstSeq(1).setLastSeq(1))
+        .addHistoryBindings(push(1, 20, 1))
+        .setScreenLayout(TerminalScreenV2Proto.ScreenLayout.newBuilder()
+            .addLineIds(10).addLineIds(11))
+        .addScreenLines(baselineLine(10, 2))
+        .addScreenLines(baselineLine(11, 2));
+  }
+
+  private static TerminalScreenV2Proto.LineData baselineLine(long id, int columns) {
+    return TerminalScreenV2Proto.LineData.newBuilder()
+        .setLineId(id).setLineVersion(1).setPhysicalColumns(columns).build();
+  }
+
+  private static void assertBaselineFault(
+      TerminalScreenV2Proto.Baseline baseline, BaselineFaultCode expected) {
+    try {
+      ScreenMessageV2Validator.validateBaseline(baseline);
+      fail("validator accepted invalid Baseline");
+    } catch (BaselineValidationException fault) {
+      assertEquals(expected, fault.faultCode);
+    }
   }
 
   private static void assertAcceptedExtent(long first, long last) throws Exception {

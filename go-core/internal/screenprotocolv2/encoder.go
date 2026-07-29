@@ -13,6 +13,9 @@ import (
 const ProtocolVersion uint32 = 2
 
 func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint32) ([]byte, error) {
+	if err := validateBaselineFrame(frame); err != nil {
+		return nil, err
+	}
 	screen := encodeLines(screenLines(frame.Screen))
 	baseline := &pb.Baseline{
 		SessionId:            frame.SessionID,

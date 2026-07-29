@@ -26,6 +26,7 @@ type ScrollbackTrimEvent struct {
 // ScrollbackIndexWindow 是供版本索引使用的完整轻量窗口。它只复制位置身份，
 // 不复制 Cell 切片；边界与 Entries 在同一次 RLock 下取得。
 type ScrollbackIndexWindow struct {
+	Generation      uint64
 	FirstSeq        uint64
 	LastSeq         uint64
 	NextSeq         uint64
@@ -303,6 +304,7 @@ func (t *TrackedScrollback) IndexWindowIfChanged(previousVersion uint64) (Scroll
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	w := ScrollbackIndexWindow{
+		Generation:      t.generation,
 		FirstSeq:        t.firstSeq,
 		LastSeq:         t.lastSeqLocked(),
 		NextSeq:         t.nextSeq,

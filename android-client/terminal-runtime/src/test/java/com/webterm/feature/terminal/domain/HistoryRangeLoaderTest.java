@@ -159,6 +159,123 @@ public final class HistoryRangeLoaderTest {
     assertEquals(41, next.toSeq);
   }
 
+  @Test
+  public void distantDemandCancelsFetchingRequestAndStartsNewEpoch() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    AtomicBoolean cancelled = new AtomicBoolean();
+    HistoryRangeLoader.Demand first =
+        loader.acceptDemand(1, 20, 1, -1, 20, 10);
+    assertTrue(loader.begin(
+        new HistoryRangeLoader.Range("i1", 1, 1, 1, 40, first.demandEpoch),
+        () -> cancelled.set(true)));
+
+    HistoryRangeLoader.Demand second =
+        loader.acceptDemand(1000, 1020, 1000, 1, 21, 20);
+
+    assertTrue(second.demandEpoch > first.demandEpoch);
+    assertTrue(loader.shouldCancelFor(second));
+    assertTrue(loader.cancelActiveForDemand());
+    assertTrue(cancelled.get());
+    assertNull(loader.activeRequest());
+  }
+
+  @Test
+  public void overlappingDemandKeepsFetchingRequest() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    AtomicBoolean cancelled = new AtomicBoolean();
+    HistoryRangeLoader.Demand first =
+        loader.acceptDemand(100, 140, 100, 1, 41, 10);
+    assertTrue(loader.begin(
+        new HistoryRangeLoader.Range("i1", 1, 1, 90, 180, first.demandEpoch),
+        () -> cancelled.set(true)));
+
+    HistoryRangeLoader.Demand second =
+        loader.acceptDemand(130, 170, 130, 1, 41, 20);
+
+    assertFalse(loader.shouldCancelFor(second));
+    assertFalse(cancelled.get());
+    assertTrue(loader.isActive(loader.activeRequest()));
+  }
+
+  @Test
+  public void lateCancelledRequestCannotCompleteReplacement() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryRangeLoader.Demand first =
+        loader.acceptDemand(1, 20, 1, -1, 20, 10);
+    assertTrue(loader.begin(
+        new HistoryRangeLoader.Range("i1", 1, 1, 1, 40, first.demandEpoch),
+        () -> {}));
+    HistoryRangeLoader.ActiveRequest old = loader.activeRequest();
+    loader.cancelActiveForDemand();
+
+    HistoryRangeLoader.Demand second =
+        loader.acceptDemand(1000, 1020, 1000, 1, 21, 20);
+    assertTrue(loader.begin(
+        new HistoryRangeLoader.Range("i1", 1, 1, 990, 1050, second.demandEpoch),
+        () -> {}));
+    HistoryRangeLoader.ActiveRequest replacement = loader.activeRequest();
+
+    loader.responseArrived(old, 30);
+    assertFalse(loader.beginApplying(old));
+    assertFalse(loader.complete(old));
+    assertTrue(loader.isActive(replacement));
+  }
+
+  @Test
+  public void completionIsClassifiedByDemandEpochAndOverlap() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryRangeLoader.Demand first =
+        loader.acceptDemand(100, 120, 100, 1, 21, 10);
+    assertTrue(loader.begin(
+        new HistoryRangeLoader.Range("i1", 1, 1, 90, 150, first.demandEpoch),
+        () -> {}));
+    HistoryRangeLoader.ActiveRequest request = loader.activeRequest();
+    assertEquals(
+        HistoryRangeLoader.CompletionDisposition.CURRENT,
+        loader.completionDisposition(request));
+
+    loader.acceptDemand(130, 160, 130, 1, 31, 20);
+    assertEquals(
+        HistoryRangeLoader.CompletionDisposition.PARTIAL,
+        loader.completionDisposition(request));
+
+    loader.acceptDemand(500, 520, 500, 1, 21, 30);
+    assertEquals(
+        HistoryRangeLoader.CompletionDisposition.OBSOLETE,
+        loader.completionDisposition(request));
+  }
+
+  @Test
+  public void visibleRowCountControlsDirectionalPrefetch() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 1000);
+    HistoryRenderView history = emptyHistory(extent);
+    loader.acceptDemand(500, 509, 500, -1, 80, 10);
+
+    HistoryRangeLoader.Range range =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    assertEquals(350, range.fromSeq);
+    assertEquals(509, range.toSeq);
+  }
+
+  @Test
+  public void tailSingleLineWaitsForOneDebounceWindowOnly() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 100);
+    loader.acceptDemand(100, 100, 100, 0, 20, 10);
+    HistoryRangeLoader.Range range =
+        new HistoryRangeLoader.Range("i1", 1, 1, 100, 100,
+            loader.latestDemand().demandEpoch);
+
+    long token = loader.armTailDebounce(range, extent);
+    assertTrue(token > 0);
+    loader.acceptDemand(100, 100, 100, 0, 20, 20);
+    assertEquals(-1, loader.armTailDebounce(range, extent));
+    assertTrue(loader.releaseTailDebounce(token));
+    assertEquals(0, loader.armTailDebounce(range, extent));
+  }
+
   private static HistoryRenderView emptyHistory(HistoryExtent extent) {
     HistoryCatalog catalog = new HistoryCatalog().edit().setExtent(extent).commit();
     BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()

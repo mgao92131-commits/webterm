@@ -112,8 +112,13 @@ public final class RemoteTerminalModel {
 
   /** Baseline 总是重建完整 Surface；旧 Catalog 和正文不会跨 Baseline 存活。 */
   public synchronized boolean applyBaseline(ScreenBaseline baseline) {
+    return applyBaselineDetailed(baseline) instanceof ProjectionResult.Applied;
+  }
+
+  /** Runtime 使用的结构化入口；保留 reducer 的具体 Baseline fault。 */
+  public synchronized ProjectionResult applyBaselineDetailed(ScreenBaseline baseline) {
     ProjectionResult result = projectionReducer.applyBaseline(baseline);
-    if (!(result instanceof ProjectionResult.Applied applied)) return false;
+    if (!(result instanceof ProjectionResult.Applied applied)) return result;
     ProjectionState previous = state;
     install(applied.state());
     boolean geometryChanged =
@@ -126,7 +131,7 @@ public final class RemoteTerminalModel {
         displayExtent().firstSeq, displayExtent().lastSeq, true);
     pendingTerminalState.merge(geometryChanged, true, false, false, 0, 0);
     publishPendingRenderUpdate();
-    return true;
+    return result;
   }
 
   public boolean applyTerminalCommit(TerminalCommit commit)
@@ -515,7 +520,13 @@ public final class RemoteTerminalModel {
           CommitFailure.HISTORY_GENERATION_MISMATCH;
       case INVALID_HISTORY_MUTATION ->
           CommitFailure.INVALID_HISTORY_SEQUENCE;
-      case INVALID_BASELINE, INVALID_SCREEN_MUTATION ->
+      case INVALID_BASELINE, INVALID_IDENTITY, INVALID_GENERATION, INVALID_GEOMETRY,
+          SCREEN_LINE_COUNT_MISMATCH, SCREEN_LAYOUT_COUNT_MISMATCH,
+          HISTORY_BINDING_COUNT_MISMATCH, HISTORY_SEQ_OUT_OF_ORDER,
+          HISTORY_SEQ_OUT_OF_EXTENT, DUPLICATE_HISTORY_KEY, DUPLICATE_ACTIVE_KEY,
+          ACTIVE_HISTORY_KEY_CONFLICT, LINE_COLUMN_COUNT_MISMATCH, INVALID_LINE_BODY,
+          INVALID_DICTIONARY, MAPPER_FAILURE, MODEL_REJECTED_BASELINE,
+          INVALID_SCREEN_MUTATION ->
           CommitFailure.INVALID_LINE_DATA;
     };
   }

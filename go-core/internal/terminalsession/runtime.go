@@ -315,6 +315,11 @@ func (r *Runtime) DetachClient(clientID string) {
 	r.postEvent(clientDetachEvent{clientID: clientID})
 }
 
+// ResyncClient 在同一 screen channel 上重新发送不可覆盖的权威 Baseline。
+func (r *Runtime) ResyncClient(clientID string) {
+	r.postEvent(clientResyncEvent{clientID: clientID})
+}
+
 // WriteInput 写入语义输入。
 func (r *Runtime) WriteInput(clientID string, data []byte) {
 	if r.draining.Load() {
@@ -666,6 +671,8 @@ func (r *Runtime) handleEvent(ev event) {
 		r.handleClientAttach(e.client)
 	case clientDetachEvent:
 		r.handleClientDetach(e.clientID)
+	case clientResyncEvent:
+		r.handleClientResync(e.clientID)
 	case clientInitialSyncResultEvent:
 		r.handleClientInitialSyncResult(e)
 	case projectionFlushEvent:
@@ -915,6 +922,18 @@ func (r *Runtime) handleClientDetach(clientID string) {
 	if len(r.clients) == 0 {
 		clear(r.pendingClipboard)
 	}
+}
+
+func (r *Runtime) handleClientResync(clientID string) {
+	client := r.clients[clientID]
+	if client == nil {
+		return
+	}
+	// In-band resync 不复用 ResumeToken；同一 channel 上直接重建完整权威投影。
+	client.ResumeToken = nil
+	client.ForceBaseline = true
+	r.startInitialSync(client)
+	client.ForceBaseline = false
 }
 
 func (r *Runtime) handleAcquireLayout(e acquireLayoutEvent) {
@@ -1175,6 +1194,10 @@ type clientAttachEvent struct {
 }
 
 type clientDetachEvent struct {
+	clientID string
+}
+
+type clientResyncEvent struct {
 	clientID string
 }
 

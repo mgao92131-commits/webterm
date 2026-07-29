@@ -29,6 +29,7 @@ import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +38,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executor;
 
 import org.junit.Test;
 
@@ -46,6 +48,117 @@ import org.junit.Test;
  * 成功路径经 {@link TerminalSessionRuntime#onRenderFrameSucceeded} 原子推进 handled+rendered。
  */
 public final class TerminalSessionRuntimePipelineMetricsTest {
+
+  @Test
+  public void revisionGapFirstRequestsInBandResyncWithoutChannelRebuild() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("revision-gap-resync", model, Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baselineEnvelope(100));
+
+    connection.listener.onScreenMessage(commitEnvelope(99, 101));
+
+    assertEquals(1, connection.resyncCount);
+    assertEquals(0, connection.reconnectCount);
+    assertEquals(TerminalSessionRuntime.State.SYNCING, runtime.state());
+    assertEquals(
+        TerminalSessionRuntime.ProjectionContinuityState.LOST,
+        runtime.projectionContinuityState());
+  }
+
+  @Test
+  public void authoritativeBaselineCompletesInBandRecoveryWithoutRebuild() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("revision-gap-baseline", model, Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baselineEnvelope(100));
+    connection.listener.onScreenMessage(commitEnvelope(99, 101));
+
+    connection.listener.onScreenMessage(baselineEnvelope(120));
+
+    assertEquals(1, connection.resyncCount);
+    assertEquals(0, connection.reconnectCount);
+    assertEquals(TerminalSessionRuntime.State.LIVE, runtime.state());
+    assertEquals(
+        TerminalSessionRuntime.ProjectionContinuityState.CONTINUOUS,
+        runtime.projectionContinuityState());
+    Map<String, Object> diagnostics = runtime.diagnosticsSnapshot().pipeline;
+    assertEquals(1L, diagnostics.get("inBandResyncCount"));
+    assertEquals(1L, diagnostics.get("recoveryCompletedCount"));
+    assertEquals("BASELINE", diagnostics.get("recoverySnapshotKind"));
+  }
+
+  @Test
+  public void dictionaryMismatchRebuildsOnceAndNextHelloForcesBaseline() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("force-baseline", model, Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baselineEnvelope(100));
+
+    TerminalScreenV2Proto.ScreenEnvelope valid =
+        TerminalScreenV2Proto.ScreenEnvelope.parseFrom(commitEnvelope(100, 101));
+    TerminalScreenV2Proto.TerminalCommit invalid =
+        valid.getTerminalCommit().toBuilder().setDictionaryGeneration(9).build();
+    connection.listener.onScreenMessage(
+        TerminalScreenV2Proto.ScreenEnvelope.newBuilder()
+            .setProtocolVersion(2)
+            .setTerminalCommit(invalid)
+            .build().toByteArray());
+
+    assertEquals("resyncCount=" + connection.resyncCount, 1, connection.reconnectCount);
+    connection.listener.onConnected();
+    assertTrue(connection.lastForceBaseline);
+    assertTrue(connection.lastResumeToken == null);
+    assertEquals(2, connection.beginSyncCount);
+  }
+
+  @Test
+  public void projectionMailboxOverflowUsesInBandResyncInsteadOfReconnect() {
+    ManualExecutor executor = new ManualExecutor();
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("projection-overflow", model, executor);
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    executor.runAll();
+    connection.listener.onScreenMessage(baselineEnvelope(100));
+    executor.runAll();
+
+    // Runtime 的生产预算是 256 帧；第 257 帧必须形成 generation fence，
+    // 而不是依靠后续重复 revision gap 偶然进入同一恢复路径。
+    for (int index = 0; index < 257; index++) {
+      connection.listener.onScreenMessage(commitEnvelope(100, 101));
+    }
+    executor.runAll();
+
+    assertEquals(1, connection.resyncCount);
+    assertEquals(0, connection.reconnectCount);
+    assertEquals(
+        TerminalSessionRuntime.ProjectionContinuityState.LOST,
+        runtime.projectionContinuityState());
+  }
+
+  @Test
+  public void fatalMailboxOverflowRebuildsChannelDirectly() {
+    ManualExecutor executor = new ManualExecutor();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("fatal-overflow", new RemoteTerminalModel(), executor);
+    FakeV2Connection connection = new FakeV2Connection();
+    runtime.attachConnection(connection);
+    connection.listener.onConnected();
+    executor.runAll();
+
+    connection.listener.onScreenMessage(new byte[2 * 1024 * 1024 + 1]);
+    executor.runAll();
+
+    assertEquals(0, connection.resyncCount);
+    assertEquals(1, connection.reconnectCount);
+    assertEquals(TerminalSessionRuntime.State.RECONNECTING, runtime.state());
+  }
 
   @Test
   public void baselineAndCommitsAdvancePipelineWatermarks() {
@@ -246,6 +359,70 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   @Test
+  public void rapidViewportUpdatesQueueOneActorDrainAndApplyLatestDemand() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    ManualExecutor actor = new ManualExecutor();
+    TerminalSessionRuntime.TimeoutScheduler scheduler = (task, delayMs) -> {};
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "demand-conflation", model, actor, Runnable::run, scheduler, scheduler);
+    runtime.enterLiveForTest();
+    actor.runAll();
+
+    for (int i = 0; i < 1000; i++) {
+      runtime.onVisibleHistoryDemand(100 + i % 100, 119 + i % 100,
+          100 + i % 100, 1, 20);
+    }
+
+    assertEquals(1, actor.size());
+    actor.runAll();
+    Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(1000L, loader.get("demandReceivedCount"));
+    assertEquals(999L, loader.get("demandConflatedCount"));
+    assertEquals(1L, loader.get("demandAppliedCount"));
+    assertEquals(false, loader.get("hasActiveRequest"));
+  }
+
+  @Test
+  public void distantDemandCancelsOldRequestAndLateCallbackCannotCompleteReplacement() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    TerminalSessionRuntime.TimeoutScheduler scheduler = (task, delayMs) -> {};
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "range-preemption", model, Runnable::run, Runnable::run, scheduler, scheduler);
+    runtime.enterLiveForTest();
+    ControlledRangeSource source = new ControlledRangeSource();
+    runtime.setHistoryRangeSource(source);
+
+    runtime.onVisibleHistoryDemand(1, 20, 1, -1, 20);
+    assertEquals(1, source.requests.size());
+    ControlledRangeSource.Pending first = source.requests.get(0);
+
+    runtime.onVisibleHistoryDemand(250, 270, 250, 1, 21);
+    assertTrue(first.cancelled.get());
+    assertEquals(2, source.requests.size());
+    ControlledRangeSource.Pending second = source.requests.get(1);
+    assertFalse(second.cancelled.get());
+
+    first.callback.onResult(decodedRange(first.range));
+    Map<String, Object> afterLate = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(second.range.fromSeq, afterLate.get("activeFromSeq"));
+    assertEquals(1L, afterLate.get("requestCancelledCount"));
+    assertEquals(1L, afterLate.get("requestObsoleteAtCompletionCount"));
+    int oldHistoryIndex = model.renderSnapshot().history.findSeqIndex(first.range.fromSeq);
+    assertNotNull(model.renderSnapshot().history.renderLineAt(oldHistoryIndex));
+
+    long publicationBefore = model.lastPublicationVersion();
+    second.callback.onResult(decodedRange(second.range));
+    Map<String, Object> afterCurrent = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(false, afterCurrent.get("hasActiveRequest"));
+    assertEquals(1L, afterCurrent.get("requestUsefulAtCompletionCount"));
+    assertTrue(model.lastPublicationVersion() > publicationBefore);
+  }
+
+  @Test
   public void stateOnlyHandledDoesNotAdvanceRendered() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     TerminalSessionRuntime runtime = new TerminalSessionRuntime("state-wm", model, Runnable::run);
@@ -441,10 +618,17 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   private static final class FakeV2Connection implements TerminalSessionRuntime.ScreenConnection {
     TerminalSessionRuntime.ScreenConnection.Listener listener;
     int reconnectCount;
+    int resyncCount;
+    int beginSyncCount;
+    boolean lastForceBaseline;
+    @Nullable TerminalScreenV2Proto.ResumeToken lastResumeToken;
 
     @Override public void setListener(@NonNull Listener listener) { this.listener = listener; }
     @Override public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
                                         boolean forceBaseline) {
+      beginSyncCount++;
+      lastForceBaseline = forceBaseline;
+      lastResumeToken = resume;
       return true;
     }
     @Override public void setLayoutLeaseId(@NonNull String leaseId) {}
@@ -461,11 +645,56 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     }
     @Override public void sendFocusInput(boolean focused) {}
     @Override public boolean requestResize(int cols, int rows) { return true; }
+    @Override public boolean requestResync(
+        long layoutEpoch, long screenRevision, @NonNull String reason) {
+      resyncCount++;
+      return true;
+    }
     @Override public void acquireLayout(boolean interactive) {}
     @Override public void releaseLayout() {}
     @Override public void sendClipboardResponse(@NonNull String requestId, boolean allowed,
                                                 boolean timeout, @Nullable byte[] data) {}
     @Override public void requestReconnect(@NonNull String reason) { reconnectCount++; }
+    @Override public void close() {}
+  }
+
+  private static final class ManualExecutor implements Executor {
+    private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+
+    @Override public void execute(@NonNull Runnable command) {
+      tasks.addLast(command);
+    }
+
+    int size() {
+      return tasks.size();
+    }
+
+    void runAll() {
+      while (!tasks.isEmpty()) tasks.removeFirst().run();
+    }
+  }
+
+  private static final class ControlledRangeSource implements HistoryRangeSource {
+    static final class Pending {
+      final HistoryRangeLoader.Range range;
+      final Callback callback;
+      final AtomicBoolean cancelled = new AtomicBoolean();
+
+      Pending(HistoryRangeLoader.Range range, Callback callback) {
+        this.range = range;
+        this.callback = callback;
+      }
+    }
+
+    final List<Pending> requests = new ArrayList<>();
+
+    @NonNull @Override public RequestHandle fetch(
+        @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback) {
+      Pending pending = new Pending(range, callback);
+      requests.add(pending);
+      return () -> pending.cancelled.set(true);
+    }
+
     @Override public void close() {}
   }
 }

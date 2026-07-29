@@ -364,6 +364,37 @@ func TestRuntimeLargeScrollbackTrimDoesNotSelfDeadlock(t *testing.T) {
 	}
 }
 
+func TestRuntimeInBandResyncSendsFreshBaselineOnSameClient(t *testing.T) {
+	r := newRuntimeTestHarness(t)
+	initials := make(chan InitialSync, 2)
+	r.AttachClient(&ScreenClient{
+		ID: "screen-resync",
+		SendInitial: func(sync InitialSync, done func(bool)) {
+			initials <- sync
+			done(true)
+		},
+	})
+
+	select {
+	case first := <-initials:
+		if first.Projection.Kind != terminalengine.FrameSnapshot {
+			t.Fatalf("first sync kind=%v, want snapshot", first.Projection.Kind)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial baseline not sent")
+	}
+
+	r.ResyncClient("screen-resync")
+	select {
+	case second := <-initials:
+		if second.Projection.Kind != terminalengine.FrameSnapshot {
+			t.Fatalf("resync kind=%v, want snapshot", second.Projection.Kind)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("in-band resync baseline not sent")
+	}
+}
+
 func TestRuntimeEngineEffectFloodDoesNotSelfDeadlock(t *testing.T) {
 	var bells atomic.Int64
 	r := newRuntimeTestHarness(t, WithOnBell(func() { bells.Add(1) }))

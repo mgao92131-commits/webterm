@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -125,6 +126,11 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 	return screenprotocolv2.NewHandler(
 		screenprotocolv2.WithHelloCallback(func(hello *pb.Hello) {
 			client.handleScreenHello(hello)
+		}),
+		screenprotocolv2.WithResyncCallback(func(_ *pb.ResyncRequest) {
+			if rt != nil {
+				rt.ResyncClient(client.screenClientID)
+			}
 		}),
 		screenprotocolv2.WithInputCallback(func(input *pb.TerminalInput) {
 			if rt != nil {
@@ -387,6 +393,10 @@ func (client *terminalChannelRuntime) logScreenEncodeFailure(stage string,
 func classifyScreenError(err error) string {
 	if err == nil {
 		return "unknown"
+	}
+	var baselineValidation *screenprotocolv2.BaselineValidationError
+	if errors.As(err, &baselineValidation) {
+		return baselineValidation.Code
 	}
 	msg := err.Error()
 	switch {

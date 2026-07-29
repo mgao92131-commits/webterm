@@ -36,6 +36,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
   private volatile DeviceConnection deviceConnection;
   private volatile String channelId;
+  private volatile String channelLifecycleId = "";
   private volatile Listener listener;
   private volatile String layoutLeaseId = "";
   private int columns;
@@ -175,8 +176,38 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public void requestResync(long layoutEpoch, long screenRevision, @NonNull String reason) {
-    requestReconnect(reason);
+  public boolean requestResync(
+      long layoutEpoch, long screenRevision, @NonNull String reason) {
+    return sendFrame(
+        ScreenMessageV2Builder.resync(layoutEpoch, screenRevision),
+        MuxOutboundQueue.FrameKind.CONTROL,
+        null);
+  }
+
+  @Override
+  public long transportGeneration() {
+    DeviceConnection current = deviceConnection;
+    return current != null ? current.transportGeneration() : 0L;
+  }
+
+  @Override
+  public String serverDiagnosticIdentity() {
+    return serverConfigId.isEmpty() ? baseUrl : serverConfigId;
+  }
+
+  @Override
+  public String deviceDiagnosticIdentity() {
+    return directDevice ? "direct:" + serverConfigId : relayDeviceId;
+  }
+
+  @Override
+  public String channelDiagnosticIdentity() {
+    return channelId == null ? "" : channelId;
+  }
+
+  @Override
+  public String channelLifecycleDiagnosticIdentity() {
+    return channelLifecycleId;
   }
 
   @Override
@@ -215,6 +246,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     }
     deviceConnection = null;
     channelId = null;
+    channelLifecycleId = "";
   }
 
   private void connectNow() {
@@ -234,20 +266,25 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     // 每次显式重建都使用新的 logical tunnel owner。ws-connected 不携带本地代际，
     // 若复用旧 tunnel id，旧握手的迟到控制帧可能被误认成新连接。
     String logicalChannelOwnerId = UUID.randomUUID().toString();
-    channelId = deviceConnection.openScreenChannel(
+    channelLifecycleId = logicalChannelOwnerId;
+    DeviceConnection channelConnection = deviceConnection;
+    channelId = channelConnection.openScreenChannel(
         localSessionId, logicalChannelOwnerId, new DeviceConnection.ChannelListener() {
       @Override
-      public void onConnected(String channelId) {
+      public void onConnected(String callbackChannelId) {
+        if (!isCurrentCallback(channelConnection, callbackChannelId)) return;
         if (listener != null) listener.onConnected();
       }
 
       @Override
-      public void onData(String channelId, byte[] payload, boolean binary) {
+      public void onData(String callbackChannelId, byte[] payload, boolean binary) {
+        if (!isCurrentCallback(channelConnection, callbackChannelId)) return;
         if (listener != null) listener.onScreenMessage(payload);
       }
 
       @Override
-      public void onFailure(String channelId, ChannelFailure failure) {
+      public void onFailure(String callbackChannelId, ChannelFailure failure) {
+        if (!isCurrentCallback(channelConnection, callbackChannelId)) return;
         switch (failure.kind) {
           case CHANNEL_NOT_FOUND:
           case REMOTE_CLOSED:
@@ -275,9 +312,18 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
       @Override
       public void onReconnectAttempt(int attempt) {
+        if (channelConnection != deviceConnection) return;
         if (listener != null) listener.onDisconnected("reconnect attempt " + attempt);
       }
     });
+  }
+
+  private boolean isCurrentCallback(
+      DeviceConnection callbackConnection, String callbackChannelId) {
+    String currentChannelId = channelId;
+    return callbackConnection == deviceConnection
+        && currentChannelId != null
+        && currentChannelId.equals(callbackChannelId);
   }
 
   private boolean sendHello(@Nullable TerminalScreenV2Proto.ResumeToken resume) {

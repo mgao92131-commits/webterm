@@ -95,7 +95,7 @@ func resumeSyncState(rows, cols, historyLines int) terminalengine.ScreenFrame {
 	}
 	for row := 0; row < rows; row++ {
 		state.Screen = append(state.Screen, terminalengine.Line{
-			ID: uint64(row + 1), Version: 1, Row: row,
+			ID: uint64(row + 1), Version: 1, Row: row, PhysicalColumns: cols,
 			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
 				{Text: fmt.Sprintf("row-%02d", row), Width: 1},
 			}}},
@@ -109,6 +109,7 @@ func resumeSyncState(rows, cols, historyLines int) terminalengine.ScreenFrame {
 	for seq := 1; seq <= historyLines; seq++ {
 		state.History.Lines = append(state.History.Lines, terminalengine.Line{
 			ID: uint64(1000 + seq), Version: 1, HistorySeq: uint64(seq), Row: -1,
+			PhysicalColumns: cols,
 			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{
 				{Text: fmt.Sprintf("history-%03d", seq), Width: 1},
 			}}},

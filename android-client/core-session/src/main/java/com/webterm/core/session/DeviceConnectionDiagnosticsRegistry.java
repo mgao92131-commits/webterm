@@ -274,6 +274,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
         long tunnelDecodeFailed = 0L;
         long unknownChannelDropped = 0L;
         long channelNotOpenDropped = 0L;
+        long normalCloseTailDropped = 0L;
+        long staleChannelLifecycleDropped = 0L;
+        long channelIdReusedDropped = 0L;
+        long wrongConnectionMappingDropped = 0L;
         for (DeviceConnection connection : connections) {
             DeviceConnection.InboundDropSnapshot drops = connection.diagnosticsSnapshot().inboundDrops;
             if (drops == null) continue;
@@ -281,6 +285,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
             tunnelDecodeFailed += drops.tunnelDecodeFailed;
             unknownChannelDropped += drops.unknownChannelDropped;
             channelNotOpenDropped += drops.channelNotOpenDropped;
+            normalCloseTailDropped += drops.normalCloseTailDropped;
+            staleChannelLifecycleDropped += drops.staleChannelLifecycleDropped;
+            channelIdReusedDropped += drops.channelIdReusedDropped;
+            wrongConnectionMappingDropped += drops.wrongConnectionMappingDropped;
         }
         for (DeviceConnection.DiagnosticsSnapshot connection : recentClosed) {
             DeviceConnection.InboundDropSnapshot drops = connection.inboundDrops;
@@ -289,11 +297,19 @@ public final class DeviceConnectionDiagnosticsRegistry {
             tunnelDecodeFailed += drops.tunnelDecodeFailed;
             unknownChannelDropped += drops.unknownChannelDropped;
             channelNotOpenDropped += drops.channelNotOpenDropped;
+            normalCloseTailDropped += drops.normalCloseTailDropped;
+            staleChannelLifecycleDropped += drops.staleChannelLifecycleDropped;
+            channelIdReusedDropped += drops.channelIdReusedDropped;
+            wrongConnectionMappingDropped += drops.wrongConnectionMappingDropped;
         }
         staleTransportGenerationDropped += archived.staleTransportGenerationDropped;
         tunnelDecodeFailed += archived.tunnelDecodeFailed;
         unknownChannelDropped += archived.unknownChannelDropped;
         channelNotOpenDropped += archived.channelNotOpenDropped;
+        normalCloseTailDropped += archived.normalCloseTailDropped;
+        staleChannelLifecycleDropped += archived.staleChannelLifecycleDropped;
+        channelIdReusedDropped += archived.channelIdReusedDropped;
+        wrongConnectionMappingDropped += archived.wrongConnectionMappingDropped;
 
         Map<String, Long> out = new LinkedHashMap<>();
         out.putAll(lifetimeConnectionCounts());
@@ -302,6 +318,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
         out.put("tunnelDecodeFailed", tunnelDecodeFailed);
         out.put("unknownChannelDropped", unknownChannelDropped);
         out.put("channelNotOpenDropped", channelNotOpenDropped);
+        out.put("normalCloseTailDropped", normalCloseTailDropped);
+        out.put("staleChannelLifecycleDropped", staleChannelLifecycleDropped);
+        out.put("channelIdReusedDropped", channelIdReusedDropped);
+        out.put("wrongConnectionMappingDropped", wrongConnectionMappingDropped);
         return out;
     }
 
@@ -378,6 +398,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
         long tunnelDecodeFailed;
         long unknownChannelDropped;
         long channelNotOpenDropped;
+        long normalCloseTailDropped;
+        long staleChannelLifecycleDropped;
+        long channelIdReusedDropped;
+        long wrongConnectionMappingDropped;
 
         void merge(DeviceConnection.DiagnosticsSnapshot snapshot) {
             if (snapshot == null) return;
@@ -407,6 +431,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
                 tunnelDecodeFailed += drops.tunnelDecodeFailed;
                 unknownChannelDropped += drops.unknownChannelDropped;
                 channelNotOpenDropped += drops.channelNotOpenDropped;
+                normalCloseTailDropped += drops.normalCloseTailDropped;
+                staleChannelLifecycleDropped += drops.staleChannelLifecycleDropped;
+                channelIdReusedDropped += drops.channelIdReusedDropped;
+                wrongConnectionMappingDropped += drops.wrongConnectionMappingDropped;
             }
         }
 
@@ -432,6 +460,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
             tunnelDecodeFailed = 0L;
             unknownChannelDropped = 0L;
             channelNotOpenDropped = 0L;
+            normalCloseTailDropped = 0L;
+            staleChannelLifecycleDropped = 0L;
+            channelIdReusedDropped = 0L;
+            wrongConnectionMappingDropped = 0L;
         }
 
         ArchivedTotals copy() {
@@ -458,6 +490,10 @@ public final class DeviceConnectionDiagnosticsRegistry {
             out.tunnelDecodeFailed = tunnelDecodeFailed;
             out.unknownChannelDropped = unknownChannelDropped;
             out.channelNotOpenDropped = channelNotOpenDropped;
+            out.normalCloseTailDropped = normalCloseTailDropped;
+            out.staleChannelLifecycleDropped = staleChannelLifecycleDropped;
+            out.channelIdReusedDropped = channelIdReusedDropped;
+            out.wrongConnectionMappingDropped = wrongConnectionMappingDropped;
             return out;
         }
     }
