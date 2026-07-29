@@ -242,7 +242,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
 
     assertEquals(2, requests.get());
     assertEquals(0, connection.reconnectCount);
-    assertEquals(new HistoryLineRef(2001, 1), model.historyIndex().ref(100));
+    assertEquals(new LineKey(2001, 1), model.historyCatalog().key(100));
     int historyIndex = model.renderSnapshot().history.findSeqIndex(100);
     assertEquals("new", model.renderSnapshot().history.lineAt(historyIndex).at(0).text);
   }

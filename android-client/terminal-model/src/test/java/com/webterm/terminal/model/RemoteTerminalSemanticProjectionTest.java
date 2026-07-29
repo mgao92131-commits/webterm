@@ -13,6 +13,8 @@ public final class RemoteTerminalSemanticProjectionTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));
     assertTrue(model.renderSnapshot().history instanceof SemanticHistoryRenderView);
+    assertEquals(0, model.lineStore().size());
+    assertEquals(1, model.bodyCache().bodyCount());
 
     HistoryBodyResult result = model.applyHistoryBody(
         range(1, 101, "history"),
@@ -21,6 +23,8 @@ public final class RemoteTerminalSemanticProjectionTest {
     assertTrue(result instanceof HistoryBodyResult.Applied);
     int index = model.renderSnapshot().history.findSeqIndex(1);
     assertEquals("history", model.renderSnapshot().history.lineAt(index).at(0).text);
+    assertEquals(2, model.bodyCache().bodyCount());
+    assertEquals(new LineKey(101, 1), model.historyCatalog().key(1));
     assertEquals(new HistoryExtent(1, 2), model.projectionReadView().mainHistoryExtent);
   }
 

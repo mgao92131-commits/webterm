@@ -157,14 +157,15 @@ public final class RemoteTerminalModel {
   }
 
   public synchronized boolean applyBaseline(ScreenBaseline baseline) {
-    ProjectionState nextProjection = null;
     if (baseline != null && baseline.historyCatalogComplete) {
       ProjectionResult semanticResult = projectionReducer.applyBaseline(baseline);
       if (!(semanticResult instanceof ProjectionResult.Applied)) {
         return false;
       }
-      nextProjection = ((ProjectionResult.Applied) semanticResult).state();
+      return applySemanticBaseline(
+          ((ProjectionResult.Applied) semanticResult).state());
     }
+    ProjectionState nextProjection = null;
     if (baseline == null || baseline.instanceId == null || baseline.instanceId.isEmpty()
         || baseline.layoutEpoch < 1 || baseline.screenRevision < 1
         || baseline.dictionaryGeneration < 1 || baseline.historyGeneration < 1
@@ -286,6 +287,9 @@ public final class RemoteTerminalModel {
    */
   public synchronized StagedCommit stageCommit(TerminalCommit commit)
       throws RevisionGapException {
+    if (projectionState != null) {
+      return stageSemanticCommit(commit);
+    }
     if (!v2Projection || commit == null || !Objects.equals(instanceId, commit.instanceId)) {
       throw new CommitValidationException(CommitFailure.IDENTITY_MISMATCH);
     }
@@ -542,6 +546,107 @@ public final class RemoteTerminalModel {
     });
   }
 
+  private boolean applySemanticBaseline(ProjectionState next) {
+    boolean geometryChanged =
+        !v2Projection || rows != next.rows || columns != next.columns;
+    projectionState = next;
+    v2Projection = true;
+    historyCatalogComplete = true;
+    instanceId = next.identity.instanceId();
+    layoutEpoch = next.identity.layoutEpoch();
+    historyGeneration = next.identity.historyGeneration();
+    screenRevision = next.screenRevision;
+    dictionaryGeneration = next.dictionaryGeneration;
+    rows = next.rows;
+    columns = next.columns;
+    activeBuffer = next.activeBuffer;
+    cursor = next.cursor;
+    modes = next.modes;
+    palette = next.palette;
+    HistoryExtent extent = next.mainSurface.historyCatalog.extent();
+    displayExtent = extent;
+    remoteAvailableExtent = extent;
+    firstAvailableHistorySeq = extent.firstSeq;
+    hasMoreHistoryBefore = false;
+    staleProjection = false;
+    screen = renderScreen(next.activeSurface());
+    projectionHealth = ProjectionHealth.complete(
+        instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
+    markRenderDirty(true, null, 0, null, rows, true, geometryChanged,
+        true, -1, cursor.row, true, true, true, true, true);
+    markTerminalState(geometryChanged, true, false, false, 0, 0);
+    publishPendingRenderUpdate();
+    return true;
+  }
+
+  private StagedCommit stageSemanticCommit(TerminalCommit commit)
+      throws CommitValidationException {
+    ProjectionResult result =
+        projectionReducer.applyCommit(projectionState, commit, evictionPins);
+    if (!(result instanceof ProjectionResult.Applied)) {
+      ProjectionFault fault = ((ProjectionResult.NeedsBaseline) result).fault();
+      throw new CommitValidationException(commitFailure(fault));
+    }
+    ProjectionResult.Applied applied = (ProjectionResult.Applied) result;
+    ProjectionState next = applied.state();
+    ProjectionDelta delta = applied.delta();
+    ProjectionState previous = projectionState;
+    boolean cursorChanged = !Objects.equals(previous.cursor, next.cursor);
+    boolean modesChanged = !Objects.equals(previous.modes, next.modes);
+    boolean paletteChanged = !Objects.equals(previous.palette, next.palette);
+    boolean bufferChanged = previous.activeBuffer != next.activeBuffer;
+    boolean renderChanged = delta.screenChanged() || delta.historyChanged()
+        || delta.geometryChanged() || cursorChanged || modesChanged
+        || paletteChanged || bufferChanged;
+    long expectedBaseRevision = commit == null ? 0 : commit.baseRevision;
+    return new StagedCommit(expectedBaseRevision, () -> {
+      projectionState = next;
+      instanceId = next.identity.instanceId();
+      layoutEpoch = next.identity.layoutEpoch();
+      historyGeneration = next.identity.historyGeneration();
+      screenRevision = next.screenRevision;
+      dictionaryGeneration = next.dictionaryGeneration;
+      rows = next.rows;
+      columns = next.columns;
+      activeBuffer = next.activeBuffer;
+      cursor = next.cursor;
+      modes = next.modes;
+      palette = next.palette;
+      HistoryExtent extent = next.mainSurface.historyCatalog.extent();
+      HistoryExtent previousExtent = displayExtent;
+      displayExtent = extent;
+      remoteAvailableExtent = extent;
+      firstAvailableHistorySeq = extent.firstSeq;
+      screen = renderScreen(next.activeSurface());
+      projectionHealth = ProjectionHealth.complete(
+          instanceId, layoutEpoch, screenRevision, SCHEMA_GENERATION);
+
+      BitSet changedRows = null;
+      if (delta.screenChanged()) {
+        changedRows = new BitSet(rows);
+        changedRows.set(0, rows);
+      }
+      markRenderDirty(
+          false, changedRows, 0, null, rows,
+          delta.historyChanged(), delta.geometryChanged(), cursorChanged,
+          previous.cursor != null ? previous.cursor.row : -1,
+          next.cursor != null ? next.cursor.row : -1,
+          paletteChanged, false, false, modesChanged, bufferChanged);
+      if (delta.historyChanged()) {
+        mergeAvailableExtentDirty(previousExtent, extent);
+        if (commit.history != null) {
+          mergeHistoryPushDirtyRange(
+              commit.history.pushes, !previousExtent.equals(extent));
+        }
+      }
+      markTerminalState(
+          delta.geometryChanged(), delta.historyChanged(), false, false, 0, 0);
+      if (renderChanged) publishPendingRenderUpdate();
+      else publishProjectionReadView();
+      return renderChanged;
+    });
+  }
+
   @FunctionalInterface
   private interface CommitAction {
     boolean run();
@@ -775,6 +880,11 @@ public final class RemoteTerminalModel {
     return activeSurface().lineStore;
   }
 
+  public synchronized BodyCache bodyCache() {
+    return projectionState == null
+        ? new BodyCache(historyBudget) : projectionState.activeSurface().bodyCache;
+  }
+
   /** 当前 Surface 的 rowIndex → LineID 位置索引。 */
   public synchronized ActiveRows activeRows() {
     return activeSurface().activeRows;
@@ -783,6 +893,11 @@ public final class RemoteTerminalModel {
   /** 当前 Surface 已加载历史的 historySeq → LineID 位置索引。 */
   public synchronized HistoryIndex historyIndex() {
     return activeSurface().historyIndex;
+  }
+
+  public synchronized HistoryCatalog historyCatalog() {
+    return projectionState == null
+        ? new HistoryCatalog() : projectionState.activeSurface().historyCatalog;
   }
 
   public synchronized boolean isV2Projection() {
@@ -873,15 +988,24 @@ public final class RemoteTerminalModel {
   }
 
   public synchronized int historySize() {
-    return activeSurface().history.snapshot().size();
+    return projectionState != null
+        ? (int) Math.min(Integer.MAX_VALUE,
+            projectionState.activeSurface().historyCatalog.extent().logicalSize())
+        : activeSurface().history.snapshot().size();
   }
 
   public synchronized long firstCachedHistorySeq() {
-    return activeSurface().history.snapshot().firstLoadedSeq();
+    return projectionState != null
+        ? new SemanticHistoryRenderView(
+            projectionState.activeSurface().historyCatalog,
+            projectionState.activeSurface().bodyCache).firstLoadedSeq()
+        : activeSurface().history.snapshot().firstLoadedSeq();
   }
 
   public synchronized long historyBytes() {
-    return activeSurface().history.snapshot().estimatedByteCount();
+    return projectionState != null
+        ? projectionState.activeSurface().bodyCache.estimatedHistoryBytes()
+        : activeSurface().history.snapshot().estimatedByteCount();
   }
 
   synchronized long loadedHistoryLineCountForTest() {

@@ -83,6 +83,11 @@ public final class ScreenProjectionReducer {
   }
 
   public ProjectionResult applyCommit(ProjectionState current, TerminalCommit commit) {
+    return applyCommit(current, commit, EvictionPins.NONE);
+  }
+
+  public ProjectionResult applyCommit(
+      ProjectionState current, TerminalCommit commit, EvictionPins pins) {
     ProjectionFault identityFault = validateIdentity(current, commit);
     if (identityFault != null) return new ProjectionResult.NeedsBaseline(identityFault);
 
@@ -159,6 +164,10 @@ public final class ScreenProjectionReducer {
         }
         historyChanged = true;
       }
+
+      tx.bodyCache()
+          .evictIfNeeded(pins == null ? EvictionPins.NONE : pins)
+          .retainOnlyActiveAndResident(activeKeys);
 
       TerminalSurfaceState nextSurface = tx.commit();
       TerminalSurfaceState main =
