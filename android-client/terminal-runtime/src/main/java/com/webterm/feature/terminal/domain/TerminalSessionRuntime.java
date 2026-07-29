@@ -937,9 +937,17 @@ public final class TerminalSessionRuntime {
       refreshEvictionPins();
       return;
     }
-    HistoryRangeLoader.Demand accepted = historyLoader.acceptDemand(
-        update.visibleFromSeq, update.visibleToSeq, update.anchorSeq,
-        update.direction, update.visibleRowCount, update.createdAtNanos);
+    RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
+    RemoteTerminalModel.RenderSnapshot snapshot = model.peekRenderSnapshot();
+    HistoryRangeLoader.Demand accepted = projection.projectionComplete && snapshot != null
+        ? historyLoader.acceptDemand(
+            update.visibleFromSeq, update.visibleToSeq, update.anchorSeq,
+            update.direction, update.visibleRowCount, update.createdAtNanos,
+            projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
+            projection.mainHistoryExtent, snapshot.history)
+        : historyLoader.acceptDemand(
+            update.visibleFromSeq, update.visibleToSeq, update.anchorSeq,
+            update.direction, update.visibleRowCount, update.createdAtNanos);
     if (accepted == null) return;
     boolean cancelled = historyLoader.shouldCancelFor(accepted)
         && historyLoader.cancelActiveForDemand();

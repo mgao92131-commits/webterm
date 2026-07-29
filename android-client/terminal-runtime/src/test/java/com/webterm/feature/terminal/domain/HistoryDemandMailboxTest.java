@@ -106,18 +106,17 @@ public final class HistoryDemandMailboxTest {
   }
 
   @Test
-  public void changedAnchorAndDirectionAreDelivered() {
+  public void changedAnchorAndDirectionDoNotChangeCoverageIdentity() {
     ArrayDeque<Runnable> executor = new ArrayDeque<>();
     List<HistoryDemandMailbox.Update> applied = new ArrayList<>();
     HistoryDemandMailbox mailbox = new HistoryDemandMailbox(executor::add, applied::add);
     mailbox.offer(10, 20, 10, 1, 11, 1);
     executor.remove().run();
-    mailbox.offer(10, 20, 11, -1, 11, 2);
-    executor.remove().run();
+    assertEquals(HistoryDemandMailbox.OfferResult.DEDUPLICATED,
+        mailbox.offer(10, 20, 11, -1, 11, 2));
 
-    assertEquals(2, applied.size());
-    assertEquals(11, applied.get(1).anchorSeq);
-    assertEquals(-1, applied.get(1).direction);
+    assertEquals(0, executor.size());
+    assertEquals(1, applied.size());
   }
 
   @Test

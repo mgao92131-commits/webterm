@@ -43,6 +43,7 @@ import com.webterm.terminal.model.UnifiedContentAxis;
 import com.webterm.terminal.interaction.GestureAndScaleRecognizer;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 远程终端自定义 View。负责 Android View 生命周期、IME、触摸滚动、选择和触发渲染。
@@ -130,6 +131,13 @@ public final class RemoteTerminalView extends View {
   private Host host;
   /** -1 向更旧历史，+1 向更新输出，0 未知；供 Range 方向预取。 */
   private int historyDemandDirection;
+  private boolean historyDemandReported;
+  private String lastHistoryDemandInstanceId = "";
+  private long lastHistoryDemandLayoutEpoch;
+  private long lastHistoryDemandGeneration;
+  @Nullable private TerminalBufferKind lastHistoryDemandBuffer;
+  private long lastHistoryDemandFromSeq;
+  private long lastHistoryDemandToSeq;
   private float lastFlingY;
   private int flingFramesScheduledForTest;
   private boolean selecting;
@@ -195,6 +203,7 @@ public final class RemoteTerminalView extends View {
   public void setHost(@Nullable Host host) {
     clearPendingMouseMove();
     if (host == null) stopSelectionAutoScroll();
+    if (this.host != host) resetReportedHistoryDemand();
     this.host = host;
   }
 
@@ -279,7 +288,14 @@ public final class RemoteTerminalView extends View {
         invalidate();
         break;
     }
-    reportVisibleHistoryDemand();
+    if (geometryChanged
+        || update.dirty.historyChanged
+        || update.dirty.historyStructureChanged
+        || update.dirty.geometryChanged
+        || update.dirty.activeBufferChanged
+        || historyDemandProjectionChanged(previousSnapshot, update.snapshot)) {
+      reportVisibleHistoryDemandIfChanged();
+    }
   }
 
   /**
@@ -355,14 +371,14 @@ public final class RemoteTerminalView extends View {
   public void setTextSize(int sizeSp) {
     if (this.userTextSizeSp != sizeSp) fontGeneration++;
     this.userTextSizeSp = sizeSp;
-    requestLayoutIfSizeChanged();
+    if (requestLayoutIfSizeChanged()) reportVisibleHistoryDemandIfChanged();
     invalidate();
   }
 
   public void setTypeface(@Nullable Typeface typeface) {
     if (this.userTypeface != typeface) fontGeneration++;
     this.userTypeface = typeface;
-    requestLayoutIfSizeChanged();
+    if (requestLayoutIfSizeChanged()) reportVisibleHistoryDemandIfChanged();
     invalidate();
   }
 
@@ -370,6 +386,7 @@ public final class RemoteTerminalView extends View {
   protected void onSizeChanged(int w, int h, int oldw, int oldh) {
     super.onSizeChanged(w, h, oldw, oldh);
     updateSize(w, h);
+    reportVisibleHistoryDemandIfChanged();
   }
 
   @Override
@@ -384,6 +401,7 @@ public final class RemoteTerminalView extends View {
     stopCursorBlinking();
     stopSelectionAutoScroll();
     stopSelection();
+    resetReportedHistoryDemand();
     super.onDetachedFromWindow();
   }
 
@@ -513,7 +531,7 @@ public final class RemoteTerminalView extends View {
       host.onScrollPixels(
           deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
       historyDemandDirection = deltaPixels > 0 ? -1 : 1;
-      reportVisibleHistoryDemand();
+      reportVisibleHistoryDemandIfChanged();
       viewportChanged = true;
     }
     updateCursorBlinkSchedule();
@@ -534,7 +552,7 @@ public final class RemoteTerminalView extends View {
     host.onScrollPixels(
         deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
     historyDemandDirection = deltaPixels > 0 ? -1 : 1;
-    reportVisibleHistoryDemand();
+    reportVisibleHistoryDemandIfChanged();
     postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
   }
 
@@ -745,14 +763,18 @@ public final class RemoteTerminalView extends View {
    */
   @androidx.annotation.VisibleForTesting
   void reportVisibleHistoryDemand() {
+    reportVisibleHistoryDemandIfChanged();
+  }
+
+  private void reportVisibleHistoryDemandIfChanged() {
     if (host == null || renderedSnapshot == null || isAlternateBuffer()) {
-      if (host != null) host.onVisibleHistoryDemand(0, 0, 0, 0);
+      clearReportedHistoryDemandIfNeeded();
       return;
     }
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     HistoryRenderView history = snapshot.history;
     if (history.isEmpty() || getHeight() <= 0 || lineHeight() <= 0f) {
-      host.onVisibleHistoryDemand(0, 0, 0, 0);
+      clearReportedHistoryDemandIfNeeded();
       return;
     }
 
@@ -767,12 +789,54 @@ public final class RemoteTerminalView extends View {
     int visibleFirst = (int) (visible >> 32);
     int visibleLast = (int) visible;
     if (visibleFirst >= visibleLast) {
-      host.onVisibleHistoryDemand(0, 0, 0, 0);
+      clearReportedHistoryDemandIfNeeded();
       return;
     }
     long visibleFrom = history.firstSeq() + visibleFirst;
     long visibleTo = history.firstSeq() + visibleLast - 1L;
+    if (historyDemandReported
+        && Objects.equals(lastHistoryDemandInstanceId, snapshot.instanceId)
+        && lastHistoryDemandLayoutEpoch == snapshot.layoutEpoch
+        && lastHistoryDemandGeneration == snapshot.historyGeneration
+        && lastHistoryDemandBuffer == snapshot.activeBuffer
+        && lastHistoryDemandFromSeq == visibleFrom
+        && lastHistoryDemandToSeq == visibleTo) {
+      return;
+    }
+    historyDemandReported = true;
+    lastHistoryDemandInstanceId = snapshot.instanceId;
+    lastHistoryDemandLayoutEpoch = snapshot.layoutEpoch;
+    lastHistoryDemandGeneration = snapshot.historyGeneration;
+    lastHistoryDemandBuffer = snapshot.activeBuffer;
+    lastHistoryDemandFromSeq = visibleFrom;
+    lastHistoryDemandToSeq = visibleTo;
     host.onVisibleHistoryDemand(visibleFrom, visibleTo, visibleFrom, historyDemandDirection);
+  }
+
+  private void clearReportedHistoryDemandIfNeeded() {
+    if (!historyDemandReported) return;
+    resetReportedHistoryDemand();
+    if (host != null) host.onVisibleHistoryDemand(0, 0, 0, 0);
+  }
+
+  private void resetReportedHistoryDemand() {
+    historyDemandReported = false;
+    lastHistoryDemandInstanceId = "";
+    lastHistoryDemandLayoutEpoch = 0;
+    lastHistoryDemandGeneration = 0;
+    lastHistoryDemandBuffer = null;
+    lastHistoryDemandFromSeq = 0;
+    lastHistoryDemandToSeq = 0;
+  }
+
+  private static boolean historyDemandProjectionChanged(
+      @Nullable RemoteTerminalModel.RenderSnapshot previous,
+      @NonNull RemoteTerminalModel.RenderSnapshot next) {
+    return previous == null
+        || !Objects.equals(previous.instanceId, next.instanceId)
+        || previous.layoutEpoch != next.layoutEpoch
+        || previous.historyGeneration != next.historyGeneration
+        || previous.activeBuffer != next.activeBuffer;
   }
 
   static boolean shouldRequestOlderHistory(int deltaPixels, int scrollOffsetPixels,

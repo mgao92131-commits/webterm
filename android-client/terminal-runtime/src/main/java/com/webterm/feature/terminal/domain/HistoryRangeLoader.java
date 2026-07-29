@@ -111,6 +111,15 @@ public final class HistoryRangeLoader {
   private long lifecycleEpoch = 1;
   private long nextCallId = 1;
   private long nextDemandEpoch = 1;
+  private String latestDemandInstanceId = "";
+  private long latestDemandLayoutEpoch;
+  private long latestDemandGeneration;
+  private boolean hasLatestPlannedFetch;
+  private String latestPlannedFetchInstanceId = "";
+  private long latestPlannedFetchLayoutEpoch;
+  private long latestPlannedFetchGeneration;
+  private long latestPlannedFetchFromSeq;
+  private long latestPlannedFetchToSeq;
   private String observedInstanceId = "";
   private long observedLayoutEpoch;
   private long observedGeneration;
@@ -126,6 +135,7 @@ public final class HistoryRangeLoader {
   public synchronized void setDemand(@Nullable Demand demand) {
     if (closed) return;
     latestDemand = demand;
+    clearLatestDemandProjection();
     if (demand != null) nextDemandEpoch = Math.max(nextDemandEpoch, demand.demandEpoch + 1);
     clearTailDebounce();
   }
@@ -134,16 +144,70 @@ public final class HistoryRangeLoader {
   public synchronized Demand acceptDemand(
       long visibleFromSeq, long visibleToSeq, long anchorSeq, int direction,
       int visibleRowCount, long createdAtNanos) {
+    return acceptDemandInternal(
+        visibleFromSeq, visibleToSeq, anchorSeq, direction,
+        visibleRowCount, createdAtNanos, false, false, "", 0, 0);
+  }
+
+  /**
+   * 在 model actor 上同时观察当前正文驻留状态。viewport demand 始终保留给 eviction pins；
+   * 只有实际缺失目标改变且未被在途请求覆盖时才分配新的 demand epoch。
+   */
+  @Nullable
+  public synchronized Demand acceptDemand(
+      long visibleFromSeq, long visibleToSeq, long anchorSeq, int direction,
+      int visibleRowCount, long createdAtNanos,
+      @NonNull String instanceId, long layoutEpoch, long generation,
+      @NonNull HistoryExtent extent, @NonNull HistoryRenderView history) {
     if (closed) return null;
+    Demand probe = new Demand(
+        visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount,
+        latestDemand == null ? 0 : latestDemand.demandEpoch, createdAtNanos);
+    Range missing = firstMissingRangeForDemand(
+        probe, instanceId, layoutEpoch, generation, extent, history);
+    boolean fetchAlreadySatisfied = missing == null
+        || samePlannedFetch(missing)
+        || activeRequestCovers(missing)
+        || activeRequestCoversVisibleDemand(
+            probe, instanceId, layoutEpoch, generation);
+    Demand accepted = acceptDemandInternal(
+        visibleFromSeq, visibleToSeq, anchorSeq, direction,
+        visibleRowCount, createdAtNanos, true, fetchAlreadySatisfied,
+        instanceId, layoutEpoch, generation);
+    rememberPlannedFetch(missing);
+    return accepted;
+  }
+
+  @Nullable
+  private Demand acceptDemandInternal(
+      long visibleFromSeq, long visibleToSeq, long anchorSeq, int direction,
+      int visibleRowCount, long createdAtNanos,
+      boolean requireSameProjection, boolean fetchAlreadySatisfied,
+      @NonNull String instanceId, long layoutEpoch, long generation) {
+    if (closed) return null;
+    boolean sameCoverage = latestDemand != null
+        && latestDemand.visibleFromSeq == visibleFromSeq
+        && latestDemand.visibleToSeq == visibleToSeq;
+    boolean reuseEpoch = latestDemand != null
+        && (!requireSameProjection || sameProjectionIdentity(instanceId, layoutEpoch, generation))
+        && (sameCoverage || fetchAlreadySatisfied);
+    long demandEpoch = reuseEpoch ? latestDemand.demandEpoch : nextDemandEpoch++;
     Demand demand = new Demand(
         visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount,
-        nextDemandEpoch++, createdAtNanos);
+        demandEpoch, createdAtNanos);
     latestDemand = demand;
+    if (!instanceId.isEmpty()) {
+      latestDemandInstanceId = instanceId;
+      latestDemandLayoutEpoch = layoutEpoch;
+      latestDemandGeneration = generation;
+    }
     metrics.onDemandApplied(System.nanoTime() - createdAtNanos);
-    if (activeRequest != null && activeRequest.state() == RequestState.FETCHING) {
+    if (reuseEpoch) metrics.onDemandDeduplicated();
+    if (!reuseEpoch && activeRequest != null
+        && activeRequest.state() == RequestState.FETCHING) {
       metrics.onDemandChangedWhileFetching();
     }
-    tailDebounceSatisfiedEpoch = 0;
+    if (!reuseEpoch) tailDebounceSatisfiedEpoch = 0;
     return demand;
   }
 
@@ -174,6 +238,7 @@ public final class HistoryRangeLoader {
 
   public synchronized void clearDemand() {
     latestDemand = null;
+    clearLatestDemandProjection();
     clearTailDebounce();
   }
 
@@ -186,6 +251,7 @@ public final class HistoryRangeLoader {
     activeRequest = null;
     clearTailDebounce();
     clearObservedServerExtent();
+    clearLatestDemandProjection();
     consecutiveSessionNotReadyFailures = 0;
     lifecycleEpoch++;
   }
@@ -203,6 +269,17 @@ public final class HistoryRangeLoader {
       @NonNull HistoryRenderView history) {
     Demand demand = latestDemand;
     if (closed || demand == null || extent.isEmpty()) return null;
+    return firstMissingRangeForDemand(
+        demand, instanceId, layoutEpoch, generation, extent, history);
+  }
+
+  @Nullable
+  private Range firstMissingRangeForDemand(
+      @NonNull Demand demand,
+      @NonNull String instanceId, long layoutEpoch, long generation,
+      @NonNull HistoryExtent extent,
+      @NonNull HistoryRenderView history) {
+    if (extent.isEmpty()) return null;
     ensureObservedProjection(instanceId, layoutEpoch, generation);
     long from = Math.max(Math.max(extent.firstSeq, demand.visibleFromSeq),
         observedServerFirstSeq);
@@ -237,6 +314,69 @@ public final class HistoryRangeLoader {
     return new Range(
         instanceId, layoutEpoch, generation, expanded[0], expanded[1], demand.demandEpoch,
         missingTo - missingFrom + 1);
+  }
+
+  private boolean activeRequestCovers(@NonNull Range target) {
+    if (activeRequest == null || activeRequest.state() != RequestState.FETCHING) return false;
+    Range active = activeRequest.range;
+    return active.instanceId.equals(target.instanceId)
+        && active.layoutEpoch == target.layoutEpoch
+        && active.generation == target.generation
+        && active.fromSeq <= target.fromSeq
+        && active.toSeq >= target.toSeq;
+  }
+
+  private boolean activeRequestCoversVisibleDemand(
+      @NonNull Demand demand,
+      @NonNull String instanceId, long layoutEpoch, long generation) {
+    if (activeRequest == null || activeRequest.state() != RequestState.FETCHING) return false;
+    Range active = activeRequest.range;
+    return active.instanceId.equals(instanceId)
+        && active.layoutEpoch == layoutEpoch
+        && active.generation == generation
+        && active.fromSeq <= demand.visibleFromSeq
+        && active.toSeq >= demand.visibleToSeq;
+  }
+
+  private boolean sameProjectionIdentity(
+      @NonNull String instanceId, long layoutEpoch, long generation) {
+    return instanceId.equals(latestDemandInstanceId)
+        && layoutEpoch == latestDemandLayoutEpoch
+        && generation == latestDemandGeneration;
+  }
+
+  private void clearLatestDemandProjection() {
+    latestDemandInstanceId = "";
+    latestDemandLayoutEpoch = 0;
+    latestDemandGeneration = 0;
+    hasLatestPlannedFetch = false;
+    latestPlannedFetchInstanceId = "";
+    latestPlannedFetchLayoutEpoch = 0;
+    latestPlannedFetchGeneration = 0;
+    latestPlannedFetchFromSeq = 0;
+    latestPlannedFetchToSeq = 0;
+  }
+
+  private boolean samePlannedFetch(@NonNull Range range) {
+    return hasLatestPlannedFetch
+        && latestPlannedFetchInstanceId.equals(range.instanceId)
+        && latestPlannedFetchLayoutEpoch == range.layoutEpoch
+        && latestPlannedFetchGeneration == range.generation
+        && latestPlannedFetchFromSeq == range.fromSeq
+        && latestPlannedFetchToSeq == range.toSeq;
+  }
+
+  private void rememberPlannedFetch(@Nullable Range range) {
+    if (range == null) {
+      hasLatestPlannedFetch = false;
+      return;
+    }
+    hasLatestPlannedFetch = true;
+    latestPlannedFetchInstanceId = range.instanceId;
+    latestPlannedFetchLayoutEpoch = range.layoutEpoch;
+    latestPlannedFetchGeneration = range.generation;
+    latestPlannedFetchFromSeq = range.fromSeq;
+    latestPlannedFetchToSeq = range.toSeq;
   }
 
   public synchronized boolean shouldCancelFor(@NonNull Demand next) {

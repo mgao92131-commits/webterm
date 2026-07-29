@@ -6,10 +6,13 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.webterm.terminal.model.BodyCache;
+import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.HistoryCatalog;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryRenderView;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.SemanticHistoryRenderView;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
@@ -198,6 +201,92 @@ public final class HistoryRangeLoaderTest {
   }
 
   @Test
+  public void anchorAndDirectionHintsReuseDemandEpochForSameCoverage() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryRangeLoader.Demand first =
+        loader.acceptDemand(100, 140, 110, -1, 41, 10);
+
+    HistoryRangeLoader.Demand second =
+        loader.acceptDemand(100, 140, 130, 1, 80, 20);
+
+    assertEquals(first.demandEpoch, second.demandEpoch);
+    assertEquals(130, second.anchorSeq);
+    assertEquals(1, second.direction);
+    assertEquals(80, second.visibleRowCount);
+  }
+
+  @Test
+  public void activeRequestCoveringNewMissingRangeReusesDemandEpoch() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 500);
+    HistoryRenderView history = emptyHistory(extent);
+    HistoryRangeLoader.Demand first = loader.acceptDemand(
+        100, 120, 100, -1, 21, 10,
+        "i1", 1, 1, extent, history);
+    assertTrue(loader.begin(
+        new HistoryRangeLoader.Range("i1", 1, 1, 1, 300, first.demandEpoch),
+        () -> {}));
+
+    HistoryRangeLoader.Demand second = loader.acceptDemand(
+        130, 150, 130, 1, 21, 20,
+        "i1", 1, 1, extent, history);
+
+    assertEquals(first.demandEpoch, second.demandEpoch);
+    assertFalse(loader.shouldCancelFor(second));
+  }
+
+  @Test
+  public void sameExpandedMissingTargetReusesEpochWithoutActiveRequest() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 100);
+    HistoryRenderView history = emptyHistory(extent);
+    HistoryRangeLoader.Demand first = loader.acceptDemand(
+        1, 1, 1, 0, 1, 10,
+        "i1", 1, 1, extent, history);
+
+    HistoryRangeLoader.Demand second = loader.acceptDemand(
+        2, 2, 2, 0, 1, 20,
+        "i1", 1, 1, extent, history);
+
+    assertEquals(first.demandEpoch, second.demandEpoch);
+    assertEquals(1, loader.firstMissingRange(
+        "i1", 1, 1, extent, history).fromSeq);
+    assertEquals(32, loader.firstMissingRange(
+        "i1", 1, 1, extent, history).toSeq);
+  }
+
+  @Test
+  public void projectionIdentityChangeAllocatesNewDemandEpoch() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 500);
+    HistoryRenderView history = emptyHistory(extent);
+    HistoryRangeLoader.Demand first = loader.acceptDemand(
+        100, 120, 100, -1, 21, 10,
+        "i1", 1, 1, extent, history);
+
+    HistoryRangeLoader.Demand second = loader.acceptDemand(
+        100, 120, 100, -1, 21, 20,
+        "i2", 1, 1, extent, history);
+
+    assertTrue(second.demandEpoch > first.demandEpoch);
+  }
+
+  @Test
+  public void fullyLoadedViewportKeepsDemandForEvictionPinsWithoutFetchTarget()
+      throws Exception {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 1);
+    HistoryRenderView history = loadedHistory(extent);
+
+    HistoryRangeLoader.Demand demand = loader.acceptDemand(
+        1, 1, 1, 0, 1, 10,
+        "i1", 1, 1, extent, history);
+
+    assertEquals(demand, loader.latestDemand());
+    assertNull(loader.firstMissingRange("i1", 1, 1, extent, history));
+  }
+
+  @Test
   public void lateCancelledRequestCannotCompleteReplacement() {
     HistoryRangeLoader loader = new HistoryRangeLoader();
     HistoryRangeLoader.Demand first =
@@ -281,6 +370,21 @@ public final class HistoryRangeLoaderTest {
     BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()
         .setHistoryExtent(extent)
         .setAvailableExtent(extent)
+        .commit();
+    return new SemanticHistoryRenderView(catalog, cache);
+  }
+
+  private static HistoryRenderView loadedHistory(HistoryExtent extent) throws Exception {
+    LineKey key = new LineKey(1, 1);
+    HistoryCatalog catalog = new HistoryCatalog().edit()
+        .setExtent(extent)
+        .bindNew(1, key)
+        .commit();
+    BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()
+        .setHistoryExtent(extent)
+        .setAvailableExtent(extent)
+        .putHistory(1, key, new LineBody(
+            1, false, new CellValue[] {CellValue.EMPTY}))
         .commit();
     return new SemanticHistoryRenderView(catalog, cache);
   }

@@ -128,15 +128,16 @@ final class HistoryDemandMailbox {
     }
   }
 
+  /**
+   * 网络需求身份只由可见 coverage 和 mailbox 生命周期决定。anchor、方向和行数只是
+   * 下一次真正 coverage 变化时使用的预取提示，不能单独制造 actor 任务或 demand epoch。
+   */
   private static boolean sameDemand(@Nullable Update a, @NonNull Update b) {
     return a != null
         && !a.clear
         && !b.clear
         && a.visibleFromSeq == b.visibleFromSeq
         && a.visibleToSeq == b.visibleToSeq
-        && a.anchorSeq == b.anchorSeq
-        && a.direction == b.direction
-        && a.visibleRowCount == b.visibleRowCount
         && a.generation == b.generation;
   }
 }
