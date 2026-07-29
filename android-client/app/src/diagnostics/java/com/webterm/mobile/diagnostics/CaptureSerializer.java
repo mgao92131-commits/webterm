@@ -9,10 +9,9 @@ import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalStateUpdate;
 import com.webterm.terminal.model.capture.CapturedModelState;
 import com.webterm.terminal.model.capture.CapturedViewState;
@@ -32,50 +31,41 @@ import java.util.List;
 final class CaptureSerializer {
     private CaptureSerializer() {}
 
-    static JSONObject cell(TerminalCell c) throws JSONException {
+    static JSONObject cell(CellValue c) throws JSONException {
         JSONObject o = new JSONObject();
-        o.put("text", c.text);
-        o.put("width", c.width);
-        if (c.style != null) {
+        o.put("text", c.text());
+        o.put("width", c.width());
+        if (c.style() != null) {
             JSONObject resolved = new JSONObject();
-            resolved.put("fg", color(c.style.fg));
-            resolved.put("bg", color(c.style.bg));
-            resolved.put("ulColor", color(c.style.underlineColor));
-            resolved.put("attrs", c.style.attrs);
+            resolved.put("fg", color(c.style().fg()));
+            resolved.put("bg", color(c.style().bg()));
+            resolved.put("ulColor", color(c.style().underlineColor()));
+            resolved.put("attrs", c.style().attrs());
             o.put("resolvedStyle", resolved);
         }
-        if (c.link != null) o.put("resolvedLinkUri", c.link.uri);
+        if (c.link() != null) o.put("resolvedLinkUri", c.link().uri());
         return o;
     }
 
-    static JSONObject line(TerminalLine line) throws JSONException {
+    static JSONObject line(RenderLine line, long historySeq) throws JSONException {
         JSONObject o = new JSONObject();
-        o.put("lineId", line.id);
-        o.put("version", line.version);
-        o.put("historySeq", line.historySeq);
-        o.put("wrapped", line.wrapped);
+        o.put("lineId", line.key().lineId());
+        o.put("version", line.key().lineVersion());
+        o.put("historySeq", historySeq);
+        o.put("physicalColumns", line.body().physicalColumns);
+        o.put("wrapped", line.body().wrapped);
         JSONArray cells = new JSONArray();
-        if (line.cells != null) {
-            for (TerminalCell c : line.cells) {
-                cells.put(cell(c));
-            }
+        for (CellValue c : line.body().copyCells()) {
+            cells.put(cell(c));
         }
         o.put("cells", cells);
         return o;
     }
 
-    static JSONArray lines(TerminalLine[] lines) throws JSONException {
+    static JSONArray lines(RenderLine[] lines) throws JSONException {
         JSONArray arr = new JSONArray();
         if (lines != null) {
-            for (TerminalLine l : lines) arr.put(line(l));
-        }
-        return arr;
-    }
-
-    static JSONArray lineList(List<TerminalLine> lines) throws JSONException {
-        JSONArray arr = new JSONArray();
-        if (lines != null) {
-            for (TerminalLine l : lines) arr.put(line(l));
+            for (RenderLine l : lines) arr.put(line(l, 0));
         }
         return arr;
     }
@@ -160,7 +150,7 @@ final class CaptureSerializer {
         o.put("columns", s.columns);
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
         o.put("cursor", cursor(s.cursor));
-        o.put("screen", lines(s.screen));
+        o.put("screen", lines(s.screenView.copyLines()));
         o.put("firstAvailableHistorySeq", s.firstAvailableHistorySeq);
         o.put("hasMoreHistoryBefore", s.hasMoreHistoryBefore);
         o.put("history", historyWindow(s, includeHistory));
@@ -171,7 +161,7 @@ final class CaptureSerializer {
     private static JSONObject historyWindow(RemoteTerminalModel.RenderSnapshot s, boolean include)
             throws JSONException {
         JSONObject h = new JSONObject();
-        com.webterm.terminal.model.TerminalHistoryView hist = s.history;
+        com.webterm.terminal.model.HistoryRenderView hist = s.history;
         int total = hist != null ? hist.size() : 0;
         h.put("historyTotalSize", total);
         if (!include || hist == null || total == 0) {
@@ -184,11 +174,12 @@ final class CaptureSerializer {
         JSONArray arr = new JSONArray();
         long fromSeq = -1, toSeq = -1;
         for (int i = from; i < total; i++) {
-            com.webterm.terminal.model.TerminalLine line = hist.lineAt(i);
+            com.webterm.terminal.model.RenderLine line = hist.renderLineAt(i);
             if (line == null) continue;
-            arr.put(line(line));
-            if (fromSeq < 0) fromSeq = line.historyOrder();
-            toSeq = line.historyOrder();
+            long seq = hist.seqAt(i);
+            arr.put(line(line, seq));
+            if (fromSeq < 0) fromSeq = seq;
+            toSeq = seq;
         }
         h.put("historyCapturedFromSeq", fromSeq);
         h.put("historyCapturedToSeq", toSeq);

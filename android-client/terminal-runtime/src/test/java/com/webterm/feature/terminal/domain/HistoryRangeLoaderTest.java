@@ -5,9 +5,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import com.webterm.terminal.model.BodyCache;
 import com.webterm.terminal.model.HistoryBudget;
+import com.webterm.terminal.model.HistoryCatalog;
 import com.webterm.terminal.model.HistoryExtent;
-import com.webterm.terminal.model.PagedTerminalHistory;
+import com.webterm.terminal.model.HistoryRenderView;
+import com.webterm.terminal.model.SemanticHistoryRenderView;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
 
@@ -16,13 +19,11 @@ public final class HistoryRangeLoaderTest {
   public void missingVisibleRangeIsExpandedWithoutPageAlignment() {
     HistoryRangeLoader loader = new HistoryRangeLoader();
     loader.setDemand(new HistoryRangeLoader.Demand(937, 1012, 937, -1));
-    PagedTerminalHistory history =
-        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
-    history.edit().setExtent(900, 1500).setAvailableExtent(900, 1500).commit();
+    HistoryRenderView history = emptyHistory(new HistoryExtent(900, 1500));
 
     HistoryRangeLoader.Range range =
         loader.firstMissingRange(
-            "i1", 3, 7, new HistoryExtent(900, 1500), history.snapshot());
+            "i1", 3, 7, new HistoryExtent(900, 1500), history);
 
     assertEquals("i1", range.instanceId);
     assertEquals(3, range.layoutEpoch);
@@ -66,12 +67,10 @@ public final class HistoryRangeLoaderTest {
   public void contiguousFiveThousandLineGapIsRequestedWhole() {
     HistoryRangeLoader loader = new HistoryRangeLoader();
     loader.setDemand(new HistoryRangeLoader.Demand(1, 5000, 1, 1));
-    PagedTerminalHistory history =
-        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
-    history.edit().setExtent(1, 5000).setAvailableExtent(1, 5000).commit();
+    HistoryRenderView history = emptyHistory(new HistoryExtent(1, 5000));
 
     HistoryRangeLoader.Range range = loader.firstMissingRange(
-        "i1", 1, 1, new HistoryExtent(1, 5000), history.snapshot());
+        "i1", 1, 1, new HistoryExtent(1, 5000), history);
     assertEquals(1, range.fromSeq);
     assertEquals(5000, range.toSeq);
   }
@@ -80,34 +79,39 @@ public final class HistoryRangeLoaderTest {
   public void observedTrimWatermarkSuppressesRequestsWithoutChangingWsExtent() {
     HistoryRangeLoader loader = new HistoryRangeLoader();
     loader.setDemand(new HistoryRangeLoader.Demand(1, 20, 1, -1));
-    PagedTerminalHistory history =
-        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
     HistoryExtent wsExtent = new HistoryExtent(1, 100);
-    history.edit().setExtent(1, 100).setAvailableExtent(1, 100).commit();
+    HistoryRenderView history = emptyHistory(wsExtent);
 
     assertEquals(1, loader.firstMissingRange(
-        "i1", 1, 1, wsExtent, history.snapshot()).fromSeq);
+        "i1", 1, 1, wsExtent, history).fromSeq);
     loader.observeServerExtent("i1", 1, 1, new HistoryExtent(50, 100));
-    assertNull(loader.firstMissingRange("i1", 1, 1, wsExtent, history.snapshot()));
+    assertNull(loader.firstMissingRange("i1", 1, 1, wsExtent, history));
     assertEquals(new HistoryExtent(1, 100), wsExtent);
 
     loader.resetLifecycle();
     assertEquals(1, loader.firstMissingRange(
-        "i1", 1, 1, wsExtent, history.snapshot()).fromSeq);
+        "i1", 1, 1, wsExtent, history).fromSeq);
   }
 
   @Test
   public void observedTrimWatermarkResetsWhenProjectionChanges() {
     HistoryRangeLoader loader = new HistoryRangeLoader();
     loader.setDemand(new HistoryRangeLoader.Demand(1, 20, 1, -1));
-    PagedTerminalHistory history =
-        new PagedTerminalHistory(HistoryBudget.defaults(), line -> 1);
     HistoryExtent extent = new HistoryExtent(1, 100);
-    history.edit().setExtent(1, 100).setAvailableExtent(1, 100).commit();
+    HistoryRenderView history = emptyHistory(extent);
     loader.observeServerExtent("i1", 1, 1, new HistoryExtent(50, 100));
 
-    assertNull(loader.firstMissingRange("i1", 1, 1, extent, history.snapshot()));
+    assertNull(loader.firstMissingRange("i1", 1, 1, extent, history));
     assertEquals(1, loader.firstMissingRange(
-        "i2", 1, 1, extent, history.snapshot()).fromSeq);
+        "i2", 1, 1, extent, history).fromSeq);
+  }
+
+  private static HistoryRenderView emptyHistory(HistoryExtent extent) {
+    HistoryCatalog catalog = new HistoryCatalog().edit().setExtent(extent).commit();
+    BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()
+        .setHistoryExtent(extent)
+        .setAvailableExtent(extent)
+        .commit();
+    return new SemanticHistoryRenderView(catalog, cache);
   }
 }

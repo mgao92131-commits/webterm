@@ -6,7 +6,6 @@ import static org.junit.Assert.assertTrue;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryPush;
@@ -16,9 +15,7 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
@@ -341,11 +338,6 @@ public final class TerminalSessionRuntimeCloseDiagnosticsTest {
                 new CellValue("a", (byte) 1, null, null)
             }))),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
-  }
-
-  private static TerminalLine domainLine(long id, long historySeq, String text) {
-    return new TerminalLine(id, 1, historySeq, false,
-        new TerminalCell[] {new TerminalCell(text, (byte) 1, null, null)});
   }
 
   private static final class FakeV2Connection implements TerminalSessionRuntime.ScreenConnection {

@@ -21,8 +21,7 @@ public final class ScreenProjectionReducer {
         || baseline.rows < 1 || baseline.cols < 1
         || baseline.screen == null || baseline.screen.size() != baseline.rows
         || baseline.historyExtent == null || baseline.historyBindings == null
-        || (baseline.historyCatalogComplete
-            && baseline.historyExtent.logicalSize() != baseline.historyBindings.size())) {
+        || baseline.historyExtent.logicalSize() != baseline.historyBindings.size()) {
       return new ProjectionResult.NeedsBaseline(ProjectionFault.INVALID_BASELINE);
     }
     try {

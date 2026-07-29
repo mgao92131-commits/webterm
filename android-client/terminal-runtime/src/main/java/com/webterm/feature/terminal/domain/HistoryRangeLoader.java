@@ -161,7 +161,7 @@ public final class HistoryRangeLoader {
 
   /**
    * 记录 HTTP 已观察到的服务端最旧水位，只抑制已被服务端裁剪区域的重复请求。
-   * 它不修改 WS extent、HistoryIndex 或渲染范围。
+   * 它不修改 WS extent、HistoryCatalog 或渲染范围。
    */
   public synchronized void observeServerExtent(
       @NonNull String instanceId, long layoutEpoch, long generation,

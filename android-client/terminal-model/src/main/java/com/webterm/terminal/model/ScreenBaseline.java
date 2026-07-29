@@ -14,7 +14,6 @@ public final class ScreenBaseline {
   public final TerminalBufferKind activeBuffer;
   public final HistoryExtent historyExtent;
   public final List<HistoryPush> historyBindings;
-  boolean historyCatalogComplete;
   public final List<ScreenLineContent> screen;
   public final TerminalCursor cursor;
   public final TerminalModes modes;
@@ -38,26 +37,9 @@ public final class ScreenBaseline {
     this.activeBuffer = activeBuffer;
     this.historyExtent = historyExtent;
     this.historyBindings = historyBindings;
-    this.historyCatalogComplete = true;
     this.screen = screen;
     this.cursor = cursor;
     this.modes = modes;
     this.palette = palette;
-  }
-
-  /** 迁移期测试构造器；生产 Baseline 必须携带完整 historyBindings。 */
-  @Deprecated
-  public ScreenBaseline(
-      String sessionId, String instanceId, long layoutEpoch, long screenRevision,
-      long dictionaryGeneration, long historyGeneration,
-      DictionaryEntries ignoredDictionary,
-      int rows, int cols, TerminalBufferKind activeBuffer,
-      HistoryExtent historyExtent, List<TerminalLine> screen,
-      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette) {
-    this(sessionId, instanceId, layoutEpoch, screenRevision,
-        dictionaryGeneration, historyGeneration, rows, cols, activeBuffer,
-        historyExtent, java.util.Collections.emptyList(),
-        SemanticLineAdapter.screenContents(screen), cursor, modes, palette);
-    this.historyCatalogComplete = false;
   }
 }

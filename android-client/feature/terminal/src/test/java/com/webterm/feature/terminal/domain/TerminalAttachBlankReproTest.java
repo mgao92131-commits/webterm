@@ -14,12 +14,14 @@ import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LifecycleRegistry;
 
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalViewportState;
@@ -82,24 +84,24 @@ public final class TerminalAttachBlankReproTest {
     RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
     assertNotNull("Reattached view must have non-null renderedSnapshot", snapshot);
     assertEquals("inst-1", snapshot.instanceId);
-    assertNotNull(snapshot.screen);
-    assertEquals(1, snapshot.screen.length);
-    assertEquals("A", snapshot.screen[0].at(0).text);
+    assertEquals(1, snapshot.screenView.size());
+    assertEquals("A", snapshot.screenView.lineAt(0).at(0).text());
 
     controller.detach(owner);
   }
 
   private static ScreenBaseline createBaseline() {
-    TerminalCell[] cells = new TerminalCell[] {
-        new TerminalCell("A", (byte) 1, null, null),
-        new TerminalCell("B", (byte) 1, null, null)
-    };
-    TerminalLine screenLine = new TerminalLine(1001L, 1L, 0L, false, cells);
+    CellValue[] cells = new CellValue[80];
+    java.util.Arrays.fill(cells, CellValue.EMPTY);
+    cells[0] = new CellValue("A", (byte) 1, null, null);
+    cells[1] = new CellValue("B", (byte) 1, null, null);
+    ScreenLineContent screenLine = new ScreenLineContent(
+        new LineKey(1001, 1), new LineBody(80, false, cells));
     return new ScreenBaseline(
         "session-1", "inst-1", 1L, 1L, 1L, 1,
-        com.webterm.terminal.model.DictionaryEntries.EMPTY,
         1, 80, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
+        Collections.emptyList(),
         Collections.singletonList(screenLine),
         TerminalCursor.hidden(),
         TerminalModes.defaults(),

@@ -25,18 +25,4 @@ public final class TerminalCommit {
     this.activeBuffer = activeBuffer; this.screen = screen; this.history = history;
     this.cursor = cursor; this.modes = modes; this.palette = palette;
   }
-
-  /** 迁移期测试构造器；字典已由 protocol 边界解析，不再进入领域命令。 */
-  @Deprecated
-  public TerminalCommit(
-      String instanceId, long layoutEpoch, long baseRevision, long revision,
-      long dictionaryGeneration, long historyGeneration,
-      DictionaryEntries ignoredDictionaryAdditions,
-      TerminalBufferKind activeBuffer,
-      ScreenMutation screen, HistoryMutation history, TerminalCursor cursor,
-      TerminalModes modes, TerminalPalette palette) {
-    this(instanceId, layoutEpoch, baseRevision, revision,
-        dictionaryGeneration, historyGeneration, activeBuffer,
-        screen, history, cursor, modes, palette);
-  }
 }

@@ -14,13 +14,15 @@ import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.LifecycleRegistry;
 
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalViewportState;
@@ -212,12 +214,14 @@ public final class TerminalScreenControllerTest {
   }
 
   private static ScreenBaseline baseline() {
-    TerminalLine screen = new TerminalLine(
-        1000, 1, 0, false, new TerminalCell[] {TerminalCell.EMPTY});
+    ScreenLineContent screen = new ScreenLineContent(
+        new LineKey(1000, 1),
+        new LineBody(1, false, new CellValue[] {CellValue.EMPTY}));
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, 1, 1,
+        "s1", "i1", 1, 1, 1, 1, 1, 1,
         TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
+        Collections.emptyList(),
         Collections.singletonList(screen),
         TerminalCursor.hidden(),
         TerminalModes.defaults(),

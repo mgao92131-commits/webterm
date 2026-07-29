@@ -787,15 +787,17 @@ public final class RealTerminalCaptureController implements TerminalCaptureContr
     private static long estimateRenderBytes(RenderUpdate u) {
         if (u == null || u.snapshot == null) return 32;
         long n = 64;
-        if (u.snapshot.screen != null)
-            for (com.webterm.terminal.model.TerminalLine l : u.snapshot.screen) n += lineBytes(l);
+        for (com.webterm.terminal.model.RenderLine l
+                : u.snapshot.screenView.copyLines()) {
+            n += lineBytes(l);
+        }
         return n;
     }
 
     /** 直接读取行构造时预计算的估算大小，避免热路径遍历全部 Cell。 */
-    private static long lineBytes(com.webterm.terminal.model.TerminalLine line) {
+    private static long lineBytes(com.webterm.terminal.model.RenderLine line) {
         if (line == null) return 32;
-        return Math.max(32, line.estimatedBytes);
+        return Math.max(32, line.body().estimatedBytes);
     }
 
     private static long lineBodyBytes(com.webterm.terminal.model.LineBody body) {

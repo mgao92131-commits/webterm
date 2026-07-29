@@ -14,7 +14,7 @@ public final class RemoteTerminalModelPublicationTest {
   @Test
   public void vsyncConsumeDoesNotWaitForModelMonitor() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(V2ModelTestData.baseline(1, 1)));
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
     CountDownLatch monitorHeld = new CountDownLatch(1);
     CountDownLatch releaseMonitor = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);

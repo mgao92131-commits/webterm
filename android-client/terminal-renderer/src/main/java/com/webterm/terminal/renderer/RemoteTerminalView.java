@@ -34,8 +34,6 @@ import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalHistorySnapshot;
-import com.webterm.terminal.model.TerminalHistoryView;
 import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalViewportState;
@@ -287,7 +285,7 @@ public final class RemoteTerminalView extends View {
   /**
    * Selection still exposes history/screen coordinates to text extraction, but publication
    * transitions must preserve its semantic identity. Resolve the old coordinate to a LineID,
-   * then locate that same line on the new unified axis (including ActiveRows -> HistoryIndex
+   * then locate that same line on the new unified axis (including ActiveRowLayout -> HistoryCatalog
    * promotion) before publishing the new coordinate.
    */
   @Nullable
@@ -992,8 +990,7 @@ public final class RemoteTerminalView extends View {
         || !dirty.exposedScreenRows.isEmpty();
 
     float lineHeight = renderer.getLineHeight();
-    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
-        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    HistoryRenderView history = snapshot.history;
     int snapshotViewportOffset = viewport.derivedScrollOffsetPixels(
         snapshot, lineHeight, maxScrollOffsetPixels(snapshot));
     float screenTop = lineHeight > 0f ? RemoteTerminalRenderer.screenTopY(getHeight(), history.size(),
@@ -1292,8 +1289,7 @@ public final class RemoteTerminalView extends View {
     int col = Math.max(0, Math.min(cols - 1, (int) (x / cellW)));
 
     RenderLine[] screen = snapshot.screenView.copyLines();
-    HistoryRenderView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
-        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    HistoryRenderView history = snapshot.history;
     int screenRows = screen.length;
     int historyRows = history.size();
     if (screenRows == 0 && historyRows == 0) return null;
@@ -1316,7 +1312,7 @@ public final class RemoteTerminalView extends View {
     // 稀疏分页历史下，命中的逻辑行可能尚未加载（UNLOADED）或已被裁剪（UNAVAILABLE），
     // lineAt 返回 null。此时无法锚定选择，安全返回 null 让上层（selectWordAt/长按）退出。
     if (line == null) return null;
-    // HistorySeq 必须取自分页槽位，不能用 LineStore 归零后的 line.historyOrder()/LineID。
+    // HistorySeq 必须取自位置目录；LineBody 本身不携带历史位置。
     long historySeq = history.seqAt(historyIndex);
     return new TerminalSelection.Anchor(historySeq, -1, normalizeSelectionColumn(line, col));
   }
@@ -1373,8 +1369,7 @@ public final class RemoteTerminalView extends View {
     if (selectionStart == null || selectionEnd == null || renderedSnapshot == null) return "";
     TerminalSelection normalized = new TerminalSelection(selectionStart, selectionEnd).normalized();
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    HistoryRenderView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
-        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    HistoryRenderView history = snapshot.history;
     return TerminalSelectionTextExtractor.extract(
         normalized, history, snapshot.screenView.copyLines());
   }
@@ -1543,8 +1538,7 @@ public final class RemoteTerminalView extends View {
     if (anchor == null) return null;
     int col = anchor.col;
     float contentTop = contentTopY(snapshot);
-    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
-        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    HistoryRenderView history = snapshot.history;
     if (anchor.historySeq != 0) {
       int index = history.findSeqIndex(anchor.historySeq);
       if (index < 0) return null;
@@ -1634,8 +1628,7 @@ public final class RemoteTerminalView extends View {
     boolean previousValid = previousRow >= 0 && previousRow < snapshot.screenView.size();
     boolean currentValid = currentRow >= 0 && currentRow < snapshot.screenView.size();
     if (!previousValid && !currentValid) return;
-    TerminalHistoryView history = snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
-        ? TerminalHistorySnapshot.empty() : snapshot.history;
+    HistoryRenderView history = snapshot.history;
     float rowHeight = renderer.getLineHeight();
     if (rowHeight <= 0f) return;
     float screenTop = RemoteTerminalRenderer.screenTopY(

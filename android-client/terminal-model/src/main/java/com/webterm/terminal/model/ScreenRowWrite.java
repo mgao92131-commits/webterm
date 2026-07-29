@@ -8,10 +8,4 @@ public final class ScreenRowWrite {
     this.row = row;
     this.line = line;
   }
-
-  /** 迁移期测试构造器；Renderer 迁移完成后与旧混合行类型一起删除。 */
-  @Deprecated
-  public ScreenRowWrite(int row, TerminalLine line) {
-    this(row, SemanticLineAdapter.screenContent(line));
-  }
 }

@@ -3,7 +3,6 @@ package com.webterm.terminal.renderer;
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.RenderLine;
-import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalSelection;
 
 import java.util.ArrayList;

@@ -11,17 +11,19 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.ScreenMutation;
 import com.webterm.terminal.model.ScreenRowWrite;
 import com.webterm.terminal.model.ScreenScroll;
 import com.webterm.terminal.model.TerminalBufferKind;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -79,8 +81,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       afterBaseline = TerminalRenderMetrics.snapshot();
 
       model.applyTerminalCommit(new TerminalCommit(
-          "i1", 1, 1, 2, 1, 1,
-          com.webterm.terminal.model.DictionaryEntries.EMPTY, null,
+          "i1", 1, 1, 2, 1, 1, TerminalBufferKind.MAIN,
           new ScreenMutation(new ScreenScroll(0, ROWS, 1),
               Collections.singletonList(new ScreenRowWrite(
                   ROWS - 1, line(200_000, 1, 0, "new")))),
@@ -117,23 +118,24 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
   }
 
   private static ScreenBaseline baseline() {
-    List<TerminalLine> screen = new ArrayList<>();
+    List<ScreenLineContent> screen = new ArrayList<>();
     for (int row = 0; row < ROWS; row++) {
       screen.add(line(100_000 + row, 1, 0, "row"));
     }
     return new ScreenBaseline(
         "s1", "i1", 1, 1, 1, 1,
-        com.webterm.terminal.model.DictionaryEntries.EMPTY,
         ROWS, COLS, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, screen,
+        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
-  private static TerminalLine line(long id, long version, long historySeq, String text) {
-    TerminalCell[] cells = new TerminalCell[COLS];
-    cells[0] = new TerminalCell(text, (byte) 1, null, null);
-    for (int column = 1; column < COLS; column++) cells[column] = TerminalCell.EMPTY;
-    return new TerminalLine(id, version, historySeq, false, cells);
+  private static ScreenLineContent line(long id, long version, long historySeq, String text) {
+    CellValue[] cells = new CellValue[COLS];
+    cells[0] = new CellValue(text, (byte) 1, null, null);
+    for (int column = 1; column < COLS; column++) cells[column] = CellValue.EMPTY;
+    return new ScreenLineContent(
+        new LineKey(id, version),
+        new LineBody(COLS, false, cells));
   }
 
   private static long bucketTotal(long[] buckets) {

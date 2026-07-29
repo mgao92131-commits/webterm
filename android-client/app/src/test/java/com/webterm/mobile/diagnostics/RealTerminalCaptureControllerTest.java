@@ -237,18 +237,23 @@ public class RealTerminalCaptureControllerTest {
     @Test
   public void wideEmojiCombiningCharsSerialize() throws Exception {
         String combiningText = "é";
-        com.webterm.terminal.model.TerminalCell wide =
-                new com.webterm.terminal.model.TerminalCell("中", (byte) 2, null, null);
-        com.webterm.terminal.model.TerminalCell emoji =
-                new com.webterm.terminal.model.TerminalCell("😀", (byte) 2, null, null);
-        com.webterm.terminal.model.TerminalCell combining =
-                new com.webterm.terminal.model.TerminalCell(combiningText, (byte) 1, null, null);
-        com.webterm.terminal.model.TerminalCell ascii =
-                new com.webterm.terminal.model.TerminalCell("A", (byte) 1, null, null);
-        com.webterm.terminal.model.TerminalLine line = new com.webterm.terminal.model.TerminalLine(42L, 7L, false,
-                new com.webterm.terminal.model.TerminalCell[]{ascii, wide, emoji, combining});
+        com.webterm.terminal.model.CellValue wide =
+                new com.webterm.terminal.model.CellValue("中", (byte) 2, null, null);
+        com.webterm.terminal.model.CellValue emoji =
+                new com.webterm.terminal.model.CellValue("😀", (byte) 2, null, null);
+        com.webterm.terminal.model.CellValue combining =
+                new com.webterm.terminal.model.CellValue(combiningText, (byte) 1, null, null);
+        com.webterm.terminal.model.CellValue ascii =
+                new com.webterm.terminal.model.CellValue("A", (byte) 1, null, null);
+        com.webterm.terminal.model.RenderLine line =
+                new com.webterm.terminal.model.RenderLine(
+                        new com.webterm.terminal.model.LineKey(42L, 7L),
+                        new com.webterm.terminal.model.LineBody(
+                                4, false,
+                                new com.webterm.terminal.model.CellValue[]{
+                                        ascii, wide, emoji, combining}));
 
-        JSONObject json = CaptureSerializer.line(line);
+        JSONObject json = CaptureSerializer.line(line, 0);
         String s = json.toString();
         assertEquals(42L, json.getLong("lineId"));
         assertTrue("must keep 中文", s.contains("中"));

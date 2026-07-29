@@ -1,282 +1,107 @@
 package com.webterm.terminal.renderer;
 
-import com.webterm.terminal.model.TerminalCell;
+import static org.junit.Assert.assertEquals;
+
+import com.webterm.terminal.model.BodyCache;
 import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.HistoryBudget;
+import com.webterm.terminal.model.HistoryCatalog;
+import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.LineBody;
 import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RenderLine;
-import com.webterm.terminal.model.TerminalHistorySnapshot;
-import com.webterm.terminal.model.HistoryBudget;
-import com.webterm.terminal.model.PagedTerminalHistory;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.SemanticHistoryRenderView;
 import com.webterm.terminal.model.TerminalSelection;
-
+import java.util.Arrays;
 import org.junit.Test;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+public final class TerminalSelectionTextExtractorTest {
+  @Test
+  public void extractsScreenRowsAndSkipsWideSpacer() {
+    RenderLine[] screen = {
+        line(1, false,
+            new CellValue("界", (byte) 2, null, null),
+            CellValue.SPACER,
+            new CellValue("x", (byte) 1, null, null)),
+        textLine(2, false, "next")
+    };
+    TerminalSelection selection = new TerminalSelection(
+        screenAnchor(0, 0), screenAnchor(1, 4)).normalized();
 
-import static org.junit.Assert.assertEquals;
-
-/**
- * {@link TerminalSelectionTextExtractor} 的纯 JVM 单元测试。
- */
-public class TerminalSelectionTextExtractorTest {
-
-  private static TerminalCell cell(char c) {
-    return new TerminalCell(String.valueOf(c), (byte) 1, null, null);
-  }
-
-  private static TerminalCell[] cells(String text) {
-    TerminalCell[] out = new TerminalCell[text.length()];
-    for (int i = 0; i < text.length(); i++) {
-      out[i] = cell(text.charAt(i));
-    }
-    return out;
-  }
-
-  private static TerminalLine historyLine(long id, String text) {
-    return new TerminalLine(id, false, cells(text));
-  }
-
-  private static TerminalLine historyLine(long id, boolean wrapped, String text) {
-    return new TerminalLine(id, wrapped, cells(text));
-  }
-
-  private static TerminalLine screenRow(int row, String text) {
-    return new TerminalLine(0, false, cells(text));
-  }
-
-  private static TerminalLine screenRow(int row, boolean wrapped, String text) {
-    return new TerminalLine(0, wrapped, cells(text));
-  }
-
-  private static TerminalSelection.Anchor hist(long seq, int col) {
-    return new TerminalSelection.Anchor(seq, 0, col);
-  }
-
-  private static TerminalSelection.Anchor scr(int row, int col) {
-    return new TerminalSelection.Anchor(0, row, col);
+    assertEquals(
+        "界x\nnext",
+        TerminalSelectionTextExtractor.extract(
+            selection, emptyHistory(), screen));
   }
 
   @Test
-  public void emptySelection() {
-    TerminalSelection sel = new TerminalSelection(hist(1, 0), hist(1, 0)).normalized();
-    assertEquals("", extract(sel, Arrays.asList(historyLine(1, "abc")), null));
+  public void wrappedRowsAreJoinedAndHardRowsKeepNewline() {
+    RenderLine[] screen = {
+        textLine(1, true, "first "),
+        textLine(2, false, "continued "),
+        textLine(3, false, "hard ")
+    };
+    TerminalSelection selection = new TerminalSelection(
+        screenAnchor(0, 0), screenAnchor(2, 5)).normalized();
+
+    assertEquals(
+        "first continued\nhard",
+        TerminalSelectionTextExtractor.extract(
+            selection, emptyHistory(), screen));
   }
 
   @Test
-  public void historyOnly() {
-    List<TerminalLine> history = Arrays.asList(
-        historyLine(1, "aaaa"),
-        historyLine(2, "bbbb"),
-        historyLine(3, "cccc"));
-    TerminalSelection sel = new TerminalSelection(hist(1, 1), hist(3, 2)).normalized();
-    assertEquals("aaa\nbbbb\ncc", extract(sel, history, null));
-  }
-
-  @Test
-  public void historySelectionUsesHistorySeqRatherThanStableLineId() {
-    List<TerminalLine> history = Arrays.asList(
-        new TerminalLine(100, 1, 1, false, cells("first")),
-        new TerminalLine(7, 1, 2, false, cells("second")));
-    TerminalSelection sel = new TerminalSelection(hist(1, 0), hist(2, 6)).normalized();
-    assertEquals("first\nsecond", extract(sel, history, null));
-  }
-
-  @Test
-  public void pagedHistorySelectionUsesSlotSeqWhenLineHistorySeqZeroed() {
-    // 模拟 LineStore 归零后的分页历史：正文 historySeq=0，位置只在槽位。
-    PagedTerminalHistory pages = new PagedTerminalHistory(
-        HistoryBudget.defaults(), line -> 64);
-    pages.edit()
-        .setExtent(10, 11)
-        .put(10, new TerminalLine(1000, 1, 0, false, cells("alpha")))
-        .put(11, new TerminalLine(1001, 1, 0, false, cells("bravo")))
+  public void missingHistoryBodyIsSkippedWithoutInventingText() throws Exception {
+    HistoryExtent extent = new HistoryExtent(10, 11);
+    HistoryCatalog catalog = new HistoryCatalog().edit()
+        .setExtent(extent)
+        .bindNew(10, new LineKey(10, 1))
+        .bindNew(11, new LineKey(11, 1))
         .commit();
-    TerminalSelection sel = new TerminalSelection(hist(10, 0), hist(11, 5)).normalized();
-    assertEquals("alpha\nbravo",
-        TerminalSelectionTextExtractor.extract(sel, pages.snapshot(), null));
+    BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()
+        .setHistoryExtent(extent)
+        .setAvailableExtent(extent)
+        .putHistory(11, new LineKey(11, 1), textBody(false, "loaded"))
+        .commit();
+    HistoryRenderView history = new SemanticHistoryRenderView(catalog, cache);
+    TerminalSelection selection = new TerminalSelection(
+        historyAnchor(10, 0), historyAnchor(11, 6)).normalized();
+
+    assertEquals(
+        "loaded",
+        TerminalSelectionTextExtractor.extract(
+            selection, history, new RenderLine[0]));
   }
 
-  @Test
-  public void screenOnlySameRow() {
-    TerminalLine[] screen = new TerminalLine[] { screenRow(0, "hello") };
-    TerminalSelection sel = new TerminalSelection(scr(0, 1), scr(0, 4)).normalized();
-    assertEquals("ell", extract(sel, Collections.emptyList(), screen));
+  private static HistoryRenderView emptyHistory() {
+    return new SemanticHistoryRenderView(
+        new HistoryCatalog(), new BodyCache(HistoryBudget.defaults()));
   }
 
-  @Test
-  public void screenOnlyMultiRow() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "abcd  "),
-        screenRow(1, "efgh  "),
-        screenRow(2, "ijkl  ")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 2), scr(2, 2)).normalized();
-    assertEquals("cd\nefgh\nij", extract(sel, Collections.emptyList(), screen));
+  private static TerminalSelection.Anchor screenAnchor(int row, int column) {
+    return new TerminalSelection.Anchor(0, row, column);
   }
 
-  @Test
-  public void trimsPaddingAndPreservesHardLineIndentation() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "  alpha  beta    "),
-        screenRow(1, "    gamma       ")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 16)).normalized();
-    assertEquals("  alpha  beta\n    gamma", extract(sel, Collections.emptyList(), screen));
+  private static TerminalSelection.Anchor historyAnchor(long seq, int column) {
+    return new TerminalSelection.Anchor(seq, -1, column);
   }
 
-  @Test
-  public void joinsSoftWrappedRowsAndPreservesWrappingSpace() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, true, "long "),
-        screenRow(1, false, "command   ")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 10)).normalized();
-    assertEquals("long command", extract(sel, Collections.emptyList(), screen));
-  }
-
-  @Test
-  public void dropsBlankRowsInsideAndAfterSelection() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "first     "),
-        screenRow(1, "          "),
-        screenRow(2, "second    "),
-        screenRow(3, "          "),
-        screenRow(4, "          ")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(4, 10)).normalized();
-    assertEquals("first\n\nsecond", extract(sel, Collections.emptyList(), screen));
-  }
-
-  @Test
-  public void keepsHardRowsSeparateWithoutWidthInference() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, false, "1234567890"),
-        screenRow(1, false, "continued ")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 10)).normalized();
-    assertEquals("1234567890\ncontinued", extract(sel, Collections.emptyList(), screen));
-  }
-
-  @Test
-  public void keepsHistoryHardRowsSeparate() {
-    List<TerminalLine> history = Arrays.asList(
-        historyLine(1, false, "first"),
-        historyLine(2, false, "second"));
-    TerminalSelection sel = new TerminalSelection(hist(1, 0), hist(2, 6)).normalized();
-    assertEquals("first\nsecond", extract(sel, history, null));
-  }
-
-  @Test
-  public void joinsSoftWrapAcrossHistoryAndScreenBoundary() {
-    List<TerminalLine> history = Arrays.asList(
-        historyLine(1, false, "prompt$ "),
-        historyLine(2, true, "very long "));
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, false, "command   ")
-    };
-    TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(0, 10)).normalized();
-    assertEquals("prompt$\nvery long command", extract(sel, history, screen));
-  }
-
-  @Test
-  public void historyToScreenCrossBoundary() {
-    List<TerminalLine> history = Arrays.asList(
-        historyLine(1, "aaaa"),
-        historyLine(2, "bbbb"),
-        historyLine(3, "cccc"));
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, "dddd    "),
-        screenRow(1, "eeee    ")
-    };
-    // 选择：从历史第 2 行第 1 列，到屏幕第 0 行第 3 列。
-    TerminalSelection sel = new TerminalSelection(hist(2, 1), scr(0, 3)).normalized();
-    assertEquals("bbb\ncccc\nddd", extract(sel, history, screen));
-  }
-
-  @Test
-  public void historyToScreenCrossBoundaryUntilLastHistory() {
-    List<TerminalLine> history = Arrays.asList(
-        historyLine(1, "aaaa"),
-        historyLine(2, "bbbb"));
-    TerminalLine[] screen = new TerminalLine[] { screenRow(0, "cccc    ") };
-    TerminalSelection sel = new TerminalSelection(hist(1, 0), scr(0, 2)).normalized();
-    assertEquals("aaaa\nbbbb\ncc", extract(sel, history, screen));
-  }
-
-  @Test
-  public void cleansWrappedTextThroughExtractor() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, true, "first     "),
-        screenRow(1, false, "continued "),
-        screenRow(2, false, "hard line   "),
-        screenRow(3, false, ""),
-        screenRow(4, false, "    "),
-        screenRow(5, false, "\t"),
-        screenRow(6, false, "    indented   ")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(6, 30)).normalized();
-    assertEquals("first continued\nhard line\n\n    indented", extract(sel, Collections.emptyList(), screen));
-  }
-
-  @Test
-  public void nullScreenRowStopsWrappedContinuation() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, true, "first"),
-        null,
-        screenRow(2, false, "second")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(2, 6)).normalized();
-    assertEquals("first\n\nsecond", extract(sel, Collections.emptyList(), screen));
-  }
-
-  @Test
-  public void trailingNullScreenRowsAreDroppedFromCopiedText() {
-    TerminalLine[] screen = new TerminalLine[] {
-        screenRow(0, false, "content"),
-        null,
-        null
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(2, 0)).normalized();
-    assertEquals("content", extract(sel, Collections.emptyList(), screen));
-  }
-
-  @Test
-  public void leadingNullScreenRowsAreDroppedFromCopiedText() {
-    TerminalLine[] screen = new TerminalLine[] {
-        null,
-        screenRow(1, false, "content")
-    };
-    TerminalSelection sel = new TerminalSelection(scr(0, 0), scr(1, 7)).normalized();
-    assertEquals("content", extract(sel, Collections.emptyList(), screen));
-  }
-
-  private static String extract(TerminalSelection sel, List<TerminalLine> history, TerminalLine[] screen) {
-    RenderLine[] renderScreen = null;
-    if (screen != null) {
-      renderScreen = new RenderLine[screen.length];
-      for (int row = 0; row < screen.length; row++) {
-        TerminalLine line = screen[row];
-        if (line == null) continue;
-        CellValue[] cells = new CellValue[Math.max(1, line.length())];
-        Arrays.fill(cells, CellValue.EMPTY);
-        for (int column = 0; column < line.length(); column++) {
-          TerminalCell cell = line.at(column);
-          cells[column] = new CellValue(
-              cell.text, cell.width, null, null);
-        }
-        renderScreen[row] = new RenderLine(
-            new LineKey(100_000L + row, Math.max(1, line.version)),
-            new LineBody(cells.length, line.wrapped, cells));
-      }
+  private static RenderLine textLine(long id, boolean wrapped, String text) {
+    CellValue[] cells = new CellValue[Math.max(1, text.length())];
+    Arrays.fill(cells, CellValue.EMPTY);
+    for (int index = 0; index < text.length(); index++) {
+      cells[index] = new CellValue(
+          String.valueOf(text.charAt(index)), (byte) 1, null, null);
     }
-    return TerminalSelectionTextExtractor.extract(sel, snapshot(history), renderScreen);
+    return new RenderLine(new LineKey(id, 1), new LineBody(cells.length, wrapped, cells));
   }
 
-  private static TerminalHistorySnapshot snapshot(List<TerminalLine> lines) {
-    return new TerminalHistorySnapshot(lines);
+  private static LineBody textBody(boolean wrapped, String text) {
+    return textLine(1, wrapped, text).body();
+  }
+
+  private static RenderLine line(long id, boolean wrapped, CellValue... cells) {
+    return new RenderLine(new LineKey(id, 1), new LineBody(cells.length, wrapped, cells));
   }
 }

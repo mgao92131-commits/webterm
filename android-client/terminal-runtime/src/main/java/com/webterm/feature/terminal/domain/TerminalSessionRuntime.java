@@ -21,7 +21,6 @@ import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.EvictionPins;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCommit;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.CommitFailure;
 import com.webterm.terminal.model.CommitValidationException;
 import com.webterm.core.contract.diagnostics.Diagnostics;
@@ -1143,8 +1142,8 @@ public final class TerminalSessionRuntime {
     long generation = nextSyncGeneration();
     TerminalScreenV2Proto.ResumeToken resume = null;
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
-    if (model.projectionReadView().projectionComplete && snapshot.screen != null
-        && snapshot.screen.length > 0) {
+    if (model.projectionReadView().projectionComplete
+        && snapshot.screenView.size() > 0) {
       TerminalScreenV2Proto.ResumeToken.Builder builder =
           TerminalScreenV2Proto.ResumeToken.newBuilder()
               .setInstanceId(snapshot.instanceId)
@@ -1155,9 +1154,11 @@ public final class TerminalSessionRuntime {
               .setActiveBuffer(snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
                   ? TerminalScreenV2Proto.BufferKind.BUFFER_KIND_ALTERNATE
                   : TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN);
-      for (TerminalLine line : snapshot.screen) {
+      for (com.webterm.terminal.model.RenderLine line
+          : snapshot.screenView.copyLines()) {
         builder.addActiveRows(TerminalScreenV2Proto.ResumeScreenLine.newBuilder()
-            .setLineId(line.id).setLineVersion(line.version));
+            .setLineId(line.key().lineId())
+            .setLineVersion(line.key().lineVersion()));
       }
       resume = builder.build();
     }

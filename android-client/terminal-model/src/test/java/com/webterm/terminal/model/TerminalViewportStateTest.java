@@ -38,7 +38,7 @@ public final class TerminalViewportStateTest {
   @Test
   public void scrollOffsetIsDerivedAndReturnToTailIsImmediate() {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(V2ModelTestData.baseline(1, 1)));
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
     TerminalViewportState viewport = new TerminalViewportState();
 

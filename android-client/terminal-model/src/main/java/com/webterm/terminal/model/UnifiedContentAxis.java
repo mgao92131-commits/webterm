@@ -65,58 +65,6 @@ public final class UnifiedContentAxis {
         Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(), 0, 0);
   }
 
-  static UnifiedContentAxis build(
-      PagedTerminalHistorySnapshot history, ActiveRows activeRows, LineStore lineStore) {
-    List<Item> result = new ArrayList<>();
-    Map<Long, Long> rowsById = new HashMap<>();
-    Map<LineKey, Long> rowsByKey = new HashMap<>();
-    long row = 0;
-    HistoryExtent extent = history.extent();
-    long nextSeq = extent.isEmpty() ? 1 : extent.firstSeq;
-    for (PagedTerminalHistorySnapshot.LoadedEntry loaded : history.loadedEntries()) {
-      if (!extent.contains(loaded.historySeq)) continue;
-      if (loaded.historySeq > nextSeq) {
-        long count = loaded.historySeq - nextSeq;
-        result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, count,
-            nextSeq, loaded.historySeq - 1, 0, null));
-        row += count;
-      }
-      TerminalLine canonical = lineStore.line(loaded.line.id);
-      if (canonical != null) {
-        result.add(new Item(Kind.LOADED_LINE, row, 1,
-            loaded.historySeq, loaded.historySeq, canonical.id,
-            SemanticLineAdapter.semanticRenderLine(canonical)));
-        rowsById.put(canonical.id, row);
-        rowsByKey.put(new LineKey(canonical.id, canonical.version), row);
-      } else {
-        result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, 1,
-            loaded.historySeq, loaded.historySeq, 0, null));
-      }
-      row++;
-      if (loaded.historySeq != Long.MAX_VALUE) nextSeq = loaded.historySeq + 1;
-    }
-    if (!extent.isEmpty() && nextSeq <= extent.lastSeq) {
-      long count = extent.lastSeq - nextSeq + 1;
-      result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, count,
-          nextSeq, extent.lastSeq, 0, null));
-      row += count;
-    }
-    long historyRows = row;
-    for (int activeRow = 0; activeRow < activeRows.size(); activeRow++) {
-      long lineId = activeRows.lineIdAt(activeRow);
-      TerminalLine line = lineStore.line(lineId);
-      if (line == null) {
-        throw new IllegalStateException("ActiveRows references missing LineID " + lineId);
-      }
-      result.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, lineId,
-          SemanticLineAdapter.semanticRenderLine(line)));
-      rowsById.put(lineId, row);
-      rowsByKey.put(new LineKey(line.id, line.version), row);
-      row++;
-    }
-    return new UnifiedContentAxis(result, rowsById, rowsByKey, row, historyRows);
-  }
-
   static UnifiedContentAxis build(TerminalSurfaceState surface) {
     List<Item> result = new ArrayList<>();
     Map<Long, Long> rowsById = new HashMap<>();

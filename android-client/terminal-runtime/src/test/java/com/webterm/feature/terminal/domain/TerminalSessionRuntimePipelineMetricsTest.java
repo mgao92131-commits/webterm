@@ -9,10 +9,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.google.protobuf.ByteString;
-import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryBodyEntry;
-import com.webterm.terminal.model.HistoryLineRef;
 import com.webterm.terminal.model.HistoryMutation;
 import com.webterm.terminal.model.HistoryPush;
 import com.webterm.terminal.model.HistoryRangeResult;
@@ -21,9 +19,7 @@ import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalCommit;
@@ -210,7 +206,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(domainBaseline()));
     assertTrue(model.applyTerminalCommit(new TerminalCommit(
-        "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
+        "i1", 1, 1, 2, 1, 1, null, null,
         new HistoryMutation(new HistoryExtent(1, 300),
             Collections.singletonList(new HistoryPush(100, 2001, 1))),
         null, null, null)));
@@ -244,7 +240,9 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertEquals(0, connection.reconnectCount);
     assertEquals(new LineKey(2001, 1), model.historyCatalog().key(100));
     int historyIndex = model.renderSnapshot().history.findSeqIndex(100);
-    assertEquals("new", model.renderSnapshot().history.lineAt(historyIndex).at(0).text);
+    assertEquals(
+        "new",
+        model.renderSnapshot().history.renderLineAt(historyIndex).at(0).text());
   }
 
   @Test
@@ -411,11 +409,6 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
                 new CellValue("a", (byte) 1, null, null)
             }))),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
-  }
-
-  private static TerminalLine domainLine(long id, long historySeq, String text) {
-    return new TerminalLine(id, 1, historySeq, false,
-        new TerminalCell[] {new TerminalCell(text, (byte) 1, null, null)});
   }
 
   private static HistoryRangeSource.Result decodedRange(

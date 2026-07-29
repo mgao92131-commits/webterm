@@ -3,8 +3,7 @@ package com.webterm.terminal.model;
 /**
  * 从权威位置目录与唯一正文缓存构造的不可变历史渲染视图。
  *
- * <p>该对象不复制正文，不维护第二套反向索引。TerminalLine 仅在旧 Renderer
- * 请求具体行时临时生成，Renderer 迁移为 LineBody 后即可删除该适配。</p>
+ * <p>该对象不复制正文，也不维护第二套反向索引。</p>
  */
 public final class SemanticHistoryRenderView implements HistoryRenderView {
   private final HistoryCatalog catalog;
@@ -21,15 +20,6 @@ public final class SemanticHistoryRenderView implements HistoryRenderView {
   @Override
   public int size() {
     return (int) Math.min(Integer.MAX_VALUE, logicalSize());
-  }
-
-  @Override
-  public TerminalLine lineAt(int index) {
-    long seq = seqAt(index);
-    LineKey key = catalog.key(seq);
-    if (key == null || cache.historyResidency().key(seq) == null) return null;
-    LineBody body = cache.body(key);
-    return body == null ? null : SemanticLineAdapter.renderLine(key, seq, body);
   }
 
   @Override

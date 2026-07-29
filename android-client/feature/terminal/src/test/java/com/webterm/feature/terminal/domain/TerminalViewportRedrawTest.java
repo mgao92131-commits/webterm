@@ -15,13 +15,16 @@ import static org.mockito.Mockito.when;
 import androidx.annotation.NonNull;
 
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.HistoryPush;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
-import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -157,28 +160,30 @@ public final class TerminalViewportRedrawTest {
 
   private static ScreenBaseline createBaseline(String screenId, String instanceId, long seq,
                                                 int historySize, int screenRows) {
-    List<TerminalLine> history = createHistoryLines(1, historySize);
-    List<TerminalLine> screen = createScreenLines(screenRows, 1000);
+    List<HistoryPush> history = createHistoryBindings(1, historySize);
+    List<ScreenLineContent> screen = createScreenLines(screenRows, 1000);
     return new ScreenBaseline(
-        screenId, instanceId, 1, seq, 1, 1, com.webterm.terminal.model.DictionaryEntries.EMPTY, screenRows, 24, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, historySize), screen,
+        screenId, instanceId, 1, seq, 1, 1,
+        screenRows, 24, TerminalBufferKind.MAIN,
+        new HistoryExtent(1, historySize), history, screen,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 
-  private static List<TerminalLine> createHistoryLines(int startSeq, int endSeq) {
-    List<TerminalLine> lines = new ArrayList<>();
+  private static List<HistoryPush> createHistoryBindings(int startSeq, int endSeq) {
+    List<HistoryPush> lines = new ArrayList<>();
     for (int seq = startSeq; seq <= endSeq; seq++) {
-      lines.add(new TerminalLine(
-          seq, 1, seq, false, new TerminalCell[] {TerminalCell.EMPTY}));
+      lines.add(new HistoryPush(seq, new LineKey(seq, 1)));
     }
     return lines;
   }
 
-  private static List<TerminalLine> createScreenLines(int count, int startId) {
-    List<TerminalLine> lines = new ArrayList<>();
+  private static List<ScreenLineContent> createScreenLines(int count, int startId) {
+    List<ScreenLineContent> lines = new ArrayList<>();
     for (int i = 0; i < count; i++) {
-      lines.add(new TerminalLine(
-          startId + i, 1, 0, false, new TerminalCell[] {TerminalCell.EMPTY}));
+      CellValue[] cells = new CellValue[24];
+      java.util.Arrays.fill(cells, CellValue.EMPTY);
+      lines.add(new ScreenLineContent(
+          new LineKey(startId + i, 1), new LineBody(24, false, cells)));
     }
     return lines;
   }

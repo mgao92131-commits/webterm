@@ -12,8 +12,6 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
-import com.webterm.terminal.model.TerminalHistorySnapshot;
-import com.webterm.terminal.model.TerminalHistoryView;
 import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.model.RenderLine;
@@ -131,13 +129,12 @@ public final class RemoteTerminalRenderer {
     long renderStartedNanos = System.nanoTime();
     try {
     RenderLine[] screen = model.screenView.copyLines();
-    if (screen == null || lineHeight <= 0 || cellWidth <= 0) return;
+    if (lineHeight <= 0 || cellWidth <= 0) return;
 
     UnifiedContentAxis axis = model.contentAxis;
     // The content axis is the only vertical coordinate space. History and
     // ActiveRows remain semantic item kinds, not independent layout systems.
-    HistoryRenderView history = model.activeBuffer == TerminalBufferKind.ALTERNATE
-        ? TerminalHistorySnapshot.empty() : model.history;
+    HistoryRenderView history = model.history;
     int screenRows = screen.length;
     long historyRowsLong = axis.historyRowCount();
     int historyRows = (int) Math.min(Integer.MAX_VALUE, historyRowsLong);

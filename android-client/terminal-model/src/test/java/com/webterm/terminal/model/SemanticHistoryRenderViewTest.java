@@ -28,8 +28,8 @@ public final class SemanticHistoryRenderViewTest {
     assertEquals(3, view.size());
     assertEquals(SlotState.UNLOADED, view.slotStateAt(0));
     assertEquals(SlotState.LOADED, view.slotStateAt(1));
-    assertEquals(101, view.lineAt(1).historySeq);
-    assertEquals("x", view.lineAt(1).at(0).text);
-    assertNull(view.lineAt(0));
+    assertEquals(77, view.renderLineAt(1).key().lineId());
+    assertEquals("x", view.renderLineAt(1).at(0).text());
+    assertNull(view.renderLineAt(0));
   }
 }
