@@ -19,6 +19,7 @@ import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -208,11 +209,6 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
       throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(domainBaseline()));
-    assertTrue(model.applyHistoryRange(new HistoryRangeResult(
-        "seed", "i1", 1, 1, HistoryRangeResult.Status.OK,
-        new HistoryExtent(1, 300),
-        Collections.singletonList(domainLine(1001, 100, "old")), 0),
-        100, 100, 100));
     assertTrue(model.applyTerminalCommit(new TerminalCommit(
         "i1", 1, 1, 2, 1, 1, DictionaryEntries.EMPTY, null, null,
         new HistoryMutation(new HistoryExtent(1, 300),
@@ -247,7 +243,8 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
     assertEquals(2, requests.get());
     assertEquals(0, connection.reconnectCount);
     assertEquals(new HistoryLineRef(2001, 1), model.historyIndex().ref(100));
-    assertEquals("new", model.lineStore().line(2001).at(0).text);
+    int historyIndex = model.renderSnapshot().history.findSeqIndex(100);
+    assertEquals("new", model.renderSnapshot().history.lineAt(historyIndex).at(0).text);
   }
 
   @Test
@@ -401,10 +398,18 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   private static ScreenBaseline domainBaseline() {
+    List<HistoryPush> bindings = new ArrayList<>();
+    for (long seq = 1; seq <= 300; seq++) {
+      bindings.add(new HistoryPush(seq, new LineKey(10_000 + seq, 1)));
+    }
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 1,
-        TerminalBufferKind.MAIN, new HistoryExtent(1, 300),
-        Collections.singletonList(domainLine(1000, 0, "a")),
+        "s1", "i1", 1, 1, 1, 1, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(1, 300), bindings,
+        Collections.singletonList(new ScreenLineContent(
+            new LineKey(1000, 1),
+            new LineBody(1, false, new CellValue[] {
+                new CellValue("a", (byte) 1, null, null)
+            }))),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 

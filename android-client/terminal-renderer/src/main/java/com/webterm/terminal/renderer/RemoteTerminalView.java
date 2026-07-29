@@ -35,7 +35,7 @@ import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalHistoryView;
-import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
+import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalViewportState;
@@ -754,11 +754,7 @@ public final class RemoteTerminalView extends View {
       return;
     }
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    if (!(snapshot.history instanceof PagedTerminalHistorySnapshot)) {
-      host.onVisibleHistoryDemand(0, 0, 0, 0);
-      return;
-    }
-    PagedTerminalHistorySnapshot history = (PagedTerminalHistorySnapshot) snapshot.history;
+    HistoryRenderView history = snapshot.history;
     if (history.isEmpty() || getHeight() <= 0 || lineHeight() <= 0f) {
       host.onVisibleHistoryDemand(0, 0, 0, 0);
       return;
@@ -1025,8 +1021,7 @@ public final class RemoteTerminalView extends View {
     // extent/geometry 变化，或旧调用方没有提供精确范围时，保留安全 FULL 退化。
     if (visibleHistoryChanged) {
       boolean hasRange = dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
-      if (dirty.historyStructureChanged || !hasRange
-          || !(history instanceof PagedTerminalHistorySnapshot)) {
+      if (dirty.historyStructureChanged || !hasRange) {
         plan.result = InvalidationResult.FULL;
         return plan;
       }
@@ -1035,7 +1030,7 @@ public final class RemoteTerminalView extends View {
         plan.result = InvalidationResult.FULL;
         return plan;
       }
-      buildHistoryRange(plan, (PagedTerminalHistorySnapshot) history, dirty,
+      buildHistoryRange(plan, (HistoryRenderView) history, dirty,
           screenTop, lineHeight);
       return plan;
     }
@@ -1067,7 +1062,7 @@ public final class RemoteTerminalView extends View {
   }
 
   private void buildHistoryRange(@NonNull InvalidationPlan plan,
-                                 @NonNull PagedTerminalHistorySnapshot history,
+                                 @NonNull HistoryRenderView history,
                                  @NonNull RenderDirtyState dirty,
                                  float screenTop, float lineHeight) {
     long from = Math.max(dirty.changedHistoryFromSeq, history.firstSeq());

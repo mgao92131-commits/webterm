@@ -7,9 +7,14 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.DictionaryEntries;
+import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.HistoryPush;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCell;
 import com.webterm.terminal.model.TerminalCursor;
@@ -323,10 +328,18 @@ public final class TerminalSessionRuntimeCloseDiagnosticsTest {
   }
 
   private static ScreenBaseline domainBaseline() {
+    java.util.List<HistoryPush> bindings = new java.util.ArrayList<>();
+    for (long seq = 1; seq <= 300; seq++) {
+      bindings.add(new HistoryPush(seq, new LineKey(10_000 + seq, 1)));
+    }
     return new ScreenBaseline(
-        "s1", "i1", 1, 1, 1, 1, DictionaryEntries.EMPTY, 1, 1,
-        TerminalBufferKind.MAIN, new HistoryExtent(1, 300),
-        Collections.singletonList(domainLine(1000, 0, "a")),
+        "s1", "i1", 1, 1, 1, 1, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(1, 300), bindings,
+        Collections.singletonList(new ScreenLineContent(
+            new LineKey(1000, 1),
+            new LineBody(1, false, new CellValue[] {
+                new CellValue("a", (byte) 1, null, null)
+            }))),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 

@@ -36,6 +36,9 @@ public final class RemoteTerminalModel {
   private TerminalSurface mainSurface;
   private TerminalSurface alternateSurface;
   private final HistoryBudget historyBudget;
+  private final ScreenProjectionReducer projectionReducer;
+  private final HistoryBodyReducer historyBodyReducer = new HistoryBodyReducer();
+  private ProjectionState projectionState;
   private boolean v2Projection;
   private long dictionaryGeneration;
   private long historyGeneration;
@@ -139,6 +142,7 @@ public final class RemoteTerminalModel {
   RemoteTerminalModel(HistoryBudget budget, LongConsumer baselineHistoryValidationProbe) {
     this.activeBuffer = TerminalBufferKind.MAIN;
     this.historyBudget = budget;
+    this.projectionReducer = new ScreenProjectionReducer(budget);
     this.mainSurface = new TerminalSurface(budget);
     this.alternateSurface = new TerminalSurface(budget);
     this.baselineHistoryValidationProbe = baselineHistoryValidationProbe;
@@ -153,6 +157,14 @@ public final class RemoteTerminalModel {
   }
 
   public synchronized boolean applyBaseline(ScreenBaseline baseline) {
+    ProjectionState nextProjection = null;
+    if (baseline != null && baseline.historyCatalogComplete) {
+      ProjectionResult semanticResult = projectionReducer.applyBaseline(baseline);
+      if (!(semanticResult instanceof ProjectionResult.Applied)) {
+        return false;
+      }
+      nextProjection = ((ProjectionResult.Applied) semanticResult).state();
+    }
     if (baseline == null || baseline.instanceId == null || baseline.instanceId.isEmpty()
         || baseline.layoutEpoch < 1 || baseline.screenRevision < 1
         || baseline.dictionaryGeneration < 1 || baseline.historyGeneration < 1
@@ -247,6 +259,7 @@ public final class RemoteTerminalModel {
     this.palette = baseline.palette != null ? baseline.palette : TerminalPalette.defaults();
     this.firstAvailableHistorySeq = baseline.historyExtent.firstSeq;
     this.hasMoreHistoryBefore = false;
+    this.projectionState = nextProjection;
 
     this.screen = new TerminalLine[rows];
     for (int row = 0; row < rows; row++) {
@@ -291,6 +304,15 @@ public final class RemoteTerminalModel {
     }
     if (screenRevision != commit.baseRevision || commit.revision <= commit.baseRevision) {
       throw new CommitValidationException(CommitFailure.REVISION_GAP);
+    }
+    ProjectionState nextProjection = null;
+    if (projectionState != null) {
+      ProjectionResult semanticResult = projectionReducer.applyCommit(projectionState, commit);
+      if (!(semanticResult instanceof ProjectionResult.Applied)) {
+        ProjectionFault fault = ((ProjectionResult.NeedsBaseline) semanticResult).fault();
+        throw new CommitValidationException(commitFailure(fault));
+      }
+      nextProjection = ((ProjectionResult.Applied) semanticResult).state();
     }
 
     long dictionaryStartedNanos = System.nanoTime();
@@ -470,6 +492,7 @@ public final class RemoteTerminalModel {
     final HistoryExtent finalExtent = nextExtent;
     final List<HistoryPush> finalHistoryPushes = historyPushes;
     final int finalScreenScrollRows = screenScrollRows;
+    final ProjectionState finalProjectionState = nextProjection;
     final boolean historyChanged =
         !oldExtent.equals(finalExtent) || !finalHistoryPushes.isEmpty();
     final boolean renderChanged = !changedRows.isEmpty() || finalScreenScrollRows != 0
@@ -494,6 +517,7 @@ public final class RemoteTerminalModel {
       modes = nextModes;
       palette = nextPalette;
       activeBuffer = nextActiveBuffer;
+      projectionState = finalProjectionState;
       displayExtent = finalExtent;
       remoteAvailableExtent = finalExtent;
       firstAvailableHistorySeq = finalExtent.firstSeq;
@@ -554,6 +578,40 @@ public final class RemoteTerminalModel {
             ? range.lines.get(range.lines.size() - 1).historySeq() : 0);
   }
 
+  /**
+   * 生产 HTTP Range 入口：只填充语义 BodyCache，并返回与连接恢复域隔离的 typed result。
+   */
+  public synchronized HistoryBodyResult applyHistoryBody(
+      HistoryRangeResult range, HistoryRequestContext request) {
+    if (!v2Projection || projectionState == null || range == null || request == null) {
+      return new HistoryBodyResult.Rejected(HistoryBodyFault.STALE_PROJECTION);
+    }
+    HistoryBodyResult result = historyBodyReducer.apply(
+        range, request, projectionState.mainSurface, currentEvictionPins(request.anchorSeq()));
+    if (!(result instanceof HistoryBodyResult.Applied)) return result;
+
+    HistoryBodyResult.Applied applied = (HistoryBodyResult.Applied) result;
+    projectionState = new ProjectionState(
+        projectionState.identity,
+        projectionState.screenRevision,
+        projectionState.dictionaryGeneration,
+        projectionState.rows,
+        projectionState.columns,
+        projectionState.activeBuffer,
+        applied.state(),
+        projectionState.alternateSurface,
+        projectionState.cursor,
+        projectionState.modes,
+        projectionState.palette);
+    if (activeBuffer == TerminalBufferKind.MAIN) {
+      pendingRenderDirty.mergeHistoryRange(
+          applied.changedFromSeq(), applied.changedToSeq(), false);
+      markTerminalState(false, true, false, false, 0, 0);
+      publishPendingRenderUpdate();
+    }
+    return result;
+  }
+
   public synchronized boolean applyHistoryRange(
       HistoryRangeResult range, long anchorSeq, long requestedFromSeq, long requestedToSeq) {
     if (!v2Projection || range == null || !Objects.equals(instanceId, range.instanceId)
@@ -575,6 +633,21 @@ public final class RemoteTerminalModel {
     }
     if (requestedFromSeq < 1 || requestedToSeq < requestedFromSeq) {
       throw new IllegalArgumentException("invalid HistoryRange request bounds");
+    }
+
+    HistoryBodyResult semanticResult = null;
+    if (projectionState != null) {
+      semanticResult = historyBodyReducer.apply(
+          range,
+          new HistoryRequestContext(
+              projectionState.identity, requestedFromSeq, requestedToSeq, anchorSeq),
+          projectionState.mainSurface,
+          currentEvictionPins(anchorSeq));
+      if (semanticResult instanceof HistoryBodyResult.Rejected) {
+        HistoryBodyFault fault = ((HistoryBodyResult.Rejected) semanticResult).fault();
+        if (fault == HistoryBodyFault.STALE_PROJECTION) return false;
+        throw new IllegalArgumentException(fault.name());
+      }
     }
 
     TerminalSurface targetSurface = mainSurface;
@@ -656,6 +729,21 @@ public final class RemoteTerminalModel {
     lineEditor.retainOnly(retainedLineIds);
     historyIndexEditor.commit();
     lineEditor.commit();
+    if (semanticResult instanceof HistoryBodyResult.Applied) {
+      HistoryBodyResult.Applied applied = (HistoryBodyResult.Applied) semanticResult;
+      projectionState = new ProjectionState(
+          projectionState.identity,
+          projectionState.screenRevision,
+          projectionState.dictionaryGeneration,
+          projectionState.rows,
+          projectionState.columns,
+          projectionState.activeBuffer,
+          applied.state(),
+          projectionState.alternateSurface,
+          projectionState.cursor,
+          projectionState.modes,
+          projectionState.palette);
+    }
     if (activeBuffer == TerminalBufferKind.MAIN) {
       markRenderDirty(false, null, 0, null, rows, false, false, false, -1, -1,
           false, false, false, false, false);
@@ -1048,16 +1136,26 @@ public final class RemoteTerminalModel {
     boolean screenChanged = dirty.fullInvalidate || dirty.geometryChanged
         || dirty.activeBufferChanged || !dirty.changedScreenRows.isEmpty()
         || dirty.screenScrollRows != 0 || !dirty.exposedScreenRows.isEmpty();
-    TerminalLine[] screenCopy = screenChanged && screen != null ? screen.clone() : previous.screen;
-    TerminalHistoryView historySnapshot = dirty.historyChanged || dirty.fullInvalidate
-        ? activeSurface().history.snapshot()
+    boolean semantic = projectionState != null;
+    TerminalLine[] screenCopy = screenChanged
+        ? semantic ? renderScreen(projectionState.activeSurface())
+            : screen != null ? screen.clone() : null
+        : previous.screen;
+    HistoryRenderView historySnapshot = dirty.historyChanged || dirty.fullInvalidate
+        ? semantic
+            ? new SemanticHistoryRenderView(
+                projectionState.activeSurface().historyCatalog,
+                projectionState.activeSurface().bodyCache)
+            : activeSurface().history.snapshot()
         : previous.history;
     renderSnapshot = new RenderSnapshot(
         instanceId, layoutEpoch, screenRevision, historyGeneration, rows, columns,
         activeBuffer, screenCopy, historySnapshot,
-        UnifiedContentAxis.build(
-            activeSurface().history.snapshot(),
-            activeSurface().activeRows, activeSurface().lineStore),
+        semantic
+            ? UnifiedContentAxis.build(projectionState.activeSurface())
+            : UnifiedContentAxis.build(
+                activeSurface().history.snapshot(),
+                activeSurface().activeRows, activeSurface().lineStore),
         cursor, modes, palette,
         firstAvailableHistorySeq,
         hasMoreHistoryBefore);
@@ -1065,11 +1163,41 @@ public final class RemoteTerminalModel {
   }
 
   private void publishProjectionReadView() {
+    HistoryExtent mainExtent = projectionState == null
+        ? HistoryExtent.INITIAL_EMPTY
+        : projectionState.mainSurface.historyCatalog.extent();
     projectionReadView = new ProjectionReadView(
         instanceId, layoutEpoch, screenRevision, historyGeneration,
-        mainSurface.historyIndex.extent(),
+        mainExtent,
         displayExtent, remoteAvailableExtent,
         projectionHealth.complete);
+  }
+
+  private static TerminalLine[] renderScreen(TerminalSurfaceState surface) {
+    TerminalLine[] result = new TerminalLine[surface.activeRows.size()];
+    for (int row = 0; row < result.length; row++) {
+      LineKey key = surface.activeRows.keyAt(row);
+      LineBody body = surface.bodyCache.body(key);
+      if (body == null) {
+        throw new IllegalStateException("active row body missing for " + key);
+      }
+      result[row] = SemanticLineAdapter.renderLine(key, 0, body);
+    }
+    return result;
+  }
+
+  private static CommitFailure commitFailure(ProjectionFault fault) {
+    return switch (fault) {
+      case IDENTITY_MISMATCH -> CommitFailure.IDENTITY_MISMATCH;
+      case LAYOUT_EPOCH_MISMATCH -> CommitFailure.LAYOUT_EPOCH_MISMATCH;
+      case REVISION_GAP -> CommitFailure.REVISION_GAP;
+      case DICTIONARY_GENERATION_MISMATCH ->
+          CommitFailure.DICTIONARY_GENERATION_MISMATCH;
+      case HISTORY_GENERATION_MISMATCH ->
+          CommitFailure.HISTORY_GENERATION_MISMATCH;
+      case INVALID_HISTORY_MUTATION -> CommitFailure.INVALID_HISTORY_SEQUENCE;
+      case INVALID_BASELINE, INVALID_SCREEN_MUTATION -> CommitFailure.INVALID_LINE_DATA;
+    };
   }
 
   /**
@@ -1087,7 +1215,7 @@ public final class RemoteTerminalModel {
     public final TerminalBufferKind activeBuffer;
     public final TerminalLine[] screen;
     /** Sparse immutable history snapshot for indexed rendering. */
-    public final TerminalHistoryView history;
+    public final HistoryRenderView history;
     /** 历史、缺失占位和 ActiveRows 组成的单一纵向坐标空间。 */
     public final UnifiedContentAxis contentAxis;
     public final TerminalCursor cursor;
@@ -1099,7 +1227,7 @@ public final class RemoteTerminalModel {
     private RenderSnapshot(String instanceId, long layoutEpoch, long screenRevision,
                            long historyGeneration, int rows, int columns,
                            TerminalBufferKind activeBuffer,
-                           TerminalLine[] screen, TerminalHistoryView history,
+                           TerminalLine[] screen, HistoryRenderView history,
                            UnifiedContentAxis contentAxis,
                            TerminalCursor cursor, TerminalModes modes, TerminalPalette palette,
                            long firstAvailableHistorySeq,

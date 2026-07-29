@@ -109,6 +109,58 @@ public final class UnifiedContentAxis {
     return new UnifiedContentAxis(result, rowsById, row, historyRows);
   }
 
+  static UnifiedContentAxis build(TerminalSurfaceState surface) {
+    List<Item> result = new ArrayList<>();
+    Map<Long, Long> rowsById = new HashMap<>();
+    long row = 0;
+    HistoryExtent extent = surface.historyCatalog.extent();
+    long nextSeq = extent.isEmpty() ? 1 : extent.firstSeq;
+    for (HistoryResidencyIndex.ResidentEntry resident
+        : surface.bodyCache.historyResidency().residentEntries()) {
+      long seq = resident.historySeq();
+      if (!extent.contains(seq)) continue;
+      if (seq > nextSeq) {
+        long count = seq - nextSeq;
+        result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, count,
+            nextSeq, seq - 1, 0, null));
+        row += count;
+      }
+      LineKey expected = surface.historyCatalog.key(seq);
+      LineBody body = expected != null && expected.equals(resident.key())
+          ? surface.bodyCache.body(expected) : null;
+      if (body != null) {
+        TerminalLine line = SemanticLineAdapter.renderLine(expected, seq, body);
+        result.add(new Item(Kind.LOADED_LINE, row, 1,
+            seq, seq, expected.lineId(), line));
+        rowsById.put(expected.lineId(), row);
+      } else {
+        result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, 1,
+            seq, seq, 0, null));
+      }
+      row++;
+      if (seq != Long.MAX_VALUE) nextSeq = seq + 1;
+    }
+    if (!extent.isEmpty() && nextSeq <= extent.lastSeq) {
+      long count = extent.lastSeq - nextSeq + 1;
+      result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, count,
+          nextSeq, extent.lastSeq, 0, null));
+      row += count;
+    }
+    long historyRows = row;
+    for (int activeRow = 0; activeRow < surface.activeRows.size(); activeRow++) {
+      LineKey key = surface.activeRows.keyAt(activeRow);
+      LineBody body = surface.bodyCache.body(key);
+      if (body == null) {
+        throw new IllegalStateException("ActiveRows references missing LineKey " + key);
+      }
+      TerminalLine line = SemanticLineAdapter.renderLine(key, 0, body);
+      result.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, key.lineId(), line));
+      rowsById.put(key.lineId(), row);
+      row++;
+    }
+    return new UnifiedContentAxis(result, rowsById, row, historyRows);
+  }
+
   public List<Item> items() {
     return items;
   }

@@ -13,6 +13,10 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.HistoryRangeResult;
+import com.webterm.terminal.model.HistoryBodyFault;
+import com.webterm.terminal.model.HistoryBodyResult;
+import com.webterm.terminal.model.HistoryRequestContext;
+import com.webterm.terminal.model.ProjectionIdentity;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.EvictionPins;
 import com.webterm.terminal.model.TerminalBufferKind;
@@ -838,10 +842,8 @@ public final class TerminalSessionRuntime {
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     if (!projection.projectionComplete || projection.historyGeneration < 1) return;
     RemoteTerminalModel.RenderSnapshot snap = model.peekRenderSnapshot();
-    if (snap == null
-        || !(snap.history instanceof com.webterm.terminal.model.PagedTerminalHistorySnapshot)) return;
-    com.webterm.terminal.model.PagedTerminalHistorySnapshot history =
-        (com.webterm.terminal.model.PagedTerminalHistorySnapshot) snap.history;
+    if (snap == null) return;
+    com.webterm.terminal.model.HistoryRenderView history = snap.history;
     refreshEvictionPins();
     HistoryRangeLoader.Range target = historyLoader.firstMissingRange(
         projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
@@ -950,23 +952,25 @@ public final class TerminalSessionRuntime {
         0);
     long publicationBefore = model.lastPublicationVersion();
     long revisionBefore = model.screenRevision;
-    boolean changed;
-    try {
-      changed = model.applyHistoryRange(
-          range, active.range.fromSeq, active.range.fromSeq, active.range.toSeq);
-    } catch (IllegalArgumentException protocolError) {
+    HistoryBodyResult bodyResult = model.applyHistoryBody(
+        range,
+        new HistoryRequestContext(
+            new ProjectionIdentity(
+                projection.instanceId,
+                projection.layoutEpoch,
+                projection.historyGeneration),
+            active.range.fromSeq,
+            active.range.toSeq,
+            active.range.fromSeq));
+    if (bodyResult instanceof HistoryBodyResult.Rejected) {
+      HistoryBodyFault fault = ((HistoryBodyResult.Rejected) bodyResult).fault();
       Diagnostics.warn("history_range", "history_range_protocol_conflict",
           historyRangeFields("requestId", active.callId,
-              "failureKind", protocolError.getClass().getSimpleName()));
-      historyLoader.markRangeUnavailable(active.range);
-      return false;
-    } catch (RuntimeException runtimeError) {
-      Diagnostics.warn("history_range", "history_range_protocol_conflict",
-          historyRangeFields("requestId", active.callId,
-              "failureKind", runtimeError.getClass().getSimpleName()));
+              "failureKind", fault.name()));
       historyLoader.markRangeUnavailable(active.range);
       return false;
     }
+    boolean changed = bodyResult instanceof HistoryBodyResult.Applied;
     if (changed) {
       recordCapturedModelState(false);
       // 历史段通常不推进 screenRevision，但会推进 publicationVersion。

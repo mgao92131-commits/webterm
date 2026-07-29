@@ -14,8 +14,13 @@ public final class HistoryBodyReducer {
     if (response == null || request == null || surface == null) {
       return new HistoryBodyResult.Rejected(HistoryBodyFault.INVALID_LINE_BODY);
     }
-    ProjectionIdentity actual = new ProjectionIdentity(
-        response.instanceId, response.layoutEpoch, response.historyGeneration);
+    ProjectionIdentity actual;
+    try {
+      actual = new ProjectionIdentity(
+          response.instanceId, response.layoutEpoch, response.historyGeneration);
+    } catch (RuntimeException invalidIdentity) {
+      return new HistoryBodyResult.Rejected(HistoryBodyFault.STALE_PROJECTION);
+    }
     if (!Objects.equals(actual, request.identity())) {
       return new HistoryBodyResult.Rejected(HistoryBodyFault.STALE_PROJECTION);
     }

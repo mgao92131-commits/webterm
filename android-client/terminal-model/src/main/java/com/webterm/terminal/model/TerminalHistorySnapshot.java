@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.List;
 
 /** 小型不可变历史视图；正式分页投影使用 {@link PagedTerminalHistorySnapshot}。 */
-public final class TerminalHistorySnapshot implements TerminalHistoryView {
+public final class TerminalHistorySnapshot implements HistoryRenderView {
   private static final TerminalHistorySnapshot EMPTY =
       new TerminalHistorySnapshot(Collections.emptyList());
 
@@ -53,5 +53,49 @@ public final class TerminalHistorySnapshot implements TerminalHistoryView {
       throw new IndexOutOfBoundsException("index=" + index + " size=" + lines.size());
     }
     return lines.get(index).historyOrder();
+  }
+
+  @Override
+  public HistoryExtent extent() {
+    return lines.isEmpty()
+        ? HistoryExtent.INITIAL_EMPTY : new HistoryExtent(firstSeq(), lastSeq());
+  }
+
+  @Override
+  public HistoryExtent availableExtent() {
+    return extent();
+  }
+
+  @Override
+  public long logicalSize() {
+    return lines.size();
+  }
+
+  @Override
+  public long loadedLineCount() {
+    return lines.size();
+  }
+
+  @Override
+  public long estimatedByteCount() {
+    long bytes = 0;
+    for (TerminalLine line : lines) {
+      if (line != null) bytes += line.estimatedBytes;
+    }
+    return bytes;
+  }
+
+  @Override
+  public long firstLoadedSeq() {
+    return lines.isEmpty() ? -1 : firstSeq();
+  }
+
+  @Override
+  public SlotState slotStateAt(long logicalIndex) {
+    if (logicalIndex < 0 || logicalIndex >= lines.size()) {
+      throw new IndexOutOfBoundsException(
+          "logicalIndex=" + logicalIndex + " size=" + lines.size());
+    }
+    return lines.get((int) logicalIndex) == null ? SlotState.UNLOADED : SlotState.LOADED;
   }
 }

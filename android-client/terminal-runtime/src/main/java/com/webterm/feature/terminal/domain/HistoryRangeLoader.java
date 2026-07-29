@@ -4,7 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.HistoryExtent;
-import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
+import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.SlotState;
 
 import java.util.LinkedHashMap;
@@ -131,7 +131,7 @@ public final class HistoryRangeLoader {
   public synchronized Range firstMissingRange(
       @NonNull String instanceId, long layoutEpoch, long generation,
       @NonNull HistoryExtent extent,
-      @NonNull PagedTerminalHistorySnapshot history) {
+      @NonNull HistoryRenderView history) {
     Demand demand = latestDemand;
     if (closed || demand == null || extent.isEmpty()) return null;
     ensureObservedProjection(instanceId, layoutEpoch, generation);

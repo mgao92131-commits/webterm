@@ -14,7 +14,7 @@ import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalHistorySnapshot;
 import com.webterm.terminal.model.TerminalHistoryView;
-import com.webterm.terminal.model.PagedTerminalHistorySnapshot;
+import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalPalette;
@@ -136,7 +136,7 @@ public final class RemoteTerminalRenderer {
     UnifiedContentAxis axis = model.contentAxis;
     // The content axis is the only vertical coordinate space. History and
     // ActiveRows remain semantic item kinds, not independent layout systems.
-    TerminalHistoryView history = model.activeBuffer == TerminalBufferKind.ALTERNATE
+    HistoryRenderView history = model.activeBuffer == TerminalBufferKind.ALTERNATE
         ? TerminalHistorySnapshot.empty() : model.history;
     int screenRows = screen.length;
     long historyRowsLong = axis.historyRowCount();
@@ -178,7 +178,7 @@ public final class RemoteTerminalRenderer {
 
       if (item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE) {
         long historySeq = item.fromHistorySeq + (axisRow - item.startRow);
-        long historyIndex = historySeq - ((PagedTerminalHistorySnapshot) history).firstSeq();
+        long historyIndex = historySeq - history.firstSeq();
         if (historyIndex >= 0 && historyIndex <= Integer.MAX_VALUE) {
           canvas.save();
           canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
@@ -241,10 +241,9 @@ public final class RemoteTerminalRenderer {
         && (!cursor.blink || cursorBlinkOn);
   }
 
-  private void drawHistoryPlaceholder(Canvas canvas, int columns, TerminalHistoryView history,
+  private void drawHistoryPlaceholder(Canvas canvas, int columns, HistoryRenderView history,
                                       int historyIndex, float y, int canvasBackground) {
-    if (!(history instanceof PagedTerminalHistorySnapshot)) return;
-    SlotState state = ((PagedTerminalHistorySnapshot) history).slotStateAt(historyIndex);
+    SlotState state = history.slotStateAt(historyIndex);
     int alpha = state == SlotState.UNAVAILABLE ? 18 : 10;
     placeholderPaint.setColor((canvasBackground & 0x00ffffff) | (alpha << 24));
     canvas.drawRect(0f, y, columns * cellWidth, y + lineHeight, placeholderPaint);

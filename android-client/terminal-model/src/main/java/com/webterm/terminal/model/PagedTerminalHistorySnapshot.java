@@ -9,7 +9,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /** Renderer 可无锁读取的分页历史快照。 */
-public final class PagedTerminalHistorySnapshot implements TerminalHistoryView {
+public final class PagedTerminalHistorySnapshot implements HistoryRenderView {
   public static final class LoadedEntry {
     public final long historySeq;
     public final TerminalLine line;

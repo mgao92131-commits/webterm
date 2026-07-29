@@ -39,6 +39,26 @@ final class SemanticLineAdapter {
     return Collections.unmodifiableList(result);
   }
 
+  static TerminalLine renderLine(LineKey key, long historySeq, LineBody body) {
+    if (key == null || body == null || historySeq < 0) {
+      throw new IllegalArgumentException("invalid semantic render line");
+    }
+    TerminalCell[] cells = new TerminalCell[body.length()];
+    for (int column = 0; column < body.length(); column++) {
+      CellValue cell = body.at(column);
+      StyleValue style = cell.style();
+      LinkValue link = cell.link();
+      TerminalStyle renderStyle = style == null ? null : new TerminalStyle(
+          0, style.fg(), style.bg(), style.underlineColor(), style.attrs());
+      Hyperlink renderLink = link == null ? null : new Hyperlink(0, link.uri());
+      cells[column] = cell.isDefault() ? TerminalCell.EMPTY
+          : cell.isSpacer() ? TerminalCell.SPACER
+          : new TerminalCell(cell.text(), cell.width(), renderStyle, renderLink);
+    }
+    return new TerminalLine(
+        key.lineId(), key.lineVersion(), historySeq, body.wrapped, cells);
+  }
+
   private static LineBody body(TerminalLine line) {
     CellValue[] cells = new CellValue[line.length()];
     for (int column = 0; column < line.length(); column++) {
