@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
 final class HistoryRangeMetrics {
   private final AtomicLong demandReceivedCount = new AtomicLong();
   private final AtomicLong demandConflatedCount = new AtomicLong();
+  private final AtomicLong demandDeduplicatedCount = new AtomicLong();
   private final AtomicLong demandAppliedCount = new AtomicLong();
   private final AtomicLong demandChangedWhileFetchingCount = new AtomicLong();
   private final AtomicLong requestStartedCount = new AtomicLong();
@@ -31,6 +32,7 @@ final class HistoryRangeMetrics {
 
   void onDemandReceived() { demandReceivedCount.incrementAndGet(); }
   void onDemandConflated() { demandConflatedCount.incrementAndGet(); }
+  void onDemandDeduplicated() { demandDeduplicatedCount.incrementAndGet(); }
   void onDemandApplied(long queueDelayNanos) {
     demandAppliedCount.incrementAndGet();
     requestQueueDelayNanos.addAndGet(nonNegative(queueDelayNanos));
@@ -68,6 +70,7 @@ final class HistoryRangeMetrics {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("demandReceivedCount", demandReceivedCount.get());
     out.put("demandConflatedCount", demandConflatedCount.get());
+    out.put("demandDeduplicatedCount", demandDeduplicatedCount.get());
     out.put("demandAppliedCount", demandAppliedCount.get());
     out.put("demandChangedWhileFetchingCount", demandChangedWhileFetchingCount.get());
     out.put("requestStartedCount", requestStartedCount.get());

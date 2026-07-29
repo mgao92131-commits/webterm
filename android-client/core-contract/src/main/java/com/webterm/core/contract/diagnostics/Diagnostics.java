@@ -8,8 +8,8 @@ import java.util.Map;
  * 诊断事件门面。默认经统一 {@link DiagnosticRateLimiter} 限流：
  * 同一 (area, event, discriminator) 5 秒窗口内只放行首条，
  * 窗口结束后下一条放行事件附带 suppressedCount 字段补报被抑制条数。
- * discriminator 只从白名单字段构造（deviceHash/channelHash、
- * deviceId/channelId 的进程级 hash、failureKind/reason 枚举），
+ * discriminator 只从白名单字段构造（device/session/channel/事务 ID 的进程级 hash、
+ * failureKind/reason 枚举），
  * 禁止把全部 fields 拼入 key，保证限流状态表有界。
  * 关键事件用 *Unthrottled 变体，永不限流。
  */
@@ -127,7 +127,10 @@ public final class Diagnostics {
         }
         StringBuilder out = null;
         out = appendPart(out, "d", hashField(fields, "deviceHash", "deviceId"));
+        out = appendPart(out, "s", hashField(fields, "sessionHash", "sessionId"));
         out = appendPart(out, "c", hashField(fields, "channelHash", "channelId"));
+        out = appendPart(out, "v", hashField(fields, "recoveryHash", "recoveryId"));
+        out = appendPart(out, "q", hashField(fields, "requestHash", "requestId"));
         out = appendPart(out, "f", shortField(fields, "failureKind"));
         out = appendPart(out, "r", shortField(fields, "reason"));
         return out == null ? null : out.toString();

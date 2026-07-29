@@ -111,6 +111,22 @@ public class DiagnosticsRateLimitTest {
     }
 
     @Test
+    public void sessionAndTransactionIdsSplitWindows() {
+        Diagnostics.info("terminal_recovery", "recovery_started",
+            Map.of("sessionId", "s1", "recoveryId", "r1"));
+        Diagnostics.info("terminal_recovery", "recovery_started",
+            Map.of("sessionId", "s2", "recoveryId", "r1"));
+        Diagnostics.info("terminal_recovery", "recovery_started",
+            Map.of("sessionId", "s1", "recoveryId", "r2"));
+        Diagnostics.info("history_range", "history_range_completed",
+            Map.of("sessionId", "s1", "requestId", "q1"));
+        Diagnostics.info("history_range", "history_range_completed",
+            Map.of("sessionId", "s1", "requestId", "q2"));
+
+        assertEquals(5, recordCount());
+    }
+
+    @Test
     public void suppressedCountIsOnlyAttachedOnce() {
         Diagnostics.warn("net", "flap", null);
         Diagnostics.warn("net", "flap", null);

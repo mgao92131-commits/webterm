@@ -90,4 +90,70 @@ public final class HistoryDemandMailboxTest {
         mailbox.offer(2, 2, 2, 0, 1, 2));
     assertNull(mailbox.pendingForTest());
   }
+
+  @Test
+  public void identicalDeliveredDemandIsDeduplicated() {
+    ArrayDeque<Runnable> executor = new ArrayDeque<>();
+    List<HistoryDemandMailbox.Update> applied = new ArrayList<>();
+    HistoryDemandMailbox mailbox = new HistoryDemandMailbox(executor::add, applied::add);
+    mailbox.offer(10, 20, 10, 1, 11, 1);
+    executor.remove().run();
+
+    assertEquals(HistoryDemandMailbox.OfferResult.DEDUPLICATED,
+        mailbox.offer(10, 20, 10, 1, 11, 2));
+    assertEquals(0, executor.size());
+    assertEquals(1, applied.size());
+  }
+
+  @Test
+  public void changedAnchorAndDirectionAreDelivered() {
+    ArrayDeque<Runnable> executor = new ArrayDeque<>();
+    List<HistoryDemandMailbox.Update> applied = new ArrayList<>();
+    HistoryDemandMailbox mailbox = new HistoryDemandMailbox(executor::add, applied::add);
+    mailbox.offer(10, 20, 10, 1, 11, 1);
+    executor.remove().run();
+    mailbox.offer(10, 20, 11, -1, 11, 2);
+    executor.remove().run();
+
+    assertEquals(2, applied.size());
+    assertEquals(11, applied.get(1).anchorSeq);
+    assertEquals(-1, applied.get(1).direction);
+  }
+
+  @Test
+  public void clearAndGenerationChangeInvalidateDeliveredDemand() {
+    ArrayDeque<Runnable> executor = new ArrayDeque<>();
+    List<HistoryDemandMailbox.Update> applied = new ArrayList<>();
+    HistoryDemandMailbox mailbox = new HistoryDemandMailbox(executor::add, applied::add);
+    mailbox.offer(10, 20, 10, 1, 11, 1);
+    executor.remove().run();
+    mailbox.offerClear(2);
+    executor.remove().run();
+    mailbox.offer(10, 20, 10, 1, 11, 3);
+    executor.remove().run();
+    mailbox.invalidatePending();
+    mailbox.offer(10, 20, 10, 1, 11, 4);
+    executor.remove().run();
+
+    assertEquals(4, applied.size());
+  }
+
+  @Test
+  public void revertingWhileDrainIsRunningDoesNotLoseLatestValue() {
+    ArrayDeque<Runnable> executor = new ArrayDeque<>();
+    List<Long> applied = new ArrayList<>();
+    final HistoryDemandMailbox[] holder = new HistoryDemandMailbox[1];
+    holder[0] = new HistoryDemandMailbox(executor::add, update -> {
+      applied.add(update.visibleFromSeq);
+      if (update.visibleFromSeq == 20) {
+        holder[0].offer(10, 10, 10, 0, 1, 3);
+      }
+    });
+    holder[0].offer(10, 10, 10, 0, 1, 1);
+    executor.remove().run();
+    holder[0].offer(20, 20, 20, 0, 1, 2);
+    executor.remove().run();
+
+    assertEquals(java.util.Arrays.asList(10L, 20L, 10L), applied);
+  }
 }

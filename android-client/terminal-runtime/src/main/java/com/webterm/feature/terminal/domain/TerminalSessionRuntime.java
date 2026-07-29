@@ -325,11 +325,10 @@ public final class TerminalSessionRuntime {
           }
         }, MAX_RESYNC_RETRIES, RESYNC_SNAPSHOT_TIMEOUT_MS, RETRY_BACKOFF_MS);
     this.recoveryArbiter = new RecoveryArbiter((level, recoveryId, reason) -> {
-      Diagnostics.warn("terminal_recovery", "recovery_action", diagnosticFields(
+      Diagnostics.warn("terminal_recovery", "recovery_action", recoveryDiagnosticFields(
           "recoveryId", recoveryId,
           "recoveryLevel", level.name(),
-          "recoveryReason", reason,
-          "transportGeneration", currentTransportGeneration()));
+          "recoveryReason", reason));
       switch (level) {
         case IN_BAND_RESYNC:
           if (!resyncCoordinator.start(reason)) {
@@ -907,6 +906,8 @@ public final class TerminalSessionRuntime {
     historyLoader.metrics().onDemandReceived();
     if (offered == HistoryDemandMailbox.OfferResult.CONFLATED) {
       historyLoader.metrics().onDemandConflated();
+    } else if (offered == HistoryDemandMailbox.OfferResult.DEDUPLICATED) {
+      historyLoader.metrics().onDemandDeduplicated();
     }
   }
 
@@ -1034,6 +1035,7 @@ public final class TerminalSessionRuntime {
                   Diagnostics.warn("history_range", "history_range_protocol_conflict",
                       historyRangeFields(
                           "requestId", active.callId,
+                          "demandEpoch", active.range.demandEpoch,
                           "failureKind", protocolError.getClass().getSimpleName()));
                   historyLoader.markRangeUnavailable(
                       active.range,
@@ -1043,6 +1045,7 @@ public final class TerminalSessionRuntime {
                 }
                 emitHistoryRangeInfo("history_range_completed",
                     "requestId", active.callId, "historyGeneration", result.historyGeneration,
+                    "demandEpoch", active.range.demandEpoch,
                     "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
                     "responseFirstSeq", result.currentExtent.firstSeq,
                     "responseLastSeq", result.currentExtent.lastSeq,
@@ -1087,6 +1090,7 @@ public final class TerminalSessionRuntime {
               historyLoader.metrics().onRequestCompletionClassified(useful);
               Diagnostics.warn("history_range", "history_range_failed", historyRangeFields(
                   "requestId", active.callId,
+                  "demandEpoch", active.range.demandEpoch,
                   "historyGeneration", active.range.generation,
                   "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
                   "networkDurationMs", nanosToMillis(
@@ -1130,6 +1134,7 @@ public final class TerminalSessionRuntime {
           if (!historyLoader.timeout(active)) return;
           emitHistoryRangeInfo("history_range_failed",
               "requestId", active.callId,
+              "demandEpoch", active.range.demandEpoch,
               "historyGeneration", active.range.generation,
               "fromSeq", active.range.fromSeq,
               "toSeq", active.range.toSeq,
@@ -1169,6 +1174,7 @@ public final class TerminalSessionRuntime {
       historyLoader.metrics().onStaleProjectionResponse();
       Diagnostics.info("history_range", "history_range_discarded_stale", historyRangeFields(
           "requestId", active.callId,
+          "demandEpoch", active.range.demandEpoch,
           "historyGeneration", decoded.historyGeneration,
           "currentGeneration", projection.historyGeneration));
       return false;
@@ -1208,6 +1214,7 @@ public final class TerminalSessionRuntime {
       HistoryBodyFault fault = rejected.fault();
       Diagnostics.warn("history_range", "history_range_protocol_conflict",
           historyRangeFields("requestId", active.callId,
+              "demandEpoch", active.range.demandEpoch,
               "failureKind", fault.name()));
       historyLoader.markRangeUnavailable(
           active.range,
@@ -1289,6 +1296,7 @@ public final class TerminalSessionRuntime {
 
   private Map<String, Object> historyRangeFields(Object... pairs) {
     Map<String, Object> fields = diagnosticFields(pairs);
+    fields.put("connectionEpoch", connectionEpoch.get());
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     fields.put("historyGeneration", projection.historyGeneration);
     fields.put("currentFirstSeq", projection.mainHistoryExtent.firstSeq);
@@ -1775,12 +1783,11 @@ public final class TerminalSessionRuntime {
       return;
     }
     recoveryArbiter.noteAttempt(recoveryId);
-    Diagnostics.info("terminal_recovery", "in_band_resync_requested", diagnosticFields(
+    Diagnostics.info("terminal_recovery", "in_band_resync_requested", recoveryDiagnosticFields(
         "recoveryId", recoveryId,
         "recoveryReason", reason,
         "layoutEpoch", model.layoutEpoch,
-        "screenRevision", model.screenRevision,
-        "transportGeneration", current.transportGeneration()));
+        "screenRevision", model.screenRevision));
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
@@ -1805,7 +1812,7 @@ public final class TerminalSessionRuntime {
         && envelope.getPayloadCase()
             == TerminalScreenV2Proto.ScreenEnvelope.PayloadCase.TERMINAL_COMMIT) {
       Diagnostics.info("terminal_recovery", "commit_suppressed_while_projection_lost",
-          diagnosticFields(
+          recoveryDiagnosticFields(
               "recoveryId", recoveryArbiter.activeRecoveryId(),
               "targetRevision", envelope.getTerminalCommit().getRevision()));
       return;
@@ -2071,13 +2078,13 @@ public final class TerminalSessionRuntime {
     if (accepted) {
       Diagnostics.warn("terminal_recovery",
           wasRecovering ? "recovery_upgraded" : "recovery_started",
-          recoveryArbiter.diagnosticsSnapshot());
+          recoveryDiagnosticFields());
     } else {
-      Diagnostics.info("terminal_recovery", "recovery_trigger_suppressed", diagnosticFields(
+      Diagnostics.info("terminal_recovery", "recovery_trigger_suppressed",
+          recoveryDiagnosticFields(
           "recoveryId", recoveryArbiter.activeRecoveryId(),
           "requestedLevel", level.name(),
-          "recoveryReason", reason,
-          "transportGeneration", currentTransportGeneration()));
+          "recoveryReason", reason));
     }
     return accepted;
   }
@@ -2093,7 +2100,7 @@ public final class TerminalSessionRuntime {
     if (!recoveryArbiter.isRecovering()) return;
     recoveryArbiter.fail(outcome);
     Diagnostics.warn("terminal_recovery", "recovery_failed",
-        recoveryArbiter.diagnosticsSnapshot());
+        recoveryDiagnosticFields());
   }
 
   private long currentTransportGeneration() {
@@ -2167,7 +2174,7 @@ public final class TerminalSessionRuntime {
     return fields;
   }
 
-  private Map<String, Object> recoveryDiagnosticFields() {
+  private Map<String, Object> recoveryDiagnosticFields(Object... pairs) {
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("sessionId", sessionId);
     fields.put("runtimeLifecycleId", runtimeLifecycleId);
@@ -2175,6 +2182,9 @@ public final class TerminalSessionRuntime {
     fields.put("syncGeneration", publishedSyncGeneration);
     fields.put("transportGeneration", currentTransportGeneration());
     fields.putAll(recoveryArbiter.diagnosticsSnapshot());
+    for (int i = 0; i + 1 < pairs.length; i += 2) {
+      fields.put(String.valueOf(pairs[i]), pairs[i + 1]);
+    }
     return fields;
   }
 

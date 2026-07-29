@@ -527,6 +527,25 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   @Test
+  public void identicalDeliveredViewportDemandDoesNotAllocateAnotherEpoch() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("demand-dedup", model, Runnable::run);
+    runtime.enterLiveForTest();
+
+    runtime.onVisibleHistoryDemand(100, 119, 100, 1, 20);
+    runtime.onVisibleHistoryDemand(100, 119, 100, 1, 20);
+
+    Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(2L, loader.get("demandReceivedCount"));
+    assertEquals(1L, loader.get("demandDeduplicatedCount"));
+    assertEquals(1L, loader.get("demandAppliedCount"));
+    assertEquals(1L, loader.get("latestDemandEpoch"));
+  }
+
+  @Test
   public void distantDemandCancelsOldRequestAndLateCallbackCannotCompleteReplacement() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(domainBaseline()));

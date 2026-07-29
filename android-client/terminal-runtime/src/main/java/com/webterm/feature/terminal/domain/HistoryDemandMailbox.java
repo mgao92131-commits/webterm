@@ -44,11 +44,12 @@ final class HistoryDemandMailbox {
     }
   }
 
-  enum OfferResult { SCHEDULED, CONFLATED, REJECTED }
+  enum OfferResult { SCHEDULED, CONFLATED, DEDUPLICATED, REJECTED }
 
   private final Executor executor;
   private final Drain drain;
   private final AtomicReference<Update> latest = new AtomicReference<>();
+  private final AtomicReference<Update> lastDelivered = new AtomicReference<>();
   private final AtomicBoolean scheduled = new AtomicBoolean();
   private final AtomicBoolean closed = new AtomicBoolean();
   private final AtomicLong generation = new AtomicLong(1);
@@ -78,6 +79,7 @@ final class HistoryDemandMailbox {
   void invalidatePending() {
     generation.incrementAndGet();
     latest.set(null);
+    lastDelivered.set(null);
   }
 
   void close() {
@@ -95,6 +97,10 @@ final class HistoryDemandMailbox {
 
   private OfferResult offer(Update update) {
     if (closed.get()) return OfferResult.REJECTED;
+    if (!update.clear && !scheduled.get() && latest.get() == null
+        && sameDemand(lastDelivered.get(), update)) {
+      return OfferResult.DEDUPLICATED;
+    }
     Update previous = latest.getAndSet(update);
     if (closed.get()) {
       latest.compareAndSet(update, null);
@@ -112,6 +118,7 @@ final class HistoryDemandMailbox {
       Update update = latest.getAndSet(null);
       if (update != null && !closed.get() && update.generation == generation.get()) {
         drain.accept(update);
+        lastDelivered.set(update);
       }
       scheduled.set(false);
       if (closed.get() || latest.get() == null
@@ -119,5 +126,17 @@ final class HistoryDemandMailbox {
         return;
       }
     }
+  }
+
+  private static boolean sameDemand(@Nullable Update a, @NonNull Update b) {
+    return a != null
+        && !a.clear
+        && !b.clear
+        && a.visibleFromSeq == b.visibleFromSeq
+        && a.visibleToSeq == b.visibleToSeq
+        && a.anchorSeq == b.anchorSeq
+        && a.direction == b.direction
+        && a.visibleRowCount == b.visibleRowCount
+        && a.generation == b.generation;
   }
 }
