@@ -15,6 +15,10 @@ const maxHighPriorityBurst = 8
 // ErrWriterClosed 表示 PhysicalWriter 已关闭，排队或等待结果的 Submit 应失败。
 var ErrWriterClosed = errors.New("mux: physical writer closed")
 
+// ErrChannelClosed 表示 logical channel 的 lifecycle 已失效。该错误意味着请求
+// 没有进入底层 socket；它不是整条物理连接的写失败。
+var ErrChannelClosed = errors.New("mux: logical channel closed")
+
 type physicalWrite struct {
 	ctx          context.Context
 	msgType      termsession.MessageType
@@ -23,6 +27,14 @@ type physicalWrite struct {
 	enqueuedAt   time.Time
 	payloadBytes int
 	highPriority bool
+	lifecycle    *channelLifecycle
+}
+
+func (request *physicalWrite) finish(err error) {
+	if request.lifecycle != nil {
+		request.lifecycle.release()
+	}
+	request.result <- err
 }
 
 // PhysicalWriter 是一条 mux 物理连接的唯一写入所有者。
@@ -62,7 +74,7 @@ func (writer *PhysicalWriter) failPending(err error) {
 	for {
 		select {
 		case request := <-writer.highWrites:
-			request.result <- err
+			request.finish(err)
 		default:
 			goto drainData
 		}
@@ -71,7 +83,7 @@ drainData:
 	for {
 		select {
 		case request := <-writer.dataWrites:
-			request.result <- err
+			request.finish(err)
 		default:
 			writer.observeQueueDepths()
 			return
@@ -80,7 +92,23 @@ drainData:
 }
 
 func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.MessageType, data []byte, high bool) error {
+	return writer.submit(ctx, msgType, data, high, nil)
+}
+
+func (writer *PhysicalWriter) SubmitChannel(ctx context.Context, msgType termsession.MessageType,
+	data []byte, high bool, lifecycle *channelLifecycle) error {
+	if lifecycle == nil || !lifecycle.tryAcquire() {
+		return ErrChannelClosed
+	}
+	return writer.submit(ctx, msgType, data, high, lifecycle)
+}
+
+func (writer *PhysicalWriter) submit(ctx context.Context, msgType termsession.MessageType,
+	data []byte, high bool, lifecycle *channelLifecycle) error {
 	if !writer.accepting.Load() {
+		if lifecycle != nil {
+			lifecycle.release()
+		}
 		return ErrWriterClosed
 	}
 	diagnostics.Default.WriterSubmitCount.Add(1)
@@ -92,6 +120,7 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 		enqueuedAt:   time.Now(),
 		payloadBytes: len(data),
 		highPriority: high,
+		lifecycle:    lifecycle,
 	}
 	queue := writer.dataWrites
 	if high {
@@ -101,10 +130,16 @@ func (writer *PhysicalWriter) Submit(ctx context.Context, msgType termsession.Me
 	case queue <- request:
 		writer.observeQueueDepths()
 	case <-writer.done:
+		if lifecycle != nil {
+			lifecycle.release()
+		}
 		return ErrWriterClosed
 	case <-ctx.Done():
 		// 排队阶段被 ctx 拒绝（队列满/超时），计入 writer 队列拒绝指标。
 		diagnostics.Default.WriterQueueRejectedCount.Add(1)
+		if lifecycle != nil {
+			lifecycle.release()
+		}
 		return ctx.Err()
 	}
 	select {
@@ -184,6 +219,11 @@ func (writer *PhysicalWriter) perform(request physicalWrite) {
 	residence := time.Since(request.enqueuedAt)
 	diagnostics.Default.WriterQueueResidenceBuckets.Observe(residence.Nanoseconds())
 
+	if request.lifecycle != nil && !request.lifecycle.isOpen() {
+		request.finish(ErrChannelClosed)
+		return
+	}
+
 	writeCtx, cancel := context.WithTimeout(request.ctx, 10*time.Second)
 	writeStarted := time.Now()
 	err := writer.conn.Write(writeCtx, request.msgType, request.data)
@@ -198,5 +238,5 @@ func (writer *PhysicalWriter) perform(request physicalWrite) {
 	} else {
 		diagnostics.Default.WriterFailureCount.Add(1)
 	}
-	request.result <- err
+	request.finish(err)
 }

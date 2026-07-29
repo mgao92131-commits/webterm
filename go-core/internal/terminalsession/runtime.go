@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/screenprojection"
 	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
@@ -803,6 +804,7 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 
 func (r *Runtime) handlePTYOutput(data []byte) {
 	r.ptyOutputEvents.Add(1)
+	diagnostics.Default.PTYOutputEventCount.Add(1)
 	r.ptyOutputBytes.Add(uint64(len(data)))
 	// 捕获点 A：在 engine.Write 之前旁路记录原始 PTY 字节。PTY chunk 可能在
 	// UTF-8 字符中间断开，因此保存原始 bytes（由 sink 做有界拷贝），不校验/不改写。
@@ -1046,6 +1048,7 @@ func (r *Runtime) handleClientInitialSyncResult(e clientInitialSyncResultEvent) 
 }
 
 func (r *Runtime) broadcastFrame() {
+	diagnostics.Default.ProjectionExportCount.Add(1)
 	rev := r.currentRevision()
 	// Export the headless terminal only once per revision. Per-client work below
 	// is limited to diffing against that client's baseline; without this split a

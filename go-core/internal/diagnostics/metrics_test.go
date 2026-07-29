@@ -10,22 +10,26 @@ func TestAgentMetricsCounters(t *testing.T) {
 	m.RelayReconnectCount.Add(1)
 	m.MuxChannelOpenedCount.Add(3)
 	m.ScreenEncodeFailureCount.Add(5)
+	m.ProjectionExportCount.Add(7)
+	m.ScreenMailboxOverwriteCount.Add(2)
 
 	snapshot := m.Snapshot()
 	checks := map[string]uint64{
-		"relayConnectCount":        2,
-		"relayReconnectCount":      1,
-		"muxChannelOpenedCount":    3,
-		"screenEncodeFailureCount": 5,
-		"relayDisconnectCount":     0,
-		"writerQueueRejectedCount": 0,
-		"writerSubmitCount":        0,
-		"writerSuccessCount":       0,
-		"writerFailureCount":       0,
-		"writerTimeoutCount":       0,
-		"writerHighQueueDepth":     0,
-		"writerDataQueueDepth":     0,
-		"writerHighWaterDepth":     0,
+		"relayConnectCount":           2,
+		"relayReconnectCount":         1,
+		"muxChannelOpenedCount":       3,
+		"screenEncodeFailureCount":    5,
+		"projectionExportCount":       7,
+		"screenMailboxOverwriteCount": 2,
+		"relayDisconnectCount":        0,
+		"writerQueueRejectedCount":    0,
+		"writerSubmitCount":           0,
+		"writerSuccessCount":          0,
+		"writerFailureCount":          0,
+		"writerTimeoutCount":          0,
+		"writerHighQueueDepth":        0,
+		"writerDataQueueDepth":        0,
+		"writerHighWaterDepth":        0,
 	}
 	for key, want := range checks {
 		got, ok := snapshot[key].(uint64)
@@ -123,14 +127,14 @@ func TestSnapshotCapabilitiesDeclareUninstrumented(t *testing.T) {
 	if !ok {
 		t.Fatalf("snapshot missing capabilities map: %v", snapshot["capabilities"])
 	}
-	for _, name := range []string{
-		"mailboxMetrics", "inputMetrics", "resyncMetrics", "projectionMetrics", "durationMetrics",
-	} {
+	for _, name := range []string{"inputMetrics", "resyncMetrics", "durationMetrics"} {
 		if caps[name] != false {
 			t.Errorf("capabilities[%q] = %v, want false", name, caps[name])
 		}
 	}
-	for _, name := range []string{"writerQueueMetrics", "writerDurationMetrics"} {
+	for _, name := range []string{
+		"mailboxMetrics", "projectionMetrics", "writerQueueMetrics", "writerDurationMetrics",
+	} {
 		if caps[name] != true {
 			t.Errorf("capabilities[%q] = %v, want true", name, caps[name])
 		}

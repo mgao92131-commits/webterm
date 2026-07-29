@@ -19,7 +19,7 @@ public final class LogicalChannelRegistry {
     }
 
     static final class Channel {
-        enum State { CLOSED, OPENING, OPEN, RETRY_WAIT }
+        enum State { CLOSED, OPENING, OPEN, CLOSING, RETRY_WAIT }
 
         final String id;
         final String path;
@@ -34,6 +34,13 @@ public final class LogicalChannelRegistry {
         long lifecycleId;
         int openedTransportGeneration;
         long lastFrameAtNanos;
+        int closeFenceVersion;
+        long closeRequestedAtNanos;
+        long closeGeneration;
+        ConnectionCloseReason localCloseReason;
+        Runnable closeCompletion;
+        boolean reopenAfterClose;
+        DeviceConnection.ChannelListener reopenListener;
 
         Channel(String id, String path, String[] protocols, String screenRouteKey,
                 DeviceConnection.ChannelListener listener) {
@@ -52,6 +59,7 @@ public final class LogicalChannelRegistry {
         final long closedAtNanos;
         final String closeReason;
         final long lastFrameAtNanos;
+        final boolean closeAcknowledged;
 
         Tombstone(Channel channel, long closedAtNanos, String closeReason) {
             this.channelId = channel.id;
@@ -60,6 +68,7 @@ public final class LogicalChannelRegistry {
             this.closedAtNanos = closedAtNanos;
             this.closeReason = closeReason == null ? "" : closeReason;
             this.lastFrameAtNanos = channel.lastFrameAtNanos;
+            this.closeAcknowledged = "CLOSE_ACK".equals(this.closeReason);
         }
     }
 

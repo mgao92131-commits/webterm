@@ -29,7 +29,14 @@ type AgentMetrics struct {
 	MuxDiagnosticsContextRejectedCount atomic.Uint64
 
 	// 屏幕编码/投影。
-	ScreenEncodeFailureCount atomic.Uint64
+	ScreenEncodeFailureCount    atomic.Uint64
+	PTYOutputEventCount         atomic.Uint64
+	ProjectionExportCount       atomic.Uint64
+	ScreenStateOfferedCount     atomic.Uint64
+	ScreenMailboxOverwriteCount atomic.Uint64
+	ScreenFramesDerivedCount    atomic.Uint64
+	ScreenFramesWrittenCount    atomic.Uint64
+	EmptyCommitSuppressedCount  atomic.Uint64
 
 	// writer 队列与写入。
 	WriterSubmitCount        atomic.Uint64
@@ -97,10 +104,10 @@ var Default = NewAgentMetrics()
 // 这些分组当前没有真实观测，诊断输出据此显示 not instrumented，避免把
 // 占位零值误读为真实数据；接线埋点后把对应项改为 true 并补上计数器。
 var uninstrumentedCapabilities = map[string]any{
-	"mailboxMetrics":        false,
+	"mailboxMetrics":        true,
 	"inputMetrics":          false,
 	"resyncMetrics":         false,
-	"projectionMetrics":     false,
+	"projectionMetrics":     true,
 	"durationMetrics":       false,
 	"writerQueueMetrics":    true,
 	"writerDurationMetrics": true,
@@ -124,6 +131,13 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		"muxWriterFailureCount":              m.MuxWriterFailureCount.Load(),
 		"muxDiagnosticsContextRejectedCount": m.MuxDiagnosticsContextRejectedCount.Load(),
 		"screenEncodeFailureCount":           m.ScreenEncodeFailureCount.Load(),
+		"ptyOutputEventCount":                m.PTYOutputEventCount.Load(),
+		"projectionExportCount":              m.ProjectionExportCount.Load(),
+		"screenStateOfferedCount":            m.ScreenStateOfferedCount.Load(),
+		"screenMailboxOverwriteCount":        m.ScreenMailboxOverwriteCount.Load(),
+		"screenFramesDerivedCount":           m.ScreenFramesDerivedCount.Load(),
+		"screenFramesWrittenCount":           m.ScreenFramesWrittenCount.Load(),
+		"emptyCommitSuppressedCount":         m.EmptyCommitSuppressedCount.Load(),
 		"writerSubmitCount":                  m.WriterSubmitCount.Load(),
 		"writerSuccessCount":                 m.WriterSuccessCount.Load(),
 		"writerFailureCount":                 m.WriterFailureCount.Load(),

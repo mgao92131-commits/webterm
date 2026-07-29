@@ -53,8 +53,8 @@ public class AuthSessionCoordinatorTest {
         login.getValue().onReady("http://example.test", "fresh");
 
         assertEquals(2, success.get());
-        assertEquals("fresh", copy1.getCookie());
-        assertEquals("fresh", copy2.getCookie());
+        assertEquals("callbacks must not mutate stale waiter hints", "old", copy1.getCookie());
+        assertEquals("callbacks must not mutate stale waiter hints", "old", copy2.getCookie());
         verify(configs, times(1)).updateCookie(owner, "fresh");
     }
 

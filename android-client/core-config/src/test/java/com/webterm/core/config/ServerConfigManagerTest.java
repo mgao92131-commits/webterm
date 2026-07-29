@@ -133,6 +133,27 @@ public class ServerConfigManagerTest {
     }
 
     @Test
+    public void staleAuthenticationCallbackCannotOverwriteNewerCredentials() {
+        ServerConfigStore store = mock(ServerConfigStore.class);
+        ServerConfig config = direct("direct_1", "http://direct.test", "admin");
+        when(store.loadServers()).thenReturn(Arrays.asList(config));
+        ServerConfigManager manager = new ServerConfigManager(store);
+        manager.load();
+        CredentialSnapshot started = manager.credentialSnapshot(config);
+
+        ServerConfigManager.CredentialUpdate manual =
+            manager.updateCookieIfGeneration(config, "manual-new", started.generation);
+        assertTrue(manual.applied);
+
+        ServerConfigManager.CredentialUpdate stale =
+            manager.updateCookieIfGeneration(config, "stale-refresh", started.generation);
+
+        assertFalse(stale.applied);
+        assertEquals("manual-new", config.getCookie());
+        assertEquals(manual.snapshot.generation, stale.snapshot.generation);
+    }
+
+    @Test
     public void directDevicesListOnlyDirect() {
         ServerConfigStore store = mock(ServerConfigStore.class);
         when(store.loadServers()).thenReturn(Arrays.asList(

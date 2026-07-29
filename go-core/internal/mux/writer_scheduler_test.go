@@ -2,6 +2,7 @@ package mux
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -323,5 +324,81 @@ func TestPhysicalWriterSubmitAfterAcceptingFalseFailsImmediately(t *testing.T) {
 	if len(writer.highWrites) != 0 || len(writer.dataWrites) != 0 {
 		t.Fatalf("queues must be empty after close, high=%d data=%d",
 			len(writer.highWrites), len(writer.dataWrites))
+	}
+}
+
+func TestPhysicalWriterInvalidatedChannelPurgesQueuedFramesBeforeBarrier(t *testing.T) {
+	socket := &blockingMuxSocket{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	writer := NewPhysicalWriter(socket, 128)
+	ctx, cancel := context.WithCancel(context.Background())
+	go writer.Run(ctx)
+	defer func() {
+		cancel()
+		<-writer.Done()
+	}()
+
+	lifecycle := newChannelLifecycle()
+	results := make(chan error, 2)
+	go func() {
+		results <- writer.SubmitChannel(
+			ctx, termsession.MessageBinary, []byte("already-writing"), false, lifecycle)
+	}()
+	select {
+	case <-socket.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first channel write did not start")
+	}
+	go func() {
+		results <- writer.SubmitChannel(
+			ctx, termsession.MessageBinary, []byte("queued-old-frame"), false, lifecycle)
+	}()
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return len(writer.dataWrites) == 1
+	}, "old channel frame did not enter physical queue")
+
+	lifecycle.invalidate()
+	barrierDone := make(chan error, 1)
+	go func() { barrierDone <- lifecycle.wait(ctx) }()
+	select {
+	case <-barrierDone:
+		t.Fatal("channel barrier completed while an old write was still in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(socket.releaseFirst)
+	var sawSuccess, sawClosed bool
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			sawSuccess = true
+		case errors.Is(err, ErrChannelClosed):
+			sawClosed = true
+		default:
+			t.Fatalf("unexpected channel submit result: %v", err)
+		}
+	}
+	if !sawSuccess || !sawClosed {
+		t.Fatalf("submit results success=%v closed=%v, want both", sawSuccess, sawClosed)
+	}
+	select {
+	case err := <-barrierDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("channel barrier did not complete after queued frame was purged")
+	}
+
+	socket.mu.Lock()
+	defer socket.mu.Unlock()
+	if len(socket.writes) != 1 || string(socket.writes[0]) != "already-writing" {
+		t.Fatalf("socket writes=%q, queued old frame must be purged", socket.writes)
+	}
+	if err := writer.SubmitChannel(
+		ctx, termsession.MessageBinary, []byte("after-abort"), false, lifecycle); !errors.Is(err, ErrChannelClosed) {
+		t.Fatalf("SubmitChannel after abort = %v, want ErrChannelClosed", err)
 	}
 }

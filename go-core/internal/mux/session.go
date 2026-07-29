@@ -228,17 +228,26 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 		_ = s.sendJSON(ctx, s.codec.Error(tunnelID, http.StatusNotFound, err.Error()))
 		return
 	}
-	entry := &channelEntry{id: tunnelID, routeKey: routeKey, handler: handler, sink: sink}
+	entry := &channelEntry{
+		id:        tunnelID,
+		routeKey:  routeKey,
+		handler:   handler,
+		sink:      sink,
+		lifecycle: newChannelLifecycle(),
+		runDone:   make(chan struct{}),
+	}
 	sink.entry = entry
 
-	oldByID, oldByRoute := s.registry.Replace(entry)
+	oldByID, oldByRoute := s.registry.Conflicts(tunnelID, routeKey)
 	if oldByID != nil {
 		diagnostics.Default.MuxChannelReplacedCount.Add(1)
 		s.event("info", "mux_channel_replaced", map[string]any{
 			"channelId": logs.SafeID(tunnelID),
 			"reason":    "id",
 		})
-		oldByID.handler.Close()
+		// 新 ws-connect 本身就是同 ID lifecycle 的接管确认；若再发送旧
+		// ws-close，Android 无法区分它属于旧还是新 lifecycle。
+		s.closeEntry(oldByID, int(websocket.StatusNormalClosure), "channel replaced", false)
 	}
 	if oldByRoute != nil && oldByRoute != oldByID {
 		diagnostics.Default.MuxChannelReplacedCount.Add(1)
@@ -246,11 +255,15 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 			"channelId": logs.SafeID(tunnelID),
 			"reason":    "route",
 		})
-		oldByRoute.handler.Close()
+		// route replacement 先完成旧 lifecycle fence，再发布新 channel。
+		// Android 主动 supersede 时会另行发送旧 channel 的 ws-close。
+		s.closeEntry(oldByRoute, int(websocket.StatusNormalClosure), "channel route replaced", false)
 	}
+	s.registry.Replace(entry)
 
 	if err := s.sendJSON(ctx, s.codec.Connected(tunnelID)); err != nil {
 		s.removeChannelIfCurrent(entry)
+		entry.lifecycle.invalidate()
 		handler.Close()
 		return
 	}
@@ -259,11 +272,8 @@ func (s *Session) handleWSConnect(ctx context.Context, msg ControlMessage) {
 
 	go func() {
 		handler.Run(ctx)
-		if s.removeChannelIfCurrent(entry) {
-			closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			_ = s.sendJSON(closeCtx, s.codec.Close(tunnelID, int(websocket.StatusGoingAway), "channel handler stopped"))
-		}
+		close(entry.runDone)
+		s.closeEntry(entry, int(websocket.StatusGoingAway), "channel handler stopped", true)
 	}()
 }
 
@@ -279,17 +289,44 @@ func (s *Session) handleBinaryFrame(data []byte) {
 		return
 	}
 	entry := s.registry.Get(frame.ID)
-	if entry != nil {
+	if entry != nil && entry.lifecycle.isOpen() {
 		entry.handler.HandleFrame(frame.Payload, frame.ExtraByte == protocol.WSDataBinary)
 	}
 }
 
 func (s *Session) closeChannel(id string) {
-	entry := s.registry.Remove(id)
+	entry := s.registry.Get(id)
 	if entry != nil {
 		s.event("info", "mux_channel_closed", map[string]any{"channelId": logs.SafeID(id)})
-		entry.handler.Close()
+		s.closeEntry(entry, int(websocket.StatusNormalClosure), "channel closed", true)
 	}
+}
+
+func (s *Session) closeEntry(entry *channelEntry, code int, reason string, sendAck bool) {
+	if entry == nil {
+		return
+	}
+	entry.closeOnce.Do(func() {
+		entry.lifecycle.invalidate()
+		entry.handler.Close()
+
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		select {
+		case <-entry.runDone:
+		case <-closeCtx.Done():
+			_ = s.conn.Close()
+			return
+		}
+		if err := entry.lifecycle.wait(closeCtx); err != nil {
+			_ = s.conn.Close()
+			return
+		}
+		s.removeChannelIfCurrent(entry)
+		if sendAck {
+			_ = s.sendJSON(closeCtx, s.codec.Close(entry.id, code, reason))
+		}
+	})
 }
 
 func (s *Session) removeChannelIfCurrent(expected *channelEntry) bool {
@@ -299,7 +336,7 @@ func (s *Session) removeChannelIfCurrent(expected *channelEntry) bool {
 func (s *Session) closeAllChannels() {
 	entries := s.registry.Drain()
 	for _, entry := range entries {
-		entry.handler.Close()
+		s.closeEntry(entry, int(websocket.StatusGoingAway), "mux session closed", false)
 	}
 }
 
@@ -314,6 +351,12 @@ func (s *Session) writeChannelFrame(ctx context.Context, id string, payload []by
 
 func (s *Session) writeChannelFramePriority(ctx context.Context, id string, payload []byte,
 	binary bool, priority termsession.FramePriority) error {
+	return s.writeChannelFramePriorityForLifecycle(ctx, id, payload, binary, priority, nil)
+}
+
+func (s *Session) writeChannelFramePriorityForLifecycle(ctx context.Context, id string,
+	payload []byte, binary bool, priority termsession.FramePriority,
+	lifecycle *channelLifecycle) error {
 	extra := protocol.WSDataText
 	if binary {
 		extra = protocol.WSDataBinary
@@ -322,7 +365,15 @@ func (s *Session) writeChannelFramePriority(ctx context.Context, id string, payl
 	if err != nil {
 		return err
 	}
-	err = s.writer.Submit(ctx, termsession.MessageBinary, frame, priority == termsession.FramePriorityHigh)
+	if lifecycle != nil {
+		err = s.writer.SubmitChannel(
+			ctx, termsession.MessageBinary, frame,
+			priority == termsession.FramePriorityHigh, lifecycle)
+	} else {
+		err = s.writer.Submit(
+			ctx, termsession.MessageBinary, frame,
+			priority == termsession.FramePriorityHigh)
+	}
 	s.logWriteError(err)
 	return err
 }
@@ -344,7 +395,7 @@ func (s *Session) sendJSON(ctx context.Context, value any) error {
 }
 
 func (s *Session) logWriteError(err error) {
-	if err == nil {
+	if err == nil || errors.Is(err, ErrChannelClosed) {
 		return
 	}
 	diagnostics.Default.MuxWriterFailureCount.Add(1)
@@ -462,9 +513,10 @@ func (sink *channelSink) WriteFrame(ctx context.Context, payload []byte, binary 
 func (sink *channelSink) WriteFramePriority(ctx context.Context, payload []byte, binary bool,
 	priority termsession.FramePriority) error {
 	if !sink.session.registry.IsCurrent(sink.entry) {
-		return fmt.Errorf("channel %s closed", sink.id)
+		return fmt.Errorf("%w: %s", ErrChannelClosed, sink.id)
 	}
-	return sink.session.writeChannelFramePriority(ctx, sink.id, payload, binary, priority)
+	return sink.session.writeChannelFramePriorityForLifecycle(
+		ctx, sink.id, payload, binary, priority, sink.entry.lifecycle)
 }
 
 func cleanPath(raw string) string {

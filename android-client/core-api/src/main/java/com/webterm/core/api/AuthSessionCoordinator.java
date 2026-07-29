@@ -2,6 +2,7 @@ package com.webterm.core.api;
 
 import com.webterm.core.config.ServerConfig;
 import com.webterm.core.config.ServerConfigManager;
+import com.webterm.core.config.CredentialSnapshot;
 import com.webterm.data.http.WebTermApi;
 
 import java.util.ArrayList;
@@ -78,18 +79,21 @@ public final class AuthSessionCoordinator {
             inFlight.put(key, waiters);
         }
         ServerConfig target = owner != null ? owner : hint;
+        CredentialSnapshot snapshot = configs.credentialSnapshot(target);
+        long expectedGeneration = snapshot != null ? snapshot.generation : -1L;
         String cookie = safe(target.getCookie());
         if (cookie.isEmpty()) {
-            login(key, target);
+            login(key, target, expectedGeneration);
         } else {
-            refresh(key, target, cookie);
+            refresh(key, target, cookie, expectedGeneration);
         }
     }
 
-    private void refresh(String key, ServerConfig target, String cookie) {
+    private void refresh(String key, ServerConfig target, String cookie,
+                         long expectedGeneration) {
         api.refresh(target.getUrl(), cookie, new WebTermApi.LoginCallback() {
             @Override public void onReady(String baseUrl, String refreshedCookie) {
-                succeed(key, target, refreshedCookie);
+                succeed(key, target, refreshedCookie, expectedGeneration);
             }
 
             @Override public void onError(String message) {
@@ -98,7 +102,7 @@ public final class AuthSessionCoordinator {
 
             @Override public void onError(int code, String message) {
                 if (code == 401 || code == 403) {
-                    login(key, target);
+                    login(key, target, expectedGeneration);
                 } else {
                     fail(key, code, message);
                 }
@@ -106,7 +110,7 @@ public final class AuthSessionCoordinator {
         });
     }
 
-    private void login(String key, ServerConfig target) {
+    private void login(String key, ServerConfig target, long expectedGeneration) {
         String username = safe(target.getUsername());
         String password = safe(target.getPassword());
         if (username.isEmpty() || password.isEmpty()) {
@@ -116,7 +120,7 @@ public final class AuthSessionCoordinator {
         api.login(target.getUrl(), safe(target.getCookie()), username, password,
             new WebTermApi.LoginCallback() {
                 @Override public void onReady(String baseUrl, String cookie) {
-                    succeed(key, target, cookie);
+                    succeed(key, target, cookie, expectedGeneration);
                 }
 
                 @Override public void onError(String message) {
@@ -129,12 +133,24 @@ public final class AuthSessionCoordinator {
             });
     }
 
-    private void succeed(String key, ServerConfig target, String cookie) {
-        ServerConfig canonical = configs.updateCookie(target, cookie);
+    private void succeed(String key, ServerConfig target, String cookie,
+                         long expectedGeneration) {
+        ServerConfigManager.CredentialUpdate update =
+            configs.updateCookieIfGeneration(target, cookie, expectedGeneration);
+        ServerConfig canonical;
+        String effectiveCookie;
+        if (update != null) {
+            canonical = update.server;
+            effectiveCookie = update.snapshot != null ? update.snapshot.cookie : cookie;
+        } else {
+            // 兼容测试替身及旧的外部实现；正式 ServerConfigManager 永不返回 null。
+            canonical = configs.updateCookie(target, cookie);
+            effectiveCookie = cookie;
+        }
         List<Waiter> waiters = take(key);
         for (Waiter waiter : waiters) {
-            waiter.hint.setCookie(cookie);
-            waiter.callback.onAuthenticated(canonical != null ? canonical : waiter.hint, cookie);
+            waiter.callback.onAuthenticated(
+                canonical != null ? canonical : waiter.hint, effectiveCookie);
         }
     }
 

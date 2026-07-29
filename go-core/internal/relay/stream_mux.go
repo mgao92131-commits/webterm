@@ -108,6 +108,7 @@ type relayStreamSocket struct {
 	incoming chan relayStreamMessage
 	done     chan struct{}
 	once     sync.Once
+	writeMu  sync.Mutex
 	logger   *logs.Logger
 }
 
@@ -135,6 +136,13 @@ func (s *relayStreamSocket) Read(ctx context.Context) (session.MessageType, []by
 }
 
 func (s *relayStreamSocket) Write(ctx context.Context, messageType session.MessageType, data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	select {
+	case <-s.done:
+		return transporterr.ErrRelayStreamClosed
+	default:
+	}
 	frameType := relaycore.FrameTypeWSText
 	if messageType == session.MessageBinary {
 		frameType = relaycore.FrameTypeWSBinary
@@ -154,6 +162,8 @@ func (s *relayStreamSocket) Close() error {
 
 func (s *relayStreamSocket) close(notifyRemote bool) {
 	s.once.Do(func() {
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
 		close(s.done)
 		s.mux.mu.Lock()
 		delete(s.mux.streams, s.id)

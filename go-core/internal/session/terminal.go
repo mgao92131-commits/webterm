@@ -465,7 +465,7 @@ func (terminal *TerminalSession) waitLoop() {
 		_ = terminal.runtime.DrainAndClose(ctx)
 	}
 	terminal.flushClientScreens(ctx)
-	terminal.broadcastExit(code)
+	terminal.broadcastExit(ctx, code)
 	// Wait only observes child termination. Close owns the backend handles and
 	// must still run on natural shell exit to release ConPTY/Job/pipes.
 	if terminal.process != nil {
@@ -492,13 +492,13 @@ func (terminal *TerminalSession) markClosed() {
 	terminal.mu.Unlock()
 }
 
-func (terminal *TerminalSession) broadcastExit(code int) {
+func (terminal *TerminalSession) broadcastExit(ctx context.Context, code int) {
 	terminal.mu.RLock()
 	clients := terminal.clientSnapshotLocked()
 	terminal.mu.RUnlock()
 	for _, client := range clients {
-		client.SendExit(code)
-		client.Close()
+		_ = client.SendExitAndWait(ctx, code)
+		client.CloseGracefully()
 	}
 }
 

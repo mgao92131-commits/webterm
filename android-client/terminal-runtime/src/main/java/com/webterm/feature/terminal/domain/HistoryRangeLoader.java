@@ -128,6 +128,8 @@ public final class HistoryRangeLoader {
   private long tailDebounceToken;
   private long tailDebounceDemandEpoch;
   private long tailDebounceSatisfiedEpoch;
+  private long tailDebounceStartedAtNanos;
+  private long tailDebounceAuthoritativeLastSeq;
   private int consecutiveSessionNotReadyFailures;
   private boolean closed;
 
@@ -436,9 +438,21 @@ public final class HistoryRangeLoader {
     if (tailDebounceSatisfiedEpoch == demand.demandEpoch) return 0;
     if (tailDebounceDemandEpoch != 0) {
       tailDebounceDemandEpoch = demand.demandEpoch;
+      if (extent.lastSeq > tailDebounceAuthoritativeLastSeq) {
+        tailDebounceAuthoritativeLastSeq = extent.lastSeq;
+        long elapsedNanos = System.nanoTime() - tailDebounceStartedAtNanos;
+        if (elapsedNanos >= HistoryFetchPolicy.TAIL_MAX_WAIT_MS * 1_000_000L) {
+          tailDebounceSatisfiedEpoch = demand.demandEpoch;
+          tailDebounceDemandEpoch = 0;
+          return 0;
+        }
+        return ++tailDebounceToken;
+      }
       return -1;
     }
     tailDebounceDemandEpoch = demand.demandEpoch;
+    tailDebounceStartedAtNanos = System.nanoTime();
+    tailDebounceAuthoritativeLastSeq = extent.lastSeq;
     tailDebounceToken++;
     metrics.onTailDebounce();
     return tailDebounceToken;
@@ -452,6 +466,16 @@ public final class HistoryRangeLoader {
     tailDebounceSatisfiedEpoch = latestDemand.demandEpoch;
     tailDebounceDemandEpoch = 0;
     return true;
+  }
+
+  public synchronized long tailDebounceDelayMs(long token) {
+    if (token <= 0 || token != tailDebounceToken || tailDebounceDemandEpoch == 0) {
+      return 0L;
+    }
+    long elapsedNanos = Math.max(0L, System.nanoTime() - tailDebounceStartedAtNanos);
+    long remainingMs = Math.max(0L,
+        HistoryFetchPolicy.TAIL_MAX_WAIT_MS - elapsedNanos / 1_000_000L);
+    return Math.min(HistoryFetchPolicy.TAIL_QUIET_PERIOD_MS, remainingMs);
   }
 
   /**
@@ -563,6 +587,8 @@ public final class HistoryRangeLoader {
   private void clearTailDebounce() {
     tailDebounceDemandEpoch = 0;
     tailDebounceSatisfiedEpoch = 0;
+    tailDebounceStartedAtNanos = 0L;
+    tailDebounceAuthoritativeLastSeq = 0L;
     tailDebounceToken++;
   }
 

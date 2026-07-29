@@ -35,6 +35,16 @@ public final class HistoryFetchPolicyTest {
         < policy.desiredBatchLines(demand(1, 80, 80)));
   }
 
+  @Test
+  public void activeScrollBypassesTailDebounce() {
+    HistoryRangeLoader.Range tail =
+        new HistoryRangeLoader.Range("i", 1, 1, 100, 100, 1, 1);
+    HistoryRangeLoader.Demand scrolling =
+        new HistoryRangeLoader.Demand(100, 100, 100, -1, 20, 1, 1);
+
+    assertFalse(policy.shouldDebounceTail(tail, scrolling, 100));
+  }
+
   private static HistoryRangeLoader.Range range(long from, long to) {
     return new HistoryRangeLoader.Range("i", 1, 1, from, to);
   }

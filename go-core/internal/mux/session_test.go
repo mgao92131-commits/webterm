@@ -139,6 +139,9 @@ func TestMuxManagerChannel(t *testing.T) {
 	if connected["type"] != protocol.WSConnected || connected["tunnelConnectionId"] != "manager" {
 		t.Fatalf("ws-connected = %#v", connected)
 	}
+	if connected["closeFenceVersion"] != float64(1) {
+		t.Fatalf("closeFenceVersion = %#v, want 1", connected["closeFenceVersion"])
+	}
 	// 服务端经 manager 通道推送初始 sessions 列表（tunnel frame, text）。
 	frame := readTunnel(t, ctx, conn)
 	if frame.ID != "manager" || frame.MsgType != protocol.MsgTypeWSData {
@@ -515,12 +518,17 @@ func TestMuxWSCloseClosesChannel(t *testing.T) {
 	readJSON(t, ctx, conn)   // ws-connected
 	readTunnel(t, ctx, conn) // initial sessions push
 
-	// 发 ws-close，服务端应关闭该 logical channel（无 panic 即可）。
+	// 发 ws-close，服务端必须在 logical channel writer/physical write 栅栏完成后
+	// 返回同一 tunnel ID 的 ws-close ACK。
 	writeJSONMsg(t, ctx, conn, map[string]any{
 		"type":               protocol.WSClose,
 		"tunnelConnectionId": "m1",
 	})
-	// 给一点时间让关闭生效。
-	time.Sleep(100 * time.Millisecond)
+	closed := readJSON(t, ctx, conn)
+	if closed["type"] != protocol.WSClose ||
+		closed["tunnelConnectionId"] != "m1" ||
+		closed["code"] != float64(websocket.StatusNormalClosure) {
+		t.Fatalf("ws-close ack = %#v", closed)
+	}
 	cancel()
 }

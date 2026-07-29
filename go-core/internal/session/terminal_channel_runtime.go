@@ -26,7 +26,9 @@ type terminalChannelRuntime struct {
 	send           chan outboundMessage
 	ready          atomic.Bool
 	done           chan struct{}
-	doneOnce       chan struct{}
+	closeOnce      sync.Once
+	closeMode      atomic.Uint32
+	writerDone     chan struct{}
 	logger         *logs.Logger
 	screenClientID string
 	ownerKey       string
@@ -59,7 +61,8 @@ type outboundMessage struct {
 	binary   []byte
 	priority FramePriority
 	// kind 用于 WriteFrame 成功后做分类字节统计；空字符串按 other 处理。
-	kind string
+	kind       string
+	completion chan bool
 }
 
 type initialScreenMessage struct {
@@ -91,7 +94,7 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 		session:        terminal,
 		send:           make(chan outboundMessage, 256),
 		done:           make(chan struct{}),
-		doneOnce:       make(chan struct{}, 1),
+		writerDone:     make(chan struct{}),
 		logger:         log,
 		screenClientID: randomID(),
 		ownerKey:       ownerKey,
@@ -171,33 +174,100 @@ func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handl
 func (client *terminalChannelRuntime) run(ctx context.Context) {
 	client.session.Attach(client)
 	defer client.session.Detach(client)
-	defer client.Close()
+	defer client.Abort()
 	defer client.session.DetachScreenClient(client.screenClientID)
 
 	client.writerStarted.Store(true)
-	go client.writeLoop(ctx)
+	go func() {
+		defer close(client.writerDone)
+		client.writeLoop(ctx)
+	}()
 	select {
 	case <-ctx.Done():
+		client.Abort()
 	case <-client.done:
 	}
+	<-client.writerDone
 }
 
 func (client *terminalChannelRuntime) SendExit(code int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = client.SendExitAndWait(ctx, code)
+}
+
+func (client *terminalChannelRuntime) SendExitAndWait(ctx context.Context, code int) bool {
 	envelope := &pb.ScreenEnvelope{
 		ProtocolVersion: screenprotocolv2.ProtocolVersion,
 		Payload:         &pb.ScreenEnvelope_Exit{Exit: &pb.Exit{Code: int32(code)}},
 	}
 	payload, err := proto.Marshal(envelope)
-	if err == nil {
-		client.enqueueBinaryPriority(payload, FramePriorityHigh, "other")
+	if err != nil {
+		return false
+	}
+	completion := make(chan bool, 1)
+	message := outboundMessage{
+		binary: payload, priority: FramePriorityHigh, kind: "other",
+		completion: completion,
+	}
+	select {
+	case <-client.done:
+		return false
+	case <-ctx.Done():
+		return false
+	case client.send <- message:
+	}
+	select {
+	case written := <-completion:
+		return written
+	case <-client.done:
+		select {
+		case written := <-completion:
+			return written
+		default:
+			return false
+		}
+	case <-ctx.Done():
+		return false
 	}
 }
 
 func (client *terminalChannelRuntime) Close() {
-	select {
-	case client.doneOnce <- struct{}{}:
-		close(client.done)
-	default:
+	client.Abort()
+}
+
+func (client *terminalChannelRuntime) CloseGracefully() {
+	client.closeMode.CompareAndSwap(0, 1)
+	client.closeOnce.Do(func() { close(client.done) })
+}
+
+func (client *terminalChannelRuntime) Abort() {
+	client.closeMode.Store(2)
+	client.closeOnce.Do(func() { close(client.done) })
+	client.discardPending()
+}
+
+func (client *terminalChannelRuntime) discardPending() {
+	client.screenMu.Lock()
+	client.hasScreenData = false
+	client.screenPending = terminalengine.ScreenFrame{}
+	client.screenMu.Unlock()
+	for {
+		select {
+		case message := <-client.send:
+			completeOutbound(message, false)
+		default:
+			goto drainInitial
+		}
+	}
+drainInitial:
+	for {
+		select {
+		case initial := <-client.screenInitial:
+			initial.done(false)
+		default:
+			return
+		}
 	}
 }
 
@@ -235,20 +305,11 @@ func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-client.done:
-			// 关闭前排空已入队的控制消息（如 Exit）：send 缓冲与 done 同时
-			// 就绪时 select 随机选择，直接 return 会按概率丢失最后一帧。
-			for {
-				select {
-				case message := <-client.send:
-					if !client.writeMessage(ctx, message) {
-						return
-					}
-				default:
-					return
-				}
-			}
+			return
 		case message := <-client.send:
-			if !client.writeMessage(ctx, message) {
+			written := client.writeMessage(ctx, message)
+			completeOutbound(message, written)
+			if !written {
 				return
 			}
 		case <-client.screenWake:
@@ -260,6 +321,16 @@ func (client *terminalChannelRuntime) writeLoop(ctx context.Context) {
 				return
 			}
 		}
+	}
+}
+
+func completeOutbound(message outboundMessage, written bool) {
+	if message.completion == nil {
+		return
+	}
+	select {
+	case message.completion <- written:
+	default:
 	}
 }
 
@@ -296,8 +367,10 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 
 	if frame.Kind == 0 {
 		// 空 commit 被抑制：无可观察变化，不写出；deriver baseline 未推进。
+		diagnostics.Default.EmptyCommitSuppressedCount.Add(1)
 		return true
 	}
+	diagnostics.Default.ScreenFramesDerivedCount.Add(1)
 	// 捕获点 C：正常 DeriveForState 返回后旁路记录该客户端派生帧（不额外调用 deriver，
 	// 不推进 baseline）。未开启捕获时 sink 内部仅一次廉价判断。
 	client.recordDerivedFrame(frame)
@@ -317,6 +390,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	if !client.writeScreenMessage(ctx, outboundMessage{binary: payload, kind: kind}, handle) {
 		return false
 	}
+	diagnostics.Default.ScreenFramesWrittenCount.Add(1)
 	client.screenMu.Lock()
 	client.screenDeriver.SeedAfterSuccessfulWrite(state)
 	client.screenMu.Unlock()
@@ -631,7 +705,16 @@ func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revisi
 // commit relative to the last state it physically wrote successfully. Tests use
 // a synchronous fake writer through the same derive/encode/write/seed sequence.
 func (client *terminalChannelRuntime) sendScreenState(state terminalengine.ScreenFrame) {
+	select {
+	case <-client.done:
+		return
+	default:
+	}
+	diagnostics.Default.ScreenStateOfferedCount.Add(1)
 	client.screenMu.Lock()
+	if client.hasScreenData {
+		diagnostics.Default.ScreenMailboxOverwriteCount.Add(1)
+	}
 	client.screenPending = state
 	client.hasScreenData = true
 	client.screenMu.Unlock()
@@ -652,12 +735,14 @@ func (client *terminalChannelRuntime) enqueueBinaryPriority(bytes []byte, priori
 func (client *terminalChannelRuntime) enqueue(message outboundMessage) {
 	select {
 	case <-client.done:
+		completeOutbound(message, false)
 		return
 	case client.send <- message:
 	default:
+		completeOutbound(message, false)
 		if client.logger != nil {
 			client.logger.Add("warn", "session", fmt.Sprintf("terminal channel send buffer full, closing session=%s", client.session.ID()))
 		}
-		client.Close()
+		client.Abort()
 	}
 }

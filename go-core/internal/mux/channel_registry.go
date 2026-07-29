@@ -7,10 +7,13 @@ import (
 )
 
 type channelEntry struct {
-	id       string
-	routeKey string
-	handler  termsession.LogicalChannelHandler
-	sink     *channelSink
+	id        string
+	routeKey  string
+	handler   termsession.LogicalChannelHandler
+	sink      *channelSink
+	lifecycle *channelLifecycle
+	runDone   chan struct{}
+	closeOnce sync.Once
 }
 
 // ChannelRegistry 原子维护 channel ID 与 route owner 两个索引。
@@ -43,6 +46,16 @@ func (registry *ChannelRegistry) Replace(entry *channelEntry) (oldByID, oldByRou
 	registry.channels[entry.id] = entry
 	if entry.routeKey != "" {
 		registry.routes[entry.routeKey] = entry
+	}
+	return oldByID, oldByRoute
+}
+
+func (registry *ChannelRegistry) Conflicts(id, routeKey string) (oldByID, oldByRoute *channelEntry) {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	oldByID = registry.channels[id]
+	if routeKey != "" {
+		oldByRoute = registry.routes[routeKey]
 	}
 	return oldByID, oldByRoute
 }

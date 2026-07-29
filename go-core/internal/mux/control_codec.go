@@ -24,6 +24,7 @@ type controlWireMessage struct {
 	Code               int      `json:"code,omitempty"`
 	Message            string   `json:"message,omitempty"`
 	Reason             string   `json:"reason,omitempty"`
+	CloseFenceVersion  int      `json:"closeFenceVersion,omitempty"`
 }
 
 type ControlCodec struct{}
@@ -49,7 +50,11 @@ func (ControlCodec) Decode(data []byte) (ControlMessage, error) {
 }
 
 func (ControlCodec) Connected(channelID string) controlWireMessage {
-	return controlWireMessage{Type: "ws-connected", TunnelConnectionID: channelID}
+	return controlWireMessage{
+		Type:               "ws-connected",
+		TunnelConnectionID: channelID,
+		CloseFenceVersion:  1,
+	}
 }
 
 func (ControlCodec) Error(channelID string, code int, message string) controlWireMessage {

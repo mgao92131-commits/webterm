@@ -278,6 +278,13 @@ public final class DeviceConnectionDiagnosticsRegistry {
         long staleChannelLifecycleDropped = 0L;
         long channelIdReusedDropped = 0L;
         long wrongConnectionMappingDropped = 0L;
+        long framesWhileClosing = 0L;
+        long bytesWhileClosing = 0L;
+        long framesAfterCloseAck = 0L;
+        long bytesAfterCloseAck = 0L;
+        long closeRequestToAckCount = 0L;
+        long closeRequestToAckTotalMs = 0L;
+        long closeRequestToAckMaxMs = 0L;
         for (DeviceConnection connection : connections) {
             DeviceConnection.InboundDropSnapshot drops = connection.diagnosticsSnapshot().inboundDrops;
             if (drops == null) continue;
@@ -289,6 +296,14 @@ public final class DeviceConnectionDiagnosticsRegistry {
             staleChannelLifecycleDropped += drops.staleChannelLifecycleDropped;
             channelIdReusedDropped += drops.channelIdReusedDropped;
             wrongConnectionMappingDropped += drops.wrongConnectionMappingDropped;
+            framesWhileClosing += drops.framesWhileClosing;
+            bytesWhileClosing += drops.bytesWhileClosing;
+            framesAfterCloseAck += drops.framesAfterCloseAck;
+            bytesAfterCloseAck += drops.bytesAfterCloseAck;
+            closeRequestToAckCount += drops.closeRequestToAckCount;
+            closeRequestToAckTotalMs += drops.closeRequestToAckTotalMs;
+            closeRequestToAckMaxMs = Math.max(closeRequestToAckMaxMs,
+                drops.closeRequestToAckMaxMs);
         }
         for (DeviceConnection.DiagnosticsSnapshot connection : recentClosed) {
             DeviceConnection.InboundDropSnapshot drops = connection.inboundDrops;
@@ -301,6 +316,14 @@ public final class DeviceConnectionDiagnosticsRegistry {
             staleChannelLifecycleDropped += drops.staleChannelLifecycleDropped;
             channelIdReusedDropped += drops.channelIdReusedDropped;
             wrongConnectionMappingDropped += drops.wrongConnectionMappingDropped;
+            framesWhileClosing += drops.framesWhileClosing;
+            bytesWhileClosing += drops.bytesWhileClosing;
+            framesAfterCloseAck += drops.framesAfterCloseAck;
+            bytesAfterCloseAck += drops.bytesAfterCloseAck;
+            closeRequestToAckCount += drops.closeRequestToAckCount;
+            closeRequestToAckTotalMs += drops.closeRequestToAckTotalMs;
+            closeRequestToAckMaxMs = Math.max(closeRequestToAckMaxMs,
+                drops.closeRequestToAckMaxMs);
         }
         staleTransportGenerationDropped += archived.staleTransportGenerationDropped;
         tunnelDecodeFailed += archived.tunnelDecodeFailed;
@@ -310,6 +333,14 @@ public final class DeviceConnectionDiagnosticsRegistry {
         staleChannelLifecycleDropped += archived.staleChannelLifecycleDropped;
         channelIdReusedDropped += archived.channelIdReusedDropped;
         wrongConnectionMappingDropped += archived.wrongConnectionMappingDropped;
+        framesWhileClosing += archived.framesWhileClosing;
+        bytesWhileClosing += archived.bytesWhileClosing;
+        framesAfterCloseAck += archived.framesAfterCloseAck;
+        bytesAfterCloseAck += archived.bytesAfterCloseAck;
+        closeRequestToAckCount += archived.closeRequestToAckCount;
+        closeRequestToAckTotalMs += archived.closeRequestToAckTotalMs;
+        closeRequestToAckMaxMs = Math.max(closeRequestToAckMaxMs,
+            archived.closeRequestToAckMaxMs);
 
         Map<String, Long> out = new LinkedHashMap<>();
         out.putAll(lifetimeConnectionCounts());
@@ -322,6 +353,13 @@ public final class DeviceConnectionDiagnosticsRegistry {
         out.put("staleChannelLifecycleDropped", staleChannelLifecycleDropped);
         out.put("channelIdReusedDropped", channelIdReusedDropped);
         out.put("wrongConnectionMappingDropped", wrongConnectionMappingDropped);
+        out.put("framesWhileClosing", framesWhileClosing);
+        out.put("bytesWhileClosing", bytesWhileClosing);
+        out.put("framesAfterCloseAck", framesAfterCloseAck);
+        out.put("bytesAfterCloseAck", bytesAfterCloseAck);
+        out.put("closeRequestToAckCount", closeRequestToAckCount);
+        out.put("closeRequestToAckTotalMs", closeRequestToAckTotalMs);
+        out.put("closeRequestToAckMaxMs", closeRequestToAckMaxMs);
         return out;
     }
 
@@ -402,6 +440,13 @@ public final class DeviceConnectionDiagnosticsRegistry {
         long staleChannelLifecycleDropped;
         long channelIdReusedDropped;
         long wrongConnectionMappingDropped;
+        long framesWhileClosing;
+        long bytesWhileClosing;
+        long framesAfterCloseAck;
+        long bytesAfterCloseAck;
+        long closeRequestToAckCount;
+        long closeRequestToAckTotalMs;
+        long closeRequestToAckMaxMs;
 
         void merge(DeviceConnection.DiagnosticsSnapshot snapshot) {
             if (snapshot == null) return;
@@ -435,6 +480,14 @@ public final class DeviceConnectionDiagnosticsRegistry {
                 staleChannelLifecycleDropped += drops.staleChannelLifecycleDropped;
                 channelIdReusedDropped += drops.channelIdReusedDropped;
                 wrongConnectionMappingDropped += drops.wrongConnectionMappingDropped;
+                framesWhileClosing += drops.framesWhileClosing;
+                bytesWhileClosing += drops.bytesWhileClosing;
+                framesAfterCloseAck += drops.framesAfterCloseAck;
+                bytesAfterCloseAck += drops.bytesAfterCloseAck;
+                closeRequestToAckCount += drops.closeRequestToAckCount;
+                closeRequestToAckTotalMs += drops.closeRequestToAckTotalMs;
+                closeRequestToAckMaxMs = Math.max(closeRequestToAckMaxMs,
+                    drops.closeRequestToAckMaxMs);
             }
         }
 
@@ -464,6 +517,13 @@ public final class DeviceConnectionDiagnosticsRegistry {
             staleChannelLifecycleDropped = 0L;
             channelIdReusedDropped = 0L;
             wrongConnectionMappingDropped = 0L;
+            framesWhileClosing = 0L;
+            bytesWhileClosing = 0L;
+            framesAfterCloseAck = 0L;
+            bytesAfterCloseAck = 0L;
+            closeRequestToAckCount = 0L;
+            closeRequestToAckTotalMs = 0L;
+            closeRequestToAckMaxMs = 0L;
         }
 
         ArchivedTotals copy() {
@@ -494,6 +554,13 @@ public final class DeviceConnectionDiagnosticsRegistry {
             out.staleChannelLifecycleDropped = staleChannelLifecycleDropped;
             out.channelIdReusedDropped = channelIdReusedDropped;
             out.wrongConnectionMappingDropped = wrongConnectionMappingDropped;
+            out.framesWhileClosing = framesWhileClosing;
+            out.bytesWhileClosing = bytesWhileClosing;
+            out.framesAfterCloseAck = framesAfterCloseAck;
+            out.bytesAfterCloseAck = bytesAfterCloseAck;
+            out.closeRequestToAckCount = closeRequestToAckCount;
+            out.closeRequestToAckTotalMs = closeRequestToAckTotalMs;
+            out.closeRequestToAckMaxMs = closeRequestToAckMaxMs;
             return out;
         }
     }

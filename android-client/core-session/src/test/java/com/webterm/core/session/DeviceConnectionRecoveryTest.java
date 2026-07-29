@@ -60,6 +60,11 @@ public class DeviceConnectionRecoveryTest {
         return "{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"" + channelId + "\"}";
     }
 
+    private static String wsConnectedWithCloseFence(String channelId) {
+        return "{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"" + channelId
+                + "\",\"closeFenceVersion\":1}";
+    }
+
     private static String wsClose(String channelId, int code, String reason) {
         return "{\"type\":\"ws-close\",\"tunnelConnectionId\":\"" + channelId
                 + "\",\"code\":" + code + ",\"reason\":\"" + reason + "\"}";
@@ -279,6 +284,7 @@ public class DeviceConnectionRecoveryTest {
         assertTrue("original listener should get mux disconnected failure", listener1.failure.get() != null);
         assertEquals(ChannelFailure.Kind.MUX_TEMPORARY, listener1.failure.get().kind);
 
+        manager.onNetworkAvailable(201L);
         transport.simulateOpen();
         assertEquals("reopen after reconnect should send ws-connect",
             2, transport.wsConnectCount(channelId));
@@ -316,6 +322,7 @@ public class DeviceConnectionRecoveryTest {
         // 物理 mux 恢复会发 ws-connect #2；页面同时重挂到仍为 OPENING 的
         // channel 时只能替换 listener，不能再发 #3。
         transport.simulateClose(1001, "going away");
+        manager.onNetworkAvailable(202L);
         transport.simulateOpen();
         manager.openScreenChannel("s1", current);
         assertEquals(2, transport.wsConnectCount(channelId));
@@ -364,6 +371,7 @@ public class DeviceConnectionRecoveryTest {
             1, transport.wsConnectCount(channelId));
 
         // Mux reconnects and reopens the channel.
+        manager.onNetworkAvailable(203L);
         transport.simulateOpen();
         assertEquals("reopen after reconnect should send ws-connect",
             2, transport.wsConnectCount(channelId));
@@ -513,6 +521,7 @@ public class DeviceConnectionRecoveryTest {
         assertEquals("no ws-connect while mux disconnected", 1, transport.wsConnectCount(channelId));
         assertFalse("channel should remain in channels", manager.isIdle());
 
+        manager.onNetworkAvailable(204L);
         transport.simulateOpen();
         assertEquals("physical recovery reconciles every desired-open channel once",
             2, transport.wsConnectCount(channelId));
@@ -649,6 +658,50 @@ public class DeviceConnectionRecoveryTest {
     }
 
     @Test
+    public void cookieRotationPreservesHealthySocketAndNextReconnectUsesLatestCookie() {
+        CapturingHandler handler = new CapturingHandler();
+        FakeMuxTransport first = new FakeMuxTransport();
+        FakeMuxTransport replacement = new FakeMuxTransport();
+        RotatingTransportFactory factory = new RotatingTransportFactory(first, replacement);
+        DeviceConnection manager = new DeviceConnection(
+                handler.handler, "http://example.com", "cookie-a", "device1", factory);
+        String channelId = manager.openScreenChannel("s1", new SimpleListener());
+        first.simulateOpen();
+        first.simulateText(wsConnected(channelId));
+
+        manager.updateCookie("cookie-b");
+
+        assertEquals("healthy WS must not close on Cookie rotation", 0, first.closeCount);
+        assertEquals("healthy WS must not reconnect on Cookie rotation", 1, first.startCount);
+        assertEquals("cookie-a", factory.cookies.get(0));
+
+        first.simulateClose(1001, "EOF");
+        handler.runDelayed();
+
+        assertEquals(1, replacement.startCount);
+        assertEquals("next natural reconnect must construct with latest credentials",
+            "cookie-b", factory.cookies.get(1));
+    }
+
+    @Test
+    public void clearingCredentialsImmediatelyInvalidatesSocketAndLogicalChannels() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection manager = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "cookie-a", "device1",
+                new FakeTransportFactory(transport));
+        SimpleListener listener = new SimpleListener();
+        String channelId = manager.openScreenChannel("s1", listener);
+        transport.simulateOpen();
+        transport.simulateText(wsConnected(channelId));
+
+        manager.updateCookie("");
+
+        assertEquals(1, transport.closeCount);
+        assertTrue(manager.isIdle());
+        assertEquals(ChannelFailure.Kind.AUTH_REQUIRED, listener.failure.get().kind);
+    }
+
+    @Test
     public void duplicateNetworkAvailableIsDebouncedWhileDisconnected() {
         CapturingHandler handler = new CapturingHandler();
         FakeMuxTransport first = new FakeMuxTransport();
@@ -778,6 +831,7 @@ public class DeviceConnectionRecoveryTest {
 
     private static final class RotatingTransportFactory implements TransportFactory {
         private final FakeMuxTransport[] transports;
+        private final List<String> cookies = new ArrayList<>();
         private int next;
 
         RotatingTransportFactory(FakeMuxTransport... transports) {
@@ -785,6 +839,7 @@ public class DeviceConnectionRecoveryTest {
         }
 
         @Override public MuxTransport create(String url, String cookie, String protocol) {
+            cookies.add(cookie);
             return transports[Math.min(next++, transports.length - 1)];
         }
     }
@@ -982,6 +1037,37 @@ public class DeviceConnectionRecoveryTest {
         DeviceConnection.InboundDropSnapshot drops = connection.inboundDropSnapshot();
         assertEquals(1L, drops.normalCloseTailDropped);
         assertEquals(0L, drops.unknownChannelDropped);
+    }
+
+    @Test
+    public void closeFenceSeparatesFramesBeforeAndAfterAgentAck() {
+        FakeMuxTransport transport = new FakeMuxTransport();
+        DeviceConnection connection = new DeviceConnection(
+                synchronousHandler(), "http://example.com", "", "device1",
+                new FakeTransportFactory(transport));
+        String channelId = connection.openScreenChannel("s1", new SimpleListener());
+        transport.simulateOpen();
+        transport.simulateText(wsConnectedWithCloseFence(channelId));
+
+        connection.closeChannel(channelId);
+        assertFalse("fenced channel remains registered until Agent ACK", connection.isIdle());
+        byte[] tail = WebTermProtocol.encodeTunnelFrame(
+            channelId, new byte[] {1, 2}, true);
+        transport.simulateBinary(tail);
+
+        DeviceConnection.InboundDropSnapshot beforeAck = connection.inboundDropSnapshot();
+        assertEquals(1L, beforeAck.framesWhileClosing);
+        assertEquals(tail.length, beforeAck.bytesWhileClosing);
+        assertEquals(0L, beforeAck.framesAfterCloseAck);
+
+        transport.simulateText(wsClose(channelId, 1000, ""));
+        assertTrue("Agent ACK removes the logical channel", connection.isIdle());
+        transport.simulateBinary(tail);
+
+        DeviceConnection.InboundDropSnapshot afterAck = connection.inboundDropSnapshot();
+        assertEquals(1L, afterAck.framesAfterCloseAck);
+        assertEquals(tail.length, afterAck.bytesAfterCloseAck);
+        assertEquals(1L, afterAck.closeRequestToAckCount);
     }
 
     @Test

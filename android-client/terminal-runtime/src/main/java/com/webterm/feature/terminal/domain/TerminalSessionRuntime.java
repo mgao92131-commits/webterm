@@ -990,7 +990,7 @@ public final class TerminalSessionRuntime {
               pumpHistoryRanges();
             }
           }),
-          HistoryFetchPolicy.TAIL_DEBOUNCE_MS);
+          historyLoader.tailDebounceDelayMs(debounceToken));
       return;
     }
     final HistoryRangeSource.RequestHandle[] handleSlot = new HistoryRangeSource.RequestHandle[1];

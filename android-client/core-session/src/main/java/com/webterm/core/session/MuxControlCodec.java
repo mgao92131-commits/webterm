@@ -12,14 +12,17 @@ final class MuxControlCodec {
         final int code;
         final String message;
         final String reason;
+        final int closeFenceVersion;
         final JSONObject raw;
 
-        Message(String type, String channelId, int code, String message, String reason, JSONObject raw) {
+        Message(String type, String channelId, int code, String message, String reason,
+                int closeFenceVersion, JSONObject raw) {
             this.type = type;
             this.channelId = channelId;
             this.code = code;
             this.message = message;
             this.reason = reason;
+            this.closeFenceVersion = closeFenceVersion;
             this.raw = raw;
         }
     }
@@ -29,7 +32,7 @@ final class MuxControlCodec {
             JSONObject raw = new JSONObject(text);
             return new Message(raw.optString("type"), raw.optString("tunnelConnectionId"),
                 raw.optInt("code", 0), raw.optString("message", ""),
-                raw.optString("reason", ""), raw);
+                raw.optString("reason", ""), raw.optInt("closeFenceVersion", 0), raw);
         } catch (JSONException ignored) {
             return null;
         }

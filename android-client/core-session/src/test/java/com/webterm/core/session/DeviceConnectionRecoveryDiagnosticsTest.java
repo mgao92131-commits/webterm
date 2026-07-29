@@ -202,10 +202,13 @@ public class DeviceConnectionRecoveryDiagnosticsTest {
 
         assertEquals("cookie rotation must join the active EOF recovery",
                 recoveryId, connection.recoveryIdForDiagnostics());
-        assertEquals("only one replacement transport should start", 2, transport.startCount);
+        assertEquals("cookie rotation must not bypass EOF reconnect backoff",
+                1, transport.startCount);
         connection.updateCookie("cookie-b");
-        assertEquals("same cookie must not start another replacement", 2, transport.startCount);
+        assertEquals("same cookie must not start another replacement", 1, transport.startCount);
 
+        handler.runDelayed();
+        assertEquals("scheduled EOF recovery starts one replacement", 2, transport.startCount);
         transport.simulateOpen();
         assertFalse(connection.hasActiveRecovery());
     }

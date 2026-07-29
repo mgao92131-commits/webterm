@@ -365,6 +365,28 @@ public final class HistoryRangeLoaderTest {
     assertEquals(0, loader.armTailDebounce(range, extent));
   }
 
+  @Test
+  public void growingAuthoritativeTailRestartsQuietPeriodWithinHardDeadline() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    loader.acceptDemand(100, 100, 100, 0, 20, 10);
+    long first = loader.armTailDebounce(
+        new HistoryRangeLoader.Range("i1", 1, 1, 100, 100,
+            loader.latestDemand().demandEpoch),
+        new HistoryExtent(1, 100));
+    assertTrue(first > 0);
+
+    loader.acceptDemand(101, 101, 101, 0, 20, 20);
+    long restarted = loader.armTailDebounce(
+        new HistoryRangeLoader.Range("i1", 1, 1, 101, 101,
+            loader.latestDemand().demandEpoch),
+        new HistoryExtent(1, 101));
+
+    assertTrue(restarted > first);
+    assertTrue(loader.tailDebounceDelayMs(restarted)
+        <= HistoryFetchPolicy.TAIL_QUIET_PERIOD_MS);
+    assertTrue(loader.tailDebounceDelayMs(restarted) >= 0L);
+  }
+
   private static HistoryRenderView emptyHistory(HistoryExtent extent) {
     HistoryCatalog catalog = new HistoryCatalog().edit().setExtent(extent).commit();
     BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()
