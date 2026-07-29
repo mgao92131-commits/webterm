@@ -12,7 +12,13 @@ public interface HistoryRangeSource {
   interface RequestHandle { void cancel(); }
 
   enum FailureKind {
-    NETWORK, RETRYABLE, STALE_PROJECTION, SESSION_GONE, AUTH_REQUIRED, PROTOCOL
+    NETWORK,
+    RETRYABLE,
+    SESSION_NOT_READY,
+    STALE_PROJECTION,
+    SESSION_GONE,
+    AUTH_REQUIRED,
+    PROTOCOL
   }
 
   final class Result {

@@ -22,6 +22,12 @@ final class HistoryRangeMetrics {
   private final AtomicLong requestNetworkDurationNanos = new AtomicLong();
   private final AtomicLong responseCallbackQueueDelayNanos = new AtomicLong();
   private final AtomicLong responseApplyDurationNanos = new AtomicLong();
+  private final AtomicLong sessionNotReadyCount = new AtomicLong();
+  private final AtomicLong sessionGoneCount = new AtomicLong();
+  private final AtomicLong retryableFailureCount = new AtomicLong();
+  private final AtomicLong retryScheduledCount = new AtomicLong();
+  private final AtomicLong retryExhaustedCount = new AtomicLong();
+  private final AtomicLong rangeUnavailableProtocolCount = new AtomicLong();
 
   void onDemandReceived() { demandReceivedCount.incrementAndGet(); }
   void onDemandConflated() { demandConflatedCount.incrementAndGet(); }
@@ -51,6 +57,12 @@ final class HistoryRangeMetrics {
   void onResponseApplied(long durationNanos) {
     responseApplyDurationNanos.addAndGet(nonNegative(durationNanos));
   }
+  void onSessionNotReady() { sessionNotReadyCount.incrementAndGet(); }
+  void onSessionGone() { sessionGoneCount.incrementAndGet(); }
+  void onRetryableFailure() { retryableFailureCount.incrementAndGet(); }
+  void onRetryScheduled() { retryScheduledCount.incrementAndGet(); }
+  void onRetryExhausted() { retryExhaustedCount.incrementAndGet(); }
+  void onRangeUnavailableProtocol() { rangeUnavailableProtocolCount.incrementAndGet(); }
 
   Map<String, Object> snapshot() {
     Map<String, Object> out = new LinkedHashMap<>();
@@ -71,6 +83,12 @@ final class HistoryRangeMetrics {
     out.put("responseCallbackQueueDelayMs",
         nanosToMillis(responseCallbackQueueDelayNanos.get()));
     out.put("responseApplyDurationMs", nanosToMillis(responseApplyDurationNanos.get()));
+    out.put("sessionNotReadyCount", sessionNotReadyCount.get());
+    out.put("sessionGoneCount", sessionGoneCount.get());
+    out.put("retryableFailureCount", retryableFailureCount.get());
+    out.put("retryScheduledCount", retryScheduledCount.get());
+    out.put("retryExhaustedCount", retryExhaustedCount.get());
+    out.put("rangeUnavailableProtocolCount", rangeUnavailableProtocolCount.get());
     return out;
   }
 

@@ -1025,6 +1025,7 @@ public final class TerminalSessionRuntime {
                   disposition != HistoryRangeLoader.CompletionDisposition.OBSOLETE;
               historyLoader.metrics().onRequestCompletionClassified(useful);
               try {
+                historyLoader.clearTransientFailures();
                 boolean applyChanged;
                 try {
                   applyChanged = applyDecodedHistoryRange(active, result);
@@ -1109,6 +1110,10 @@ public final class TerminalSessionRuntime {
                     failure.kind.name());
                 pumpHistoryRanges();
                 return;
+              }
+              if (failure.kind == HistoryRangeSource.FailureKind.NETWORK
+                  || failure.kind == HistoryRangeSource.FailureKind.RETRYABLE) {
+                historyLoader.metrics().onRetryableFailure();
               }
               if (handleRangeFailure(active, failure)) return;
               scheduleRangeRetry(failure.retryAfterMs);
@@ -1236,16 +1241,31 @@ public final class TerminalSessionRuntime {
       }
       return true;
     }
-    if (failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION
-        || failure.kind == HistoryRangeSource.FailureKind.SESSION_GONE) {
-      if (failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION) {
-        historyLoader.metrics().onStaleProjectionResponse();
+    if (failure.kind == HistoryRangeSource.FailureKind.SESSION_NOT_READY) {
+      int attempt = historyLoader.noteSessionNotReadyFailure();
+      if (attempt >= 3) {
+        historyLoader.metrics().onRetryExhausted();
+        requestRecovery(
+            RecoveryArbiter.Level.CHANNEL_REBUILD,
+            "history route remained unavailable",
+            false);
+      } else {
+        scheduleRangeRetry(250L << (attempt - 1));
       }
-      historyLoader.markRangeUnavailable(request.range);
+      return true;
+    }
+    if (failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION) {
+      historyLoader.metrics().onStaleProjectionResponse();
+      requestRecovery(
+          RecoveryArbiter.Level.FORCE_BASELINE,
+          "history range projection identity became stale",
+          false);
+      return true;
+    }
+    if (failure.kind == HistoryRangeSource.FailureKind.SESSION_GONE) {
+      historyLoader.noteSessionGone();
       historyLoader.clearDemand();
-      emitHistoryRangeInfo("history_range_demand_cleared", "reason",
-          failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION
-              ? "stale" : "session_gone");
+      emitHistoryRangeInfo("history_range_demand_cleared", "reason", "session_gone");
       return true;
     }
     return false;
@@ -1303,6 +1323,7 @@ public final class TerminalSessionRuntime {
     long delay = Math.max(HISTORY_RETRY_MIN_MS,
         Math.min(HISTORY_RETRY_MAX_MS, serverDelayMs > 0 ? serverDelayMs : HISTORY_RETRY_MIN_MS));
     long epoch = historyLoader.lifecycleEpoch();
+    historyLoader.metrics().onRetryScheduled();
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> {
           if (historyLoader.closed() || historyLoader.lifecycleEpoch() != epoch) return;
@@ -2304,7 +2325,6 @@ public final class TerminalSessionRuntime {
 
   private static boolean clearsHistoryDemand(@NonNull State state) {
     return state == State.DISCONNECTED
-        || state == State.RECONNECTING
         || state == State.CLOSING
         || state == State.CLOSED;
   }

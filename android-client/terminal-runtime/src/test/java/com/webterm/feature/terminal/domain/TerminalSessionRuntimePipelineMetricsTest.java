@@ -348,6 +348,114 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   @Test
+  public void temporarySessionNotReadyRetriesWithoutClearingDemandThenAppliesHistory() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    ControlledScheduler scheduler = new ControlledScheduler();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "range-not-ready", model, Runnable::run, Runnable::run, scheduler);
+    connect(runtime);
+    runtime.enterLiveForTest();
+    scheduler.clear();
+    ControlledRangeSource source = new ControlledRangeSource();
+    runtime.setHistoryRangeSource(source);
+
+    runtime.onVisibleHistoryDemand(100, 100, 100, 0, 1);
+    assertEquals(1, source.requests.size());
+    source.requests.get(0).callback.onFailure(new HistoryRangeSource.Failure(
+        HistoryRangeSource.FailureKind.SESSION_NOT_READY, 0, 1));
+
+    Map<String, Object> afterFailure = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(true, afterFailure.get("hasDemand"));
+    assertEquals(false, afterFailure.get("hasUnavailableRange"));
+    assertEquals(1L, afterFailure.get("sessionNotReadyCount"));
+    assertEquals(1L, afterFailure.get("retryScheduledCount"));
+
+    scheduler.runUntil(() -> source.requests.size() >= 2);
+    assertEquals(2, source.requests.size());
+    source.requests.get(1).callback.onResult(decodedRange(source.requests.get(1).range));
+
+    int historyIndex = model.renderSnapshot().history.findSeqIndex(100);
+    assertNotNull(model.renderSnapshot().history.renderLineAt(historyIndex));
+    assertEquals(false, runtime.diagnosticsSnapshot().historyLoader.get("hasActiveRequest"));
+  }
+
+  @Test
+  public void sessionGoneDoesNotPoisonUnavailableRange() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("range-gone", model, Runnable::run);
+    connect(runtime);
+    runtime.enterLiveForTest();
+    ControlledRangeSource source = new ControlledRangeSource();
+    runtime.setHistoryRangeSource(source);
+
+    runtime.onVisibleHistoryDemand(100, 100, 100, 0, 1);
+    source.requests.get(0).callback.onFailure(new HistoryRangeSource.Failure(
+        HistoryRangeSource.FailureKind.SESSION_GONE, 0, 1));
+
+    Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(false, loader.get("hasDemand"));
+    assertEquals(false, loader.get("hasUnavailableRange"));
+    assertEquals(1L, loader.get("sessionGoneCount"));
+  }
+
+  @Test
+  public void repeatedSessionNotReadyEscalatesToChannelRebuild() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    ControlledScheduler scheduler = new ControlledScheduler();
+    TerminalSessionRuntime runtime = new TerminalSessionRuntime(
+        "range-retry-exhausted", model, Runnable::run, Runnable::run, scheduler);
+    FakeV2Connection connection = connect(runtime);
+    runtime.enterLiveForTest();
+    scheduler.clear();
+    ControlledRangeSource source = new ControlledRangeSource();
+    runtime.setHistoryRangeSource(source);
+
+    runtime.onVisibleHistoryDemand(100, 100, 100, 0, 1);
+    for (int attempt = 0; attempt < 3; attempt++) {
+      source.requests.get(attempt).callback.onFailure(new HistoryRangeSource.Failure(
+          HistoryRangeSource.FailureKind.SESSION_NOT_READY, 0, 1));
+      if (attempt < 2) {
+        int expectedRequests = attempt + 2;
+        scheduler.runUntil(() -> source.requests.size() >= expectedRequests);
+      }
+    }
+
+    assertEquals(1, connection.reconnectCount);
+    assertEquals(1L,
+        runtime.diagnosticsSnapshot().historyLoader.get("retryExhaustedCount"));
+  }
+
+  @Test
+  public void staleProjectionRequestsBaselineWithoutPoisoningRange() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(domainBaseline()));
+    model.consumeRenderUpdate();
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("range-stale", model, Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    runtime.enterLiveForTest();
+    ControlledRangeSource source = new ControlledRangeSource();
+    runtime.setHistoryRangeSource(source);
+
+    runtime.onVisibleHistoryDemand(100, 100, 100, 0, 1);
+    source.requests.get(0).callback.onFailure(new HistoryRangeSource.Failure(
+        HistoryRangeSource.FailureKind.STALE_PROJECTION, 0, 1));
+
+    Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
+    assertEquals(loader.toString(), true, loader.get("hasDemand"));
+    assertEquals(false, loader.get("hasUnavailableRange"));
+    assertEquals(1, connection.reconnectCount);
+    assertEquals(1L, loader.get("staleProjectionResponseCount"));
+  }
+
+  @Test
   public void lateOldRangeAfterWsRebindDoesNotReconnectAndNextRangeLoadsCurrentBody()
       throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
@@ -705,6 +813,30 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
 
     void runAll() {
       while (!tasks.isEmpty()) tasks.removeFirst().run();
+    }
+  }
+
+  private static final class ControlledScheduler
+      implements TerminalSessionRuntime.TimeoutScheduler {
+    private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+
+    @Override public void schedule(@NonNull Runnable task, long delayMs) {
+      tasks.addLast(task);
+    }
+
+    void runNext() {
+      assertFalse(tasks.isEmpty());
+      tasks.removeFirst().run();
+    }
+
+    void runUntil(@NonNull java.util.function.BooleanSupplier condition) {
+      while (!condition.getAsBoolean()) {
+        runNext();
+      }
+    }
+
+    void clear() {
+      tasks.clear();
     }
   }
 

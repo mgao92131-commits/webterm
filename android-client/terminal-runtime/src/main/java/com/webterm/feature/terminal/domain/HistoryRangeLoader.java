@@ -119,6 +119,7 @@ public final class HistoryRangeLoader {
   private long tailDebounceToken;
   private long tailDebounceDemandEpoch;
   private long tailDebounceSatisfiedEpoch;
+  private int consecutiveSessionNotReadyFailures;
   private boolean closed;
 
   /** 测试和旧调用兼容入口；生产 demand 由 acceptDemand 分配 epoch。 */
@@ -185,6 +186,7 @@ public final class HistoryRangeLoader {
     activeRequest = null;
     clearTailDebounce();
     clearObservedServerExtent();
+    consecutiveSessionNotReadyFailures = 0;
     lifecycleEpoch++;
   }
 
@@ -337,6 +339,22 @@ public final class HistoryRangeLoader {
         Math.max(range.fromSeq, fromSeq),
         Math.min(range.toSeq, toSeq),
         fault);
+    metrics.onRangeUnavailableProtocol();
+  }
+
+  public synchronized int noteSessionNotReadyFailure() {
+    consecutiveSessionNotReadyFailures++;
+    metrics.onSessionNotReady();
+    return consecutiveSessionNotReadyFailures;
+  }
+
+  public synchronized void noteSessionGone() {
+    metrics.onSessionGone();
+    consecutiveSessionNotReadyFailures = 0;
+  }
+
+  public synchronized void clearTransientFailures() {
+    consecutiveSessionNotReadyFailures = 0;
   }
 
   /** WS 已权威声明该位置的新绑定，旧正文故障不再阻止新 LineKey 加载。 */

@@ -157,8 +157,9 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
     closed.set(true);
   }
 
-  private static FailureKind httpFailure(int code) {
-    if (code == 404 || code == 410) return FailureKind.SESSION_GONE;
+  static FailureKind httpFailure(int code) {
+    if (code == 404) return FailureKind.SESSION_NOT_READY;
+    if (code == 410) return FailureKind.SESSION_GONE;
     if (code == 409) return FailureKind.STALE_PROJECTION;
     if (code == 429 || code >= 500) return FailureKind.RETRYABLE;
     return FailureKind.PROTOCOL;
