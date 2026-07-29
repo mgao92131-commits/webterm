@@ -1,25 +1,25 @@
 package com.webterm.terminal.model;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Set;
 
 /** WS 权威历史位置目录。正文是否驻留完全不影响该结构。 */
 public final class HistoryCatalog {
   private final HistoryExtent extent;
-  private final Map<Long, LineKey> seqToKey;
-  private final Map<LineKey, Long> keyToSeq;
+  private final PersistentShardedMap<Long, LineKey> seqToKey;
+  private final PersistentShardedMap<LineKey, Long> keyToSeq;
 
   public HistoryCatalog() {
-    this(HistoryExtent.INITIAL_EMPTY, Collections.emptyMap(), Collections.emptyMap());
+    this(HistoryExtent.INITIAL_EMPTY,
+        new PersistentShardedMap<>(), new PersistentShardedMap<>());
   }
 
   private HistoryCatalog(
-      HistoryExtent extent, Map<Long, LineKey> seqToKey, Map<LineKey, Long> keyToSeq) {
+      HistoryExtent extent,
+      PersistentShardedMap<Long, LineKey> seqToKey,
+      PersistentShardedMap<LineKey, Long> keyToSeq) {
     this.extent = extent;
-    this.seqToKey = Collections.unmodifiableMap(seqToKey);
-    this.keyToSeq = Collections.unmodifiableMap(keyToSeq);
+    this.seqToKey = seqToKey;
+    this.keyToSeq = keyToSeq;
   }
 
   public HistoryExtent extent() { return extent; }
@@ -32,20 +32,28 @@ public final class HistoryCatalog {
 
   public static final class Editor {
     private HistoryExtent extent;
-    private final Map<Long, LineKey> seqToKey;
-    private final Map<LineKey, Long> keyToSeq;
+    private final PersistentShardedMap.Editor<Long, LineKey> seqToKey;
+    private final PersistentShardedMap.Editor<LineKey, Long> keyToSeq;
 
     private Editor(HistoryCatalog source) {
       extent = source.extent;
-      seqToKey = new HashMap<>(source.seqToKey);
-      keyToSeq = new HashMap<>(source.keyToSeq);
+      seqToKey = source.seqToKey.edit();
+      keyToSeq = source.keyToSeq.edit();
     }
 
     public Editor setExtent(HistoryExtent next) {
       if (next == null) throw new IllegalArgumentException("history extent missing");
+      HistoryExtent previous = extent;
       extent = next;
-      seqToKey.entrySet().removeIf(entry -> !next.contains(entry.getKey()));
-      rebuildReverse();
+      if (previous.isEmpty()) return this;
+
+      long prefixLast = next.isEmpty()
+          ? previous.lastSeq : Math.min(previous.lastSeq, next.firstSeq - 1);
+      removeRange(previous.firstSeq, prefixLast);
+      if (!next.isEmpty()) {
+        long suffixFirst = Math.max(previous.firstSeq, next.lastSeq + 1);
+        removeRange(suffixFirst, previous.lastSeq);
+      }
       return this;
     }
 
@@ -100,17 +108,13 @@ public final class HistoryCatalog {
     }
 
     public HistoryCatalog commit() {
-      return new HistoryCatalog(
-          extent, new HashMap<>(seqToKey), new HashMap<>(keyToSeq));
+      return new HistoryCatalog(extent, seqToKey.commit(), keyToSeq.commit());
     }
 
-    private void rebuildReverse() {
-      keyToSeq.clear();
-      for (Map.Entry<Long, LineKey> entry : seqToKey.entrySet()) {
-        Long previous = keyToSeq.put(entry.getValue(), entry.getKey());
-        if (previous != null) {
-          throw new IllegalStateException("duplicate history LineKey");
-        }
+    private void removeRange(long firstSeq, long lastSeq) {
+      if (firstSeq > lastSeq) return;
+      for (long seq = firstSeq; seq <= lastSeq; seq++) {
+        remove(seq);
       }
     }
   }

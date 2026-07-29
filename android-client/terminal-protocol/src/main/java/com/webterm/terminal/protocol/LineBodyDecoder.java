@@ -21,6 +21,7 @@ public final class LineBodyDecoder {
     int textOffset = 0;
     int metaOffset = 0;
     int column = 0;
+    int spanIndex = 0;
     while (metaOffset < line.glyphMeta.length) {
       long value = 0;
       int shift = 0;
@@ -44,11 +45,15 @@ public final class LineBodyDecoder {
       textOffset += length;
       int styleId = 0;
       int linkId = 0;
-      for (WireLineData.Span span : line.styleSpans) {
-        if (column >= span.startCol() && column < span.endCol()) {
+      while (spanIndex < line.styleSpans.size()
+          && line.styleSpans.get(spanIndex).endCol() <= column) {
+        spanIndex++;
+      }
+      if (spanIndex < line.styleSpans.size()) {
+        WireLineData.Span span = line.styleSpans.get(spanIndex);
+        if (span.startCol() <= column && column < span.endCol()) {
           styleId = span.styleId();
           linkId = span.linkId();
-          break;
         }
       }
       StyleValue style = dictionary.style(styleId);

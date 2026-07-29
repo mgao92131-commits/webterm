@@ -7,7 +7,9 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import org.junit.Test;
 
 public final class UnifiedProjectionContractTest {
@@ -182,6 +184,65 @@ public final class UnifiedProjectionContractTest {
     assertEquals(
         ProjectionFault.REVISION_GAP,
         ((ProjectionResult.NeedsBaseline) result).fault());
+  }
+
+  @Test
+  public void metadataOnlyCommitReusesBothTerminalSurfaces() {
+    ScreenProjectionReducer reducer =
+        new ScreenProjectionReducer(HistoryBudget.defaults());
+    ProjectionResult baseline = reducer.applyBaseline(new ScreenBaseline(
+        "s", "i", 1, 10, 1, 1,
+        1, 1, TerminalBufferKind.MAIN,
+        HistoryExtent.INITIAL_EMPTY,
+        Collections.emptyList(),
+        Collections.singletonList(new ScreenLineContent(
+            new LineKey(1, 1), body("x"))),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
+    ProjectionState before = ((ProjectionResult.Applied) baseline).state();
+
+    ProjectionResult result = reducer.applyCommit(before, new TerminalCommit(
+        "i", 1, 10, 11, 1, 1,
+        null, null, null,
+        new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, false),
+        null, null));
+    ProjectionState after = ((ProjectionResult.Applied) result).state();
+
+    assertSame(before.mainSurface, after.mainSurface);
+    assertSame(before.alternateSurface, after.alternateSurface);
+    assertEquals(11, after.screenRevision);
+  }
+
+  @Test
+  public void twentyThousandHistoryBindingsSurviveOneThousandMetadataCommitsWithoutSurfaceCopies() {
+    ScreenProjectionReducer reducer =
+        new ScreenProjectionReducer(HistoryBudget.defaults());
+    List<HistoryPush> bindings = new ArrayList<>(20_000);
+    for (long seq = 1; seq <= 20_000; seq++) {
+      bindings.add(new HistoryPush(seq, new LineKey(seq, 1)));
+    }
+    ProjectionState state = ((ProjectionResult.Applied) reducer.applyBaseline(
+        new ScreenBaseline(
+            "s", "i", 1, 1, 1, 1,
+            1, 1, TerminalBufferKind.MAIN,
+            new HistoryExtent(1, 20_000), bindings,
+            Collections.singletonList(new ScreenLineContent(
+                new LineKey(30_000, 1), body("x"))),
+            TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())))
+        .state();
+    TerminalSurfaceState originalMain = state.mainSurface;
+    TerminalSurfaceState originalAlternate = state.alternateSurface;
+
+    for (int i = 0; i < 1_000; i++) {
+      ProjectionResult result = reducer.applyCommit(state, new TerminalCommit(
+          "i", 1, state.screenRevision, state.screenRevision + 1, 1, 1,
+          null, null, null,
+          new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, (i & 1) == 0),
+          null, null));
+      assertTrue(result instanceof ProjectionResult.Applied);
+      state = ((ProjectionResult.Applied) result).state();
+      assertSame(originalMain, state.mainSurface);
+      assertSame(originalAlternate, state.alternateSurface);
+    }
   }
 
   private static LineBody body(String text) {

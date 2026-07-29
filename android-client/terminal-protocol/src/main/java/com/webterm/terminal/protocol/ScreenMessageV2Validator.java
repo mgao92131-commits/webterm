@@ -129,6 +129,15 @@ public final class ScreenMessageV2Validator {
     }
   }
 
+  /** HTTP Range 历史正文与 WS LineData 共用的结构校验入口。 */
+  public static void validateHistoryLineData(TerminalScreenV2Proto.LineData line) {
+    if (line == null || line.getHistorySeq() <= 0
+        || line.getPhysicalColumns() < 1 || line.getPhysicalColumns() > 500) {
+      throw new IllegalArgumentException("invalid history LineData identity or geometry");
+    }
+    validateLineData(line, line.getPhysicalColumns());
+  }
+
   private static void requireIdentity(String instanceId, long layoutEpoch) {
     if (instanceId == null || instanceId.isEmpty() || layoutEpoch < 1) {
       throw new IllegalArgumentException("missing projection identity");

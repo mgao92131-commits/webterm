@@ -116,6 +116,7 @@ public final class HistoryResidencyIndex {
     private HistoryExtent availableExtent;
     private final Map<Long, HistoryPage> pages;
     private final Set<Long> copiedPages = new HashSet<>();
+    private final Set<LineKey> removedKeys = new HashSet<>();
     private long residentCount;
 
     private Editor(HistoryResidencyIndex source) {
@@ -127,8 +128,15 @@ public final class HistoryResidencyIndex {
 
     public Editor setExtent(HistoryExtent next) {
       if (next == null) throw new IllegalArgumentException("history extent missing");
+      HistoryExtent previous = extent;
       extent = next;
       availableExtent = next;
+      if (previous.isEmpty()
+          || (!next.isEmpty()
+              && next.firstSeq <= previous.firstSeq
+              && next.lastSeq >= previous.lastSeq)) {
+        return this;
+      }
       List<Long> outside = new ArrayList<>();
       for (long page : pages.keySet()) {
         if (next.isEmpty() || pageLastSeq(page) < next.firstSeq
@@ -177,6 +185,7 @@ public final class HistoryResidencyIndex {
       page = mutablePage(pageNumber(historySeq));
       int offset = pageOffset(historySeq);
       if (page.slots[offset] != null) {
+        removedKeys.add(page.slots[offset]);
         page.slots[offset] = null;
         residentCount--;
       }
@@ -193,6 +202,10 @@ public final class HistoryResidencyIndex {
         for (LineKey key : page.slots) if (key != null) result.add(key);
       }
       return result;
+    }
+
+    public Set<LineKey> removedKeys() {
+      return new HashSet<>(removedKeys);
     }
 
     public List<ResidentEntry> residentEntries() {
@@ -217,7 +230,12 @@ public final class HistoryResidencyIndex {
     public Editor removePage(long pageNumber) {
       HistoryPage page = pages.remove(pageNumber);
       if (page != null) {
-        for (LineKey key : page.slots) if (key != null) residentCount--;
+        for (LineKey key : page.slots) {
+          if (key != null) {
+            removedKeys.add(key);
+            residentCount--;
+          }
+        }
       }
       return this;
     }
@@ -248,6 +266,7 @@ public final class HistoryResidencyIndex {
         first = mutablePage(firstPage);
         for (int i = 0; i < pageOffset(firstSeq); i++) {
           if (first.slots[i] != null) {
+            removedKeys.add(first.slots[i]);
             first.slots[i] = null;
             residentCount--;
           }
@@ -259,6 +278,7 @@ public final class HistoryResidencyIndex {
         last = mutablePage(lastPage);
         for (int i = pageOffset(lastSeq) + 1; i < PAGE_SIZE; i++) {
           if (last.slots[i] != null) {
+            removedKeys.add(last.slots[i]);
             last.slots[i] = null;
             residentCount--;
           }

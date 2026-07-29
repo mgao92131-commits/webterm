@@ -75,6 +75,22 @@ public final class TerminalLineRenderNodeCacheTest {
   }
 
   @Test
+  public void authoritativeRebindToDifferentLineIdCannotReuseOldNode() {
+    TerminalLineRenderNodeCache cache = cache();
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot();
+    begin(cache, snapshot);
+    cache.drawOrRecord(canvas, line(10, 1, "old"), 0, false);
+    TerminalRowNode old = cache.nodeForLineForTest(10);
+    cache.endFrame();
+
+    begin(cache, snapshot);
+    cache.drawOrRecord(canvas, line(20, 1, "new"), 0, false);
+
+    assertNotSame(old, cache.nodeForLineForTest(20));
+    assertEquals(2, recordings);
+  }
+
+  @Test
   public void layoutIdentityChangeClearsNodes() {
     TerminalLineRenderNodeCache cache = cache();
     RemoteTerminalModel.RenderSnapshot first = snapshot();

@@ -71,4 +71,45 @@ public final class OkHttpHistoryRangeSourceLargeResponseTest {
       source.close();
     }
   }
+
+  @Test
+  public void malformedHistoryLineCompletesAsProtocolFailure() throws Exception {
+    TerminalHistoryProto.HistoryRangeResponse response =
+        TerminalHistoryProto.HistoryRangeResponse.newBuilder()
+            .setStatus(TerminalHistoryProto.HistoryRangeStatus.HISTORY_RANGE_STATUS_OK)
+            .setInstanceId("i1")
+            .setLayoutEpoch(2)
+            .setHistoryGeneration(3)
+            .setCurrentExtent(TerminalScreenV2Proto.HistoryExtent.newBuilder()
+                .setFirstSeq(1).setLastSeq(1))
+            .addLines(TerminalScreenV2Proto.LineData.newBuilder()
+                .setLineId(10).setLineVersion(1).setHistorySeq(1)
+                .setPhysicalColumns(1)
+                .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
+                    .setStartCol(0).setEndCol(2)))
+            .build();
+    try (MockWebServer server = new MockWebServer()) {
+      server.enqueue(new MockResponse().setBody(
+          new Buffer().write(response.toByteArray())));
+      CountDownLatch done = new CountDownLatch(1);
+      AtomicReference<HistoryRangeSource.Failure> failure = new AtomicReference<>();
+      OkHttpHistoryRangeSource source = new OkHttpHistoryRangeSource(
+          new OkHttpClient(), Runnable::run, server.url("/").toString(),
+          "", "s1", "");
+      source.fetch(new HistoryRangeLoader.Range("i1", 2, 3, 1, 1),
+          new HistoryRangeSource.Callback() {
+            @Override public void onResult(HistoryRangeSource.Result value) {
+              done.countDown();
+            }
+            @Override public void onFailure(HistoryRangeSource.Failure value) {
+              failure.set(value);
+              done.countDown();
+            }
+          });
+
+      assertTrue(done.await(5, TimeUnit.SECONDS));
+      assertEquals(HistoryRangeSource.FailureKind.PROTOCOL, failure.get().kind);
+      source.close();
+    }
+  }
 }

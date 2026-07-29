@@ -95,6 +95,22 @@ public final class ScreenProjectionReducer {
     boolean bufferChanged = nextBuffer != current.activeBuffer;
     TerminalSurfaceState source = nextBuffer == TerminalBufferKind.ALTERNATE
         ? current.alternateSurface : current.mainSurface;
+    if (!bufferChanged && commit.screen == null && commit.history == null) {
+      ProjectionState next = new ProjectionState(
+          current.identity,
+          commit.revision,
+          current.dictionaryGeneration,
+          current.rows,
+          current.columns,
+          current.activeBuffer,
+          current.mainSurface,
+          current.alternateSurface,
+          commit.cursor == null ? current.cursor : commit.cursor,
+          commit.modes == null ? current.modes : commit.modes,
+          commit.palette == null ? current.palette : commit.palette);
+      return new ProjectionResult.Applied(
+          next, new ProjectionDelta(false, false, false, false));
+    }
     try {
       TerminalSurfaceTransaction tx = source.beginTransaction();
       LineKey[] rows = source.activeRows.size() == current.rows
@@ -126,7 +142,9 @@ public final class ScreenProjectionReducer {
               ProjectionFault.INVALID_SCREEN_MUTATION);
         }
       }
-      tx.activeRows(new ActiveRowLayout(rows));
+      if (commit.screen != null || bufferChanged) {
+        tx.activeRows(new ActiveRowLayout(rows));
+      }
 
       boolean historyChanged = false;
       if (commit.history != null) {
@@ -164,9 +182,7 @@ public final class ScreenProjectionReducer {
         historyChanged = true;
       }
 
-      tx.bodyCache()
-          .evictIfNeeded(pins == null ? EvictionPins.NONE : pins)
-          .retainOnlyActiveAndResident(activeKeys);
+      tx.bodyCache().evictIfNeeded(pins == null ? EvictionPins.NONE : pins);
 
       TerminalSurfaceState nextSurface = tx.commit();
       TerminalSurfaceState main =

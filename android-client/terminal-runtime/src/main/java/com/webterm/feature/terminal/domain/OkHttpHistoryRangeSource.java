@@ -7,6 +7,8 @@ import com.webterm.core.api.WebTermUrls;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryBodyEntry;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
+import com.webterm.terminal.protocol.ScreenMessageV2Validator;
+import com.webterm.terminal.protocol.WireDictionary;
 import com.webterm.terminal.protocol.generated.TerminalHistoryProto;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
@@ -115,23 +117,28 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
             emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
             return;
           }
-          HistoryExtent extent = new HistoryExtent(
-              pb.getCurrentExtent().getFirstSeq(), pb.getCurrentExtent().getLastSeq());
-          List<HistoryBodyEntry> lines = new ArrayList<>(pb.getLinesCount());
-          long previous = 0;
-          for (TerminalScreenV2Proto.LineData line : pb.getLinesList()) {
-            if (line.getHistorySeq() < range.fromSeq || line.getHistorySeq() > range.toSeq
-                || line.getHistorySeq() <= previous) {
-              emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
-              return;
+          try {
+            HistoryExtent extent = new HistoryExtent(
+                pb.getCurrentExtent().getFirstSeq(), pb.getCurrentExtent().getLastSeq());
+            WireDictionary dictionary =
+                ScreenMessageV2Mapper.mapDictionary(pb.getDictionary());
+            List<HistoryBodyEntry> lines = new ArrayList<>(pb.getLinesCount());
+            long previous = 0;
+            for (TerminalScreenV2Proto.LineData line : pb.getLinesList()) {
+              if (line.getHistorySeq() < range.fromSeq || line.getHistorySeq() > range.toSeq
+                  || line.getHistorySeq() <= previous) {
+                throw new IllegalArgumentException("invalid history response order");
+              }
+              ScreenMessageV2Validator.validateHistoryLineData(line);
+              previous = line.getHistorySeq();
+              lines.add(ScreenMessageV2Mapper.mapHistoryLine(line, dictionary));
             }
-            previous = line.getHistorySeq();
-            lines.add(ScreenMessageV2Mapper.mapHistoryLine(
-                line, pb.getDictionary()));
+            callbackExecutor.execute(() -> callback.onResult(
+                new Result(pb.getInstanceId(), pb.getLayoutEpoch(),
+                    pb.getHistoryGeneration(), extent, lines)));
+          } catch (RuntimeException invalidRange) {
+            emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
           }
-          callbackExecutor.execute(() -> callback.onResult(
-              new Result(pb.getInstanceId(), pb.getLayoutEpoch(),
-                  pb.getHistoryGeneration(), extent, lines)));
         }
       }
     });

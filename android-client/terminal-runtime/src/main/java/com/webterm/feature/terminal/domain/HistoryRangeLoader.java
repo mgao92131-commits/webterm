@@ -62,19 +62,11 @@ public final class HistoryRangeLoader {
   private long observedLayoutEpoch;
   private long observedGeneration;
   private long observedServerFirstSeq;
-  private long unavailableFromSeq;
-  private long unavailableToSeq;
+  private final UnavailableIntervalSet unavailable = new UnavailableIntervalSet();
   private boolean closed;
 
   public synchronized void setDemand(@Nullable Demand demand) {
     if (closed) return;
-    if (demand == null || latestDemand == null
-        || demand.visibleFromSeq != latestDemand.visibleFromSeq
-        || demand.visibleToSeq != latestDemand.visibleToSeq
-        || demand.anchorSeq != latestDemand.anchorSeq
-        || demand.direction != latestDemand.direction) {
-      clearUnavailableRange();
-    }
     latestDemand = demand;
   }
 
@@ -100,7 +92,7 @@ public final class HistoryRangeLoader {
     out.put("closed", closed);
     out.put("hasDemand", latestDemand != null);
     out.put("hasActiveRequest", activeRequest != null);
-    out.put("hasUnavailableRange", unavailableFromSeq > 0);
+    out.put("hasUnavailableRange", !unavailable.isEmpty());
     if (activeRequest != null) {
       out.put("activeCallId", activeRequest.callId);
       out.put("activeFromSeq", activeRequest.range.fromSeq);
@@ -111,7 +103,6 @@ public final class HistoryRangeLoader {
 
   public synchronized void clearDemand() {
     latestDemand = null;
-    clearUnavailableRange();
   }
 
   public synchronized void resetLifecycle() {
@@ -142,7 +133,7 @@ public final class HistoryRangeLoader {
     long missingFrom = 0;
     long missingTo = 0;
     for (long seq = from; seq <= to; seq++) {
-      if (seq >= unavailableFromSeq && seq <= unavailableToSeq) {
+      if (unavailable.contains(seq)) {
         if (missingFrom != 0) break;
         continue;
       }
@@ -154,8 +145,18 @@ public final class HistoryRangeLoader {
       if (seq == Long.MAX_VALUE) break;
     }
     if (missingFrom == 0) return null;
-    if (demand.direction < 0) missingFrom = Math.max(extent.firstSeq, missingFrom - PREFETCH_LINES);
-    if (demand.direction > 0) missingTo = Math.min(extent.lastSeq, missingTo + PREFETCH_LINES);
+    if (demand.direction < 0) {
+      long barrier = unavailable.lowerBarrier(missingFrom);
+      missingFrom = Math.max(
+          Math.max(extent.firstSeq, missingFrom - PREFETCH_LINES),
+          barrier == Long.MAX_VALUE ? Long.MAX_VALUE : barrier + 1);
+    }
+    if (demand.direction > 0) {
+      long barrier = unavailable.upperBarrier(missingTo);
+      missingTo = Math.min(
+          Math.min(extent.lastSeq, missingTo + PREFETCH_LINES),
+          barrier == Long.MAX_VALUE ? Long.MAX_VALUE : barrier - 1);
+    }
     return new Range(instanceId, layoutEpoch, generation, missingFrom, missingTo);
   }
 
@@ -174,9 +175,25 @@ public final class HistoryRangeLoader {
 
   /** 隔离损坏正文区间，避免缓存故障形成无限 HTTP 循环；不影响 WS 投影。 */
   public synchronized void markRangeUnavailable(@NonNull Range range) {
+    markRangeUnavailable(range, range.fromSeq, range.toSeq, "PROTOCOL");
+  }
+
+  public synchronized void markRangeUnavailable(
+      @NonNull Range range, long fromSeq, long toSeq, @NonNull String fault) {
     ensureObservedProjection(range.instanceId, range.layoutEpoch, range.generation);
-    unavailableFromSeq = range.fromSeq;
-    unavailableToSeq = range.toSeq;
+    unavailable.add(
+        Math.max(range.fromSeq, fromSeq),
+        Math.min(range.toSeq, toSeq),
+        fault);
+  }
+
+  /**
+   * WS 已权威声明该位置的新绑定；旧正文故障不应阻止为新 LineKey 再次取回正文。
+   */
+  public synchronized void onAuthoritativeBinding(
+      @NonNull String instanceId, long layoutEpoch, long generation, long historySeq) {
+    ensureObservedProjection(instanceId, layoutEpoch, generation);
+    unavailable.remove(historySeq);
   }
 
   private void ensureObservedProjection(
@@ -195,12 +212,7 @@ public final class HistoryRangeLoader {
     observedLayoutEpoch = 0;
     observedGeneration = 0;
     observedServerFirstSeq = 0;
-    clearUnavailableRange();
-  }
-
-  private void clearUnavailableRange() {
-    unavailableFromSeq = 0;
-    unavailableToSeq = 0;
+    unavailable.clear();
   }
 
   public synchronized boolean begin(

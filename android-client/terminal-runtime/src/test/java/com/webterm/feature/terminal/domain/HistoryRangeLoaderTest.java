@@ -106,6 +106,59 @@ public final class HistoryRangeLoaderTest {
         "i2", 1, 1, extent, history).fromSeq);
   }
 
+  @Test
+  public void demandMovementDoesNotClearUnavailableIntervals() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 200);
+    HistoryRenderView history = emptyHistory(extent);
+    loader.setDemand(new HistoryRangeLoader.Demand(1, 100, 1, 1));
+    HistoryRangeLoader.Range failed =
+        new HistoryRangeLoader.Range("i1", 1, 1, 20, 30);
+    loader.markRangeUnavailable(failed, 20, 30, "BODY_CONFLICT");
+
+    loader.setDemand(new HistoryRangeLoader.Demand(15, 40, 15, 1));
+    HistoryRangeLoader.Range next =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    assertEquals(15, next.fromSeq);
+    assertEquals(19, next.toSeq);
+  }
+
+  @Test
+  public void prefetchNeverCrossesUnavailableInterval() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 200);
+    HistoryRenderView history = emptyHistory(extent);
+    HistoryRangeLoader.Range failed =
+        new HistoryRangeLoader.Range("i1", 1, 1, 40, 50);
+    loader.markRangeUnavailable(failed, 40, 50, "PROTOCOL");
+    loader.setDemand(new HistoryRangeLoader.Demand(51, 70, 51, -1));
+
+    HistoryRangeLoader.Range next =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    assertEquals(51, next.fromSeq);
+    assertEquals(70, next.toSeq);
+  }
+
+  @Test
+  public void authoritativeRebindReleasesOnlyItsFailedPosition() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 200);
+    HistoryRenderView history = emptyHistory(extent);
+    HistoryRangeLoader.Range failed =
+        new HistoryRangeLoader.Range("i1", 1, 1, 40, 42);
+    loader.markRangeUnavailable(failed, 40, 42, "BODY_CONFLICT");
+
+    loader.onAuthoritativeBinding("i1", 1, 1, 41);
+    loader.setDemand(new HistoryRangeLoader.Demand(40, 42, 41, 0));
+    HistoryRangeLoader.Range next =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    assertEquals(41, next.fromSeq);
+    assertEquals(41, next.toSeq);
+  }
+
   private static HistoryRenderView emptyHistory(HistoryExtent extent) {
     HistoryCatalog catalog = new HistoryCatalog().edit().setExtent(extent).commit();
     BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()

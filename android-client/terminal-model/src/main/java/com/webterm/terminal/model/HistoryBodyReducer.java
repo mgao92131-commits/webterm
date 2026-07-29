@@ -41,12 +41,14 @@ public final class HistoryBodyReducer {
         if (entry == null || entry.historySeq() < request.fromSeq()
             || entry.historySeq() > request.toSeq()) {
           return new HistoryBodyResult.Rejected(
-              HistoryBodyFault.INVALID_REQUEST_RANGE);
+              HistoryBodyFault.INVALID_REQUEST_RANGE,
+              request.fromSeq(), request.toSeq());
         }
         if (entry.historySeq() <= previousSeq || !seenSeqs.add(entry.historySeq())
             || !seenKeys.add(entry.key())) {
           return new HistoryBodyResult.Rejected(
-              HistoryBodyFault.INVALID_RESPONSE_ORDER);
+              HistoryBodyFault.INVALID_RESPONSE_ORDER,
+              request.fromSeq(), request.toSeq());
         }
         previousSeq = entry.historySeq();
         if (!surface.historyCatalog.extent().contains(entry.historySeq())) {
@@ -61,7 +63,8 @@ public final class HistoryBodyReducer {
         }
         LineBody previous = tx.bodyCache().body(entry.key());
         if (previous != null && !previous.equals(entry.body())) {
-          return new HistoryBodyResult.Rejected(HistoryBodyFault.BODY_CONFLICT);
+          return new HistoryBodyResult.Rejected(
+              HistoryBodyFault.BODY_CONFLICT, entry.historySeq(), entry.historySeq());
         }
         tx.bodyCache().putHistory(entry.historySeq(), entry.key(), entry.body());
         changedFrom = Math.min(changedFrom, entry.historySeq());

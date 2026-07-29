@@ -107,7 +107,7 @@ public final class ScreenMessageV2MapperTest {
         .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
         .build();
     HistoryBodyEntry mapped = ScreenMessageV2Mapper.mapHistoryLine(
-        history, TerminalScreenV2Proto.Dictionary.getDefaultInstance());
+        history, WireDictionary.EMPTY);
     assertEquals(200, mapped.body().physicalColumns);
   }
 

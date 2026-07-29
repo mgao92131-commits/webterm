@@ -101,9 +101,9 @@ public final class ScreenMessageV2Mapper {
   /** 将 HTTP Range 中的单行解码成与位置分离的纯正文。 */
   public static HistoryBodyEntry mapHistoryLine(
       TerminalScreenV2Proto.LineData pb,
-      TerminalScreenV2Proto.Dictionary dictionaryPb) {
+      WireDictionary dictionary) {
     DecodedLine decoded = LINE_DECODER.decode(
-        wireLine(pb), wireDictionary(dictionaryPb));
+        wireLine(pb), dictionary);
     return new HistoryBodyEntry(decoded.historySeq(), decoded.key(), decoded.body());
   }
 

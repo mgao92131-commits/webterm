@@ -15,6 +15,7 @@ import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryBodyFault;
 import com.webterm.terminal.model.HistoryBodyResult;
+import com.webterm.terminal.model.HistoryPush;
 import com.webterm.terminal.model.HistoryRequestContext;
 import com.webterm.terminal.model.ProjectionIdentity;
 import com.webterm.terminal.model.HistoryExtent;
@@ -897,6 +898,14 @@ public final class TerminalSessionRuntime {
                   "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
                   "durationMs", durationMs, "failureKind", failure.kind.name()));
               refreshEvictionPins();
+              if (failure.kind == HistoryRangeSource.FailureKind.PROTOCOL) {
+                historyLoader.markRangeUnavailable(
+                    active.range,
+                    active.range.fromSeq,
+                    active.range.toSeq,
+                    failure.kind.name());
+                return;
+              }
               if (handleRangeFailure(failure)) return;
               scheduleRangeRetry(failure.retryAfterMs);
             });
@@ -962,11 +971,16 @@ public final class TerminalSessionRuntime {
             active.range.toSeq,
             active.range.fromSeq));
     if (bodyResult instanceof HistoryBodyResult.Rejected) {
-      HistoryBodyFault fault = ((HistoryBodyResult.Rejected) bodyResult).fault();
+      HistoryBodyResult.Rejected rejected = (HistoryBodyResult.Rejected) bodyResult;
+      HistoryBodyFault fault = rejected.fault();
       Diagnostics.warn("history_range", "history_range_protocol_conflict",
           historyRangeFields("requestId", active.callId,
               "failureKind", fault.name()));
-      historyLoader.markRangeUnavailable(active.range);
+      historyLoader.markRangeUnavailable(
+          active.range,
+          rejected.failedFromSeq() > 0 ? rejected.failedFromSeq() : active.range.fromSeq,
+          rejected.failedToSeq() > 0 ? rejected.failedToSeq() : active.range.toSeq,
+          fault.name());
       return false;
     }
     boolean changed = bodyResult instanceof HistoryBodyResult.Applied;
@@ -1556,6 +1570,15 @@ public final class TerminalSessionRuntime {
                 System.nanoTime() - commitApplyStartedNanos);
           }
           canonicalDictionaryState = stagedDictionary;
+          if (commit.history != null) {
+            for (HistoryPush push : commit.history.pushes) {
+              historyLoader.onAuthoritativeBinding(
+                  commit.instanceId,
+                  commit.layoutEpoch,
+                  commit.historyGeneration,
+                  push.historySeq);
+            }
+          }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedCommit(
               captureStreamIdentity(), commit);
           if (renderChanged) recordCapturedModelState(false);

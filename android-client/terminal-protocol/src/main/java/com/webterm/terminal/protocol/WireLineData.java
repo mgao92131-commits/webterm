@@ -29,5 +29,14 @@ public final class WireLineData {
     this.glyphMeta = glyphMeta == null ? new byte[0] : glyphMeta.clone();
     this.styleSpans = Collections.unmodifiableList(new ArrayList<>(
         styleSpans == null ? Collections.emptyList() : styleSpans));
+    int previousEnd = 0;
+    for (Span span : this.styleSpans) {
+      if (span == null || span.startCol() < previousEnd || span.startCol() < 0
+          || span.endCol() <= span.startCol() || span.endCol() > physicalColumns
+          || span.styleId() < 0 || span.linkId() < 0) {
+        throw new IllegalArgumentException("invalid wire style span");
+      }
+      previousEnd = span.endCol();
+    }
   }
 }

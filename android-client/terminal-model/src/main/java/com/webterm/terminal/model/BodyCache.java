@@ -3,7 +3,6 @@ package com.webterm.terminal.model;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -12,24 +11,24 @@ import java.util.Set;
 /** 屏幕和历史共享的唯一正文缓存。 */
 public final class BodyCache {
   private final HistoryBudget budget;
-  private final Map<LineKey, LineBody> bodies;
+  private final PersistentShardedMap<LineKey, LineBody> bodies;
   private final HistoryResidencyIndex historyResidency;
   private final long estimatedHistoryBytes;
   private final Set<EvictionPins.CriticalEvictionReason> criticalEvictionReasons;
 
   public BodyCache(HistoryBudget budget) {
-    this(budget, Collections.emptyMap(), new HistoryResidencyIndex(), 0,
+    this(budget, new PersistentShardedMap<>(), new HistoryResidencyIndex(), 0,
         Collections.emptySet());
   }
 
   private BodyCache(
       HistoryBudget budget,
-      Map<LineKey, LineBody> bodies,
+      PersistentShardedMap<LineKey, LineBody> bodies,
       HistoryResidencyIndex historyResidency,
       long estimatedHistoryBytes,
       Set<EvictionPins.CriticalEvictionReason> criticalEvictionReasons) {
     this.budget = budget;
-    this.bodies = Collections.unmodifiableMap(bodies);
+    this.bodies = bodies;
     this.historyResidency = historyResidency;
     this.estimatedHistoryBytes = estimatedHistoryBytes;
     this.criticalEvictionReasons = Collections.unmodifiableSet(criticalEvictionReasons);
@@ -54,7 +53,7 @@ public final class BodyCache {
 
   public static final class Editor {
     private final HistoryBudget budget;
-    private final Map<LineKey, LineBody> bodies;
+    private final PersistentShardedMap.Editor<LineKey, LineBody> bodies;
     private final HistoryResidencyIndex.Editor residency;
     private long historyBytes;
     private final Set<EvictionPins.CriticalEvictionReason> criticalEvictions =
@@ -62,7 +61,7 @@ public final class BodyCache {
 
     private Editor(BodyCache source) {
       budget = source.budget;
-      bodies = new HashMap<>(source.bodies);
+      bodies = source.bodies.edit();
       residency = source.historyResidency.edit();
       historyBytes = source.estimatedHistoryBytes;
     }
@@ -72,7 +71,7 @@ public final class BodyCache {
 
     public Editor setHistoryExtent(HistoryExtent extent) {
       residency.setExtent(extent);
-      recomputeHistoryBytes();
+      if (!residency.removedKeys().isEmpty()) recomputeHistoryBytes();
       return this;
     }
 
@@ -163,26 +162,28 @@ public final class BodyCache {
       return this;
     }
 
-    /** 仅保留活动屏或仍驻留历史引用的正文。 */
-    public Editor retainOnlyActiveAndResident(Set<LineKey> activeKeys) {
-      Set<LineKey> retained = new HashSet<>(
-          activeKeys == null ? Collections.emptySet() : activeKeys);
-      retained.addAll(residency.residentKeys());
-      bodies.keySet().retainAll(retained);
+    /** 只检查本事务失去引用的 key，避免每次 Commit 扫描完整正文缓存。 */
+    public Editor removeUnreferenced(
+        Set<LineKey> activeKeys,
+        HistoryCatalog catalog,
+        Set<LineKey> additionalCandidates) {
+      Set<LineKey> candidates = residency.removedKeys();
+      if (additionalCandidates != null) candidates.addAll(additionalCandidates);
+      Set<LineKey> active = activeKeys == null
+          ? Collections.emptySet() : activeKeys;
+      for (LineKey key : candidates) {
+        if (active.contains(key)) continue;
+        Long seq = catalog.historySeq(key);
+        if (seq != null && key.equals(residency.key(seq))) continue;
+        bodies.remove(key);
+      }
       return this;
     }
 
     public BodyCache commit() {
       HistoryResidencyIndex nextResidency = residency.commit();
-      Set<LineKey> residentKeys = nextResidency.residentKeys();
-      for (LineKey key : residentKeys) {
-        LineBody body = bodies.get(key);
-        if (body == null) {
-          throw new IllegalStateException("resident key has no body");
-        }
-      }
       return new BodyCache(
-          budget, new HashMap<>(bodies), nextResidency, historyBytes,
+          budget, bodies.commit(), nextResidency, historyBytes,
           new HashSet<>(criticalEvictions));
     }
 

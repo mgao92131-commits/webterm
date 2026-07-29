@@ -66,6 +66,30 @@ public final class ScreenMessageV2ValidatorTest {
         commitBuilder().setHistory(history).build(), 2);
   }
 
+  @Test(expected = IllegalArgumentException.class)
+  public void historyLineRejectsOverlappingStyleSpans() {
+    ScreenMessageV2Validator.validateHistoryLineData(
+        TerminalScreenV2Proto.LineData.newBuilder()
+            .setLineId(1).setLineVersion(1).setHistorySeq(1)
+            .setPhysicalColumns(10)
+            .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
+                .setStartCol(0).setEndCol(6))
+            .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
+                .setStartCol(5).setEndCol(8))
+            .build());
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void historyLineRejectsSpanPastItsOwnPhysicalWidth() {
+    ScreenMessageV2Validator.validateHistoryLineData(
+        TerminalScreenV2Proto.LineData.newBuilder()
+            .setLineId(1).setLineVersion(1).setHistorySeq(1)
+            .setPhysicalColumns(10)
+            .addStyleSpans(TerminalScreenV2Proto.StyleSpan.newBuilder()
+                .setStartCol(0).setEndCol(11))
+            .build());
+  }
+
   private static TerminalScreenV2Proto.TerminalCommit.Builder commitBuilder() {
     return TerminalScreenV2Proto.TerminalCommit.newBuilder()
         .setInstanceId("i1").setLayoutEpoch(1)

@@ -11,5 +11,12 @@ public sealed interface HistoryBodyResult {
 
   record StaleIgnored(int lineCount) implements HistoryBodyResult {}
 
-  record Rejected(HistoryBodyFault fault) implements HistoryBodyResult {}
+  record Rejected(
+      HistoryBodyFault fault,
+      long failedFromSeq,
+      long failedToSeq) implements HistoryBodyResult {
+    public Rejected(HistoryBodyFault fault) {
+      this(fault, 0, 0);
+    }
+  }
 }
