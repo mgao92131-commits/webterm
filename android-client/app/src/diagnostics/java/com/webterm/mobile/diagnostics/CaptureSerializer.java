@@ -2,7 +2,11 @@ package com.webterm.mobile.diagnostics;
 
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RemoteTerminalModel;
+import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
+import com.webterm.terminal.model.ScreenLineContent;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCell;
@@ -72,6 +76,43 @@ final class CaptureSerializer {
         JSONArray arr = new JSONArray();
         if (lines != null) {
             for (TerminalLine l : lines) arr.put(line(l));
+        }
+        return arr;
+    }
+
+    static JSONObject semanticLine(ScreenLineContent line) throws JSONException {
+        JSONObject o = new JSONObject();
+        LineKey key = line.key();
+        LineBody body = line.body();
+        o.put("lineId", key.lineId());
+        o.put("version", key.lineVersion());
+        o.put("historySeq", 0);
+        o.put("physicalColumns", body.physicalColumns);
+        o.put("wrapped", body.wrapped);
+        JSONArray cells = new JSONArray();
+        for (CellValue c : body.copyCells()) {
+            JSONObject cell = new JSONObject();
+            cell.put("text", c.text());
+            cell.put("width", c.width());
+            if (c.style() != null) {
+                JSONObject resolved = new JSONObject();
+                resolved.put("fg", color(c.style().fg()));
+                resolved.put("bg", color(c.style().bg()));
+                resolved.put("ulColor", color(c.style().underlineColor()));
+                resolved.put("attrs", c.style().attrs());
+                cell.put("resolvedStyle", resolved);
+            }
+            if (c.link() != null) cell.put("resolvedLinkUri", c.link().uri());
+            cells.put(cell);
+        }
+        o.put("cells", cells);
+        return o;
+    }
+
+    static JSONArray semanticLineList(List<ScreenLineContent> lines) throws JSONException {
+        JSONArray arr = new JSONArray();
+        if (lines != null) {
+            for (ScreenLineContent line : lines) arr.put(semanticLine(line));
         }
         return arr;
     }
@@ -169,7 +210,7 @@ final class CaptureSerializer {
         o.put("cols", s.cols);
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
         o.put("cursor", cursor(s.cursor));
-        o.put("screen", lineList(s.screen));
+        o.put("screen", semanticLineList(s.screen));
         o.put("historyExtentFirst", s.historyExtent.firstSeq);
         o.put("historyExtentLast", s.historyExtent.lastSeq);
         return o;
