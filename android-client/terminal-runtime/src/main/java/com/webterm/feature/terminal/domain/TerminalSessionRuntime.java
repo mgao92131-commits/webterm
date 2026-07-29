@@ -24,7 +24,7 @@ import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
 import com.webterm.terminal.protocol.ScreenMessageV2Validator;
-import com.webterm.terminal.protocol.WireDictionary;
+import com.webterm.terminal.protocol.CanonicalDictionaryState;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -193,7 +193,7 @@ public final class TerminalSessionRuntime {
   private final ResyncCoordinator resyncCoordinator;
   private final HistoryRangeLoader historyLoader = new HistoryRangeLoader();
   /** 只服务 WS 屏幕正文解码；HTTP Range 始终使用响应自己的局部字典。 */
-  private WireDictionary canonicalWireDictionary = WireDictionary.EMPTY;
+  @Nullable private CanonicalDictionaryState canonicalDictionaryState;
   @Nullable private volatile HistoryRangeSource historyRangeSource;
   private volatile ScreenConnection connection;
   private volatile boolean connectionRequiresReplacement;
@@ -1473,8 +1473,10 @@ public final class TerminalSessionRuntime {
           ScreenMessageV2Validator.validateBaseline(wire);
           long mapStartedNanos = System.nanoTime();
           ScreenBaseline baseline;
-          WireDictionary baselineDictionary =
-              ScreenMessageV2Mapper.mapDictionary(wire.getDictionary());
+          CanonicalDictionaryState baselineDictionary =
+              new CanonicalDictionaryState(
+                  wire.getDictionaryGeneration(),
+                  ScreenMessageV2Mapper.mapDictionary(wire.getDictionary()));
           try {
             baseline = ScreenMessageV2Mapper.mapBaseline(wire);
           } finally {
@@ -1485,7 +1487,7 @@ public final class TerminalSessionRuntime {
             failureReason = "STALE_BASELINE";
             throw new IllegalArgumentException("model rejected Baseline");
           }
-          canonicalWireDictionary = baselineDictionary;
+          canonicalDictionaryState = baselineDictionary;
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
               captureStreamIdentity(), baseline);
           recordCapturedModelState(true);
@@ -1520,12 +1522,18 @@ public final class TerminalSessionRuntime {
           ScreenMessageV2Validator.validateTerminalCommit(wire, model.rows);
           long mapStartedNanos = System.nanoTime();
           TerminalCommit commit;
-          WireDictionary stagedDictionary = canonicalWireDictionary.append(
-              ScreenMessageV2Mapper.mapDictionary(wire.getDictionaryAdditions()));
+          if (canonicalDictionaryState == null) {
+            throw new CommitValidationException(
+                CommitFailure.DICTIONARY_GENERATION_MISMATCH);
+          }
+          CanonicalDictionaryState stagedDictionary =
+              canonicalDictionaryState.append(
+                  wire.getDictionaryGeneration(),
+                  ScreenMessageV2Mapper.mapDictionary(wire.getDictionaryAdditions()));
           try {
             try {
               commit = ScreenMessageV2Mapper.mapTerminalCommit(
-                  wire, model.rows, model.columns, stagedDictionary);
+                  wire, model.rows, model.columns, stagedDictionary.view());
             } catch (RuntimeException invalidLineData) {
               throw new CommitValidationException(
                   CommitFailure.INVALID_LINE_DATA, invalidLineData);
@@ -1542,7 +1550,7 @@ public final class TerminalSessionRuntime {
             TerminalRenderMetrics.terminalCommitApplyDuration(
                 System.nanoTime() - commitApplyStartedNanos);
           }
-          canonicalWireDictionary = stagedDictionary;
+          canonicalDictionaryState = stagedDictionary;
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedCommit(
               captureStreamIdentity(), commit);
           if (renderChanged) recordCapturedModelState(false);
