@@ -99,7 +99,7 @@ message Baseline {
   Geometry geometry = 6;
   BufferKind active_buffer = 7;
   HistoryExtent history_extent = 8;
-  reserved 9, 18, 19;
+  reserved 9, 19;
   ScreenLayout screen_layout = 10;
   repeated LineData screen_lines = 11;
   Cursor cursor = 12;
@@ -108,6 +108,8 @@ message Baseline {
   Dictionary dictionary = 15;
   uint64 dictionary_generation = 16;
   uint64 history_generation = 17;
+  // Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+  repeated HistoryPush history_bindings = 18;
 }
 
 // TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。

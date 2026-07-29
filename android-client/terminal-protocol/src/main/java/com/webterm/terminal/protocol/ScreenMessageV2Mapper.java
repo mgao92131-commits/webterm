@@ -9,29 +9,44 @@ import java.util.Map;
 
 /** screen.v2 wire dictionary is resolved at this boundary. */
 public final class ScreenMessageV2Mapper {
+  private static final LineBodyDecoder LINE_DECODER = new LineBodyDecoder();
+
   private ScreenMessageV2Mapper() {}
 
   public static ScreenBaseline mapBaseline(TerminalScreenV2Proto.Baseline pb) {
-    Dictionary dictionary = dictionary(pb.getDictionary());
+    WireDictionary dictionary = wireDictionary(pb.getDictionary());
     int columns = pb.getGeometry().getCols();
-    Map<Long, TerminalLine> screenLines =
-        mapLines(pb.getScreenLinesList(), columns, dictionary);
-    List<TerminalLine> screen = new ArrayList<>();
+    Map<Long, ScreenLineContent> screenLines = new HashMap<>();
+    for (TerminalScreenV2Proto.LineData line : pb.getScreenLinesList()) {
+      if (line.getPhysicalColumns() != columns || line.getHistorySeq() != 0) {
+        throw new IllegalArgumentException("screen line geometry or position mismatch");
+      }
+      DecodedLine decoded = LINE_DECODER.decode(wireLine(line), dictionary);
+      ScreenLineContent content = new ScreenLineContent(decoded.key(), decoded.body());
+      if (screenLines.put(decoded.key().lineId(), content) != null) {
+        throw new IllegalArgumentException("duplicate screen LineID");
+      }
+    }
+    List<ScreenLineContent> screen = new ArrayList<>();
     for (long id : pb.getScreenLayout().getLineIdsList()) {
-      TerminalLine line = screenLines.get(id);
+      ScreenLineContent line = screenLines.get(id);
       if (line == null) throw new IllegalArgumentException("baseline layout line missing");
       screen.add(line);
     }
+    HistoryExtent historyExtent = extent(pb.getHistoryExtent());
+    List<HistoryPush> bindings = mapHistoryBindings(
+        pb.getHistoryBindingsList(), historyExtent);
     return new ScreenBaseline(
         pb.getSessionId(), pb.getInstanceId(), pb.getLayoutEpoch(),
         pb.getScreenRevision(), pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
-        dictionary.entries(), pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
-        extent(pb.getHistoryExtent()), screen,
+        pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
+        historyExtent, bindings, screen,
         cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()));
   }
 
   public static TerminalCommit mapTerminalCommit(
-      TerminalScreenV2Proto.TerminalCommit pb, int rows, int columns) {
+      TerminalScreenV2Proto.TerminalCommit pb, int rows, int columns,
+      WireDictionary canonicalDictionary) {
     ScreenMutation screen = null;
     if (pb.hasScreen()) {
       ScreenScroll scroll = pb.getScreen().hasScroll()
@@ -48,11 +63,13 @@ public final class ScreenMessageV2Mapper {
           throw new IllegalArgumentException("screen line physical columns mismatch");
         }
         seenRows[write.getRow()] = true;
-        LineData mapped = lineData(write.getLine());
-        if (mapped.historySeq != 0) {
+        DecodedLine mapped = LINE_DECODER.decode(
+            wireLine(write.getLine()), canonicalDictionary);
+        if (mapped.historySeq() != 0) {
           throw new IllegalArgumentException("screen line has history sequence");
         }
-        writes.add(new ScreenRowWrite(write.getRow(), mapped));
+        writes.add(new ScreenRowWrite(
+            write.getRow(), new ScreenLineContent(mapped.key(), mapped.body())));
       }
       screen = new ScreenMutation(scroll, writes);
     }
@@ -68,25 +85,85 @@ public final class ScreenMessageV2Mapper {
         }
         previous = push.getHistorySeq();
         pushes.add(new HistoryPush(
-            push.getHistorySeq(), push.getLineId(), push.getLineVersion()));
+            push.getHistorySeq(), new LineKey(push.getLineId(), push.getLineVersion())));
       }
       history = new HistoryMutation(finalExtent, pushes);
     }
     return new TerminalCommit(
         pb.getInstanceId(), pb.getLayoutEpoch(), pb.getBaseRevision(), pb.getRevision(),
         pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
-        dictionary(pb.getDictionaryAdditions()).entries(),
         pb.hasActiveBuffer() ? buffer(pb.getActiveBuffer()) : null, screen, history,
         pb.hasCursor() ? cursor(pb.getCursor()) : null,
         pb.hasModes() ? modes(pb.getModes()) : null,
         pb.hasPalette() ? palette(pb.getPalette()) : null);
   }
 
-  /** 将 HTTP Range 中的单行映射为 TerminalLine。 */
-  public static TerminalLine mapHistoryLine(
+  /** 将 HTTP Range 中的单行解码成与位置分离的纯正文。 */
+  public static HistoryBodyEntry mapHistoryLine(
       TerminalScreenV2Proto.LineData pb,
       TerminalScreenV2Proto.Dictionary dictionaryPb) {
-    return line(pb, pb.getPhysicalColumns(), dictionary(dictionaryPb));
+    DecodedLine decoded = LINE_DECODER.decode(
+        wireLine(pb), wireDictionary(dictionaryPb));
+    return new HistoryBodyEntry(decoded.historySeq(), decoded.key(), decoded.body());
+  }
+
+  public static WireDictionary mapDictionary(TerminalScreenV2Proto.Dictionary pb) {
+    return wireDictionary(pb);
+  }
+
+  private static List<HistoryPush> mapHistoryBindings(
+      List<TerminalScreenV2Proto.HistoryPush> wireBindings,
+      HistoryExtent extent) {
+    List<HistoryPush> bindings = new ArrayList<>(wireBindings.size());
+    long previousSeq = 0;
+    for (TerminalScreenV2Proto.HistoryPush binding : wireBindings) {
+      if (binding.getHistorySeq() <= previousSeq
+          || !extent.contains(binding.getHistorySeq())
+          || binding.getLineId() <= 0 || binding.getLineVersion() <= 0) {
+        throw new IllegalArgumentException("invalid baseline history binding");
+      }
+      bindings.add(new HistoryPush(
+          binding.getHistorySeq(),
+          new LineKey(binding.getLineId(), binding.getLineVersion())));
+      previousSeq = binding.getHistorySeq();
+    }
+    if (extent.logicalSize() != bindings.size()) {
+      throw new IllegalArgumentException("baseline history catalog is incomplete");
+    }
+    return bindings;
+  }
+
+  private static WireLineData wireLine(TerminalScreenV2Proto.LineData pb) {
+    List<WireLineData.Span> spans = new ArrayList<>(pb.getStyleSpansCount());
+    for (TerminalScreenV2Proto.StyleSpan span : pb.getStyleSpansList()) {
+      spans.add(new WireLineData.Span(
+          span.getStartCol(), span.getEndCol(), span.getStyleId(), span.getLinkId()));
+    }
+    return new WireLineData(
+        pb.getLineId(), pb.getLineVersion(), pb.getHistorySeq(),
+        pb.getPhysicalColumns(), pb.getWrapped(),
+        pb.getUtf8Text().toByteArray(), pb.getGlyphMeta().toByteArray(), spans);
+  }
+
+  private static WireDictionary wireDictionary(TerminalScreenV2Proto.Dictionary pb) {
+    Map<Integer, StyleValue> styles = new HashMap<>();
+    if (pb.getStylesCount() > 4096 || pb.getLinksCount() > 4096) {
+      throw new IllegalArgumentException("dictionary exceeds limit");
+    }
+    for (TerminalScreenV2Proto.TerminalStyle style : pb.getStylesList()) {
+      if (style.getId() == 0) continue;
+      StyleValue previous = styles.put(style.getId(), new StyleValue(
+          color(style.getFg()), color(style.getBg()), color(style.getUnderlineColor()),
+          attrs(style.getAttrs())));
+      if (previous != null) throw new IllegalArgumentException("duplicate style id");
+    }
+    Map<Integer, LinkValue> links = new HashMap<>();
+    for (TerminalScreenV2Proto.Hyperlink link : pb.getLinksList()) {
+      if (link.getId() == 0) continue;
+      LinkValue previous = links.put(link.getId(), new LinkValue(link.getUri()));
+      if (previous != null) throw new IllegalArgumentException("duplicate link id");
+    }
+    return new WireDictionary(styles, links);
   }
 
   private static Map<Long, TerminalLine> mapLines(

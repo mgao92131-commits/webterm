@@ -65,6 +65,13 @@ func TestEncodeBaselineNeverCarriesHistoryBodies(t *testing.T) {
 		},
 		Screen: []terminalengine.Line{{ID: 1, Version: 1}},
 	}
+	for i := range history {
+		frame.ScrollbackLineage = append(frame.ScrollbackLineage, terminalengine.HistoryPush{
+			HistorySeq:  uint64(i + 1),
+			LineID:      uint64(i + 1001),
+			LineVersion: 1,
+		})
+	}
 	wire, err := EncodeBaseline(frame, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +87,17 @@ func TestEncodeBaselineNeverCarriesHistoryBodies(t *testing.T) {
 	}
 	if baseline.ProtoReflect().Descriptor().Fields().ByName("history_tail") != nil {
 		t.Fatal("Baseline schema still carries history_tail")
+	}
+	if len(baseline.GetHistoryBindings()) != 200 {
+		t.Fatalf("history bindings=%d, want 200", len(baseline.GetHistoryBindings()))
+	}
+	for index, binding := range baseline.GetHistoryBindings() {
+		wantSeq := uint64(index + 1)
+		if binding.GetHistorySeq() != wantSeq ||
+			binding.GetLineId() != wantSeq+1000 ||
+			binding.GetLineVersion() != 1 {
+			t.Fatalf("binding[%d]=%+v", index, binding)
+		}
 	}
 	if len(frame.History.Lines) != 200 {
 		t.Fatalf("shared canonical history mutated: %d", len(frame.History.Lines))

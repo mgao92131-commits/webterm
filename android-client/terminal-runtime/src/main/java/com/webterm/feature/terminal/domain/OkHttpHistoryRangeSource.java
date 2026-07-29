@@ -5,7 +5,7 @@ import androidx.annotation.Nullable;
 
 import com.webterm.core.api.WebTermUrls;
 import com.webterm.terminal.model.HistoryExtent;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.HistoryBodyEntry;
 import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
 import com.webterm.terminal.protocol.generated.TerminalHistoryProto;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
@@ -117,7 +117,7 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
           }
           HistoryExtent extent = new HistoryExtent(
               pb.getCurrentExtent().getFirstSeq(), pb.getCurrentExtent().getLastSeq());
-          List<TerminalLine> lines = new ArrayList<>(pb.getLinesCount());
+          List<HistoryBodyEntry> lines = new ArrayList<>(pb.getLinesCount());
           long previous = 0;
           for (TerminalScreenV2Proto.LineData line : pb.getLinesList()) {
             if (line.getHistorySeq() < range.fromSeq || line.getHistorySeq() > range.toSeq

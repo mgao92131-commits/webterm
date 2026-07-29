@@ -62,10 +62,20 @@ public final class HistoryRangeLoader {
   private long observedLayoutEpoch;
   private long observedGeneration;
   private long observedServerFirstSeq;
+  private long unavailableFromSeq;
+  private long unavailableToSeq;
   private boolean closed;
 
   public synchronized void setDemand(@Nullable Demand demand) {
-    if (!closed) latestDemand = demand;
+    if (closed) return;
+    if (demand == null || latestDemand == null
+        || demand.visibleFromSeq != latestDemand.visibleFromSeq
+        || demand.visibleToSeq != latestDemand.visibleToSeq
+        || demand.anchorSeq != latestDemand.anchorSeq
+        || demand.direction != latestDemand.direction) {
+      clearUnavailableRange();
+    }
+    latestDemand = demand;
   }
 
   @Nullable public synchronized Demand latestDemand() {
@@ -90,6 +100,7 @@ public final class HistoryRangeLoader {
     out.put("closed", closed);
     out.put("hasDemand", latestDemand != null);
     out.put("hasActiveRequest", activeRequest != null);
+    out.put("hasUnavailableRange", unavailableFromSeq > 0);
     if (activeRequest != null) {
       out.put("activeCallId", activeRequest.callId);
       out.put("activeFromSeq", activeRequest.range.fromSeq);
@@ -100,6 +111,7 @@ public final class HistoryRangeLoader {
 
   public synchronized void clearDemand() {
     latestDemand = null;
+    clearUnavailableRange();
   }
 
   public synchronized void resetLifecycle() {
@@ -130,6 +142,10 @@ public final class HistoryRangeLoader {
     long missingFrom = 0;
     long missingTo = 0;
     for (long seq = from; seq <= to; seq++) {
+      if (seq >= unavailableFromSeq && seq <= unavailableToSeq) {
+        if (missingFrom != 0) break;
+        continue;
+      }
       int index = history.findSeqIndex(seq);
       boolean missing = index >= 0 && history.slotStateAt(index) != SlotState.LOADED;
       if (missing && missingFrom == 0) missingFrom = seq;
@@ -156,6 +172,13 @@ public final class HistoryRangeLoader {
     }
   }
 
+  /** 隔离损坏正文区间，避免缓存故障形成无限 HTTP 循环；不影响 WS 投影。 */
+  public synchronized void markRangeUnavailable(@NonNull Range range) {
+    ensureObservedProjection(range.instanceId, range.layoutEpoch, range.generation);
+    unavailableFromSeq = range.fromSeq;
+    unavailableToSeq = range.toSeq;
+  }
+
   private void ensureObservedProjection(
       @NonNull String instanceId, long layoutEpoch, long generation) {
     if (!instanceId.equals(observedInstanceId)
@@ -172,6 +195,12 @@ public final class HistoryRangeLoader {
     observedLayoutEpoch = 0;
     observedGeneration = 0;
     observedServerFirstSeq = 0;
+    clearUnavailableRange();
+  }
+
+  private void clearUnavailableRange() {
+    unavailableFromSeq = 0;
+    unavailableToSeq = 0;
   }
 
   public synchronized boolean begin(

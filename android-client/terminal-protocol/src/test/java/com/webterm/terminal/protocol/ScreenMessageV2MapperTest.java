@@ -6,7 +6,7 @@ import static org.junit.Assert.assertNotNull;
 import com.google.protobuf.ByteString;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalCommit;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.HistoryBodyEntry;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 import org.junit.Test;
 
@@ -47,9 +47,10 @@ public final class ScreenMessageV2MapperTest {
             .build();
 
     ScreenBaseline baseline = ScreenMessageV2Mapper.mapBaseline(wire);
-    assertEquals("A", baseline.screen.get(0).cells[0].text);
-    assertNotNull(baseline.screen.get(0).cells[0].style);
-    assertEquals(0x123456, baseline.screen.get(0).cells[0].style.fg.rgb);
+    assertEquals("A", baseline.screen.get(0).body().at(0).text());
+    assertNotNull(baseline.screen.get(0).body().at(0).style());
+    assertEquals(
+        0x123456, baseline.screen.get(0).body().at(0).style().fg().rgb);
   }
 
   @Test
@@ -67,15 +68,16 @@ public final class ScreenMessageV2MapperTest {
                 .setHistorySeq(7).setLineId(7).setLineVersion(1)))
         .build();
 
-    TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, 2, 1);
+    TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(
+        wire, 2, 1, WireDictionary.EMPTY);
     assertEquals(1, commit.screen.scroll.deltaRows);
-    assertEquals(12, commit.screen.writes.get(0).lineData.lineId);
+    assertEquals(12, commit.screen.writes.get(0).line.key().lineId());
     assertEquals(7, commit.history.pushes.get(0).historySeq);
-    assertEquals(7, commit.history.pushes.get(0).lineId);
+    assertEquals(7, commit.history.pushes.get(0).key.lineId());
   }
 
   @Test
-  public void terminalCommitPreservesDictionaryReferencesForModelStaging() {
+  public void terminalCommitResolvesCanonicalDictionaryBeforeModel() {
     TerminalScreenV2Proto.LineData styled = line(12, 0).toBuilder()
         .setUtf8Text(ByteString.copyFromUtf8("X"))
         .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
@@ -87,9 +89,13 @@ public final class ScreenMessageV2MapperTest {
             .addWrites(TerminalScreenV2Proto.ScreenRowWrite.newBuilder()
                 .setRow(0).setLine(styled)))
         .build();
-    TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(wire, 1, 1);
-    // Commit dictionaries are canonical staged state; unknown references fail at model staging.
-    assertEquals(99, commit.screen.writes.get(0).lineData.styleSpans.get(0).styleId);
+    TerminalScreenV2Proto.Dictionary additions =
+        TerminalScreenV2Proto.Dictionary.newBuilder()
+            .addStyles(TerminalScreenV2Proto.TerminalStyle.newBuilder().setId(99))
+            .build();
+    TerminalCommit commit = ScreenMessageV2Mapper.mapTerminalCommit(
+        wire, 1, 1, ScreenMessageV2Mapper.mapDictionary(additions));
+    assertNotNull(commit.screen.writes.get(0).line.body().at(0).style());
   }
 
   @Test
@@ -100,9 +106,9 @@ public final class ScreenMessageV2MapperTest {
         .setUtf8Text(ByteString.copyFromUtf8("x"))
         .setGlyphMeta(ByteString.copyFrom(new byte[] {2}))
         .build();
-    TerminalLine mapped = ScreenMessageV2Mapper.mapHistoryLine(
+    HistoryBodyEntry mapped = ScreenMessageV2Mapper.mapHistoryLine(
         history, TerminalScreenV2Proto.Dictionary.getDefaultInstance());
-    assertEquals(200, mapped.cells.length);
+    assertEquals(200, mapped.body().physicalColumns);
   }
 
   private static TerminalScreenV2Proto.TerminalCommit.Builder commitBuilder() {

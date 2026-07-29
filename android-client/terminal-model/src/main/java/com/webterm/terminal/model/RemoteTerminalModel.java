@@ -39,8 +39,8 @@ public final class RemoteTerminalModel {
   private boolean v2Projection;
   private long dictionaryGeneration;
   private long historyGeneration;
-  private Map<Integer, TerminalStyle> canonicalStyles = Collections.emptyMap();
-  private Map<Integer, Hyperlink> canonicalLinks = Collections.emptyMap();
+  /** 仅迁移期旧单元测试可为 false；真实 wire Baseline 始终携带完整 Catalog。 */
+  private boolean historyCatalogComplete;
   private HistoryExtent displayExtent = HistoryExtent.INITIAL_EMPTY;
   private HistoryExtent remoteAvailableExtent = HistoryExtent.INITIAL_EMPTY;
   private EvictionPins evictionPins = EvictionPins.NONE;
@@ -158,29 +158,21 @@ public final class RemoteTerminalModel {
         || baseline.dictionaryGeneration < 1 || baseline.historyGeneration < 1
         || baseline.rows <= 0 || baseline.cols <= 0
         || baseline.historyExtent == null
+        || baseline.historyBindings == null
         || baseline.screen == null || baseline.screen.size() != baseline.rows) {
       return false;
     }
     java.util.HashSet<Long> baselineLineIds = new java.util.HashSet<>();
     List<TerminalLine> normalizedScreen = new ArrayList<>(baseline.rows);
-    for (TerminalLine line : baseline.screen) {
-      if (line == null || line.id <= 0 || line.historySeq != 0
-          || !baselineLineIds.add(line.id)) return false;
+    for (ScreenLineContent content : baseline.screen) {
+      TerminalLine line = legacyLine(content.key(), 0, content.body());
+      if (!baselineLineIds.add(line.id)) return false;
       TerminalLine normalized = normalizeCompleteLine(line, baseline.cols);
       if (normalized == null) return false;
       normalizedScreen.add(normalized);
     }
     boolean geometryChanged = !v2Projection || rows != baseline.rows || columns != baseline.cols;
     TerminalSurface baselineSurface = new TerminalSurface(historyBudget);
-
-    Map<Integer, TerminalStyle> baselineStyles;
-    Map<Integer, Hyperlink> baselineLinks;
-    try {
-      baselineStyles = dictionaryMapStyles(baseline.dictionary.styles);
-      baselineLinks = dictionaryMapLinks(baseline.dictionary.links);
-    } catch (IllegalArgumentException invalidDictionary) {
-      return false;
-    }
 
     PagedTerminalHistory.Editor historyEditor = baselineSurface.history.edit();
     LineStore.Editor lineEditor = baselineSurface.lineStore.edit();
@@ -191,6 +183,22 @@ public final class RemoteTerminalModel {
       historyEditor.setExtent(baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
       historyEditor.setAvailableExtent(
           baseline.historyExtent.firstSeq, baseline.historyExtent.lastSeq);
+      long previousBindingSeq = 0;
+      Set<Long> boundLineIds = new HashSet<>();
+      for (HistoryPush binding : baseline.historyBindings) {
+        if (binding == null || binding.historySeq <= previousBindingSeq
+            || !baseline.historyExtent.contains(binding.historySeq)
+            || !boundLineIds.add(binding.key.lineId())) {
+          return false;
+        }
+        historyIndexEditor.bindAuthoritative(
+            binding.historySeq, binding.key.lineId(), binding.key.lineVersion());
+        previousBindingSeq = binding.historySeq;
+      }
+      if (baseline.historyCatalogComplete
+          && baseline.historyExtent.logicalSize() != baseline.historyBindings.size()) {
+        return false;
+      }
       historyEditor.evictIfNeeded(currentEvictionPins(
           baseline.historyExtent.isEmpty() ? 1 : baseline.historyExtent.lastSeq));
       for (int row = 0; row < normalizedScreen.size(); row++) {
@@ -224,8 +232,7 @@ public final class RemoteTerminalModel {
     this.v2Projection = true;
     this.dictionaryGeneration = baseline.dictionaryGeneration;
     this.historyGeneration = baseline.historyGeneration;
-    this.canonicalStyles = baselineStyles;
-    this.canonicalLinks = baselineLinks;
+    this.historyCatalogComplete = baseline.historyCatalogComplete;
     this.instanceId = baseline.instanceId;
     this.layoutEpoch = baseline.layoutEpoch;
     this.screenRevision = baseline.screenRevision;
@@ -287,16 +294,8 @@ public final class RemoteTerminalModel {
     }
 
     long dictionaryStartedNanos = System.nanoTime();
-    Map<Integer, TerminalStyle> stagedStyles;
-    Map<Integer, Hyperlink> stagedLinks;
-    try {
-      stagedStyles = new java.util.HashMap<>(canonicalStyles);
-      stagedLinks = new java.util.HashMap<>(canonicalLinks);
-      stageDictionaryAdditions(commit.dictionaryAdditions, stagedStyles, stagedLinks);
-    } finally {
-      TerminalRenderMetrics.dictionaryStagingDuration(
-          System.nanoTime() - dictionaryStartedNanos);
-    }
+    TerminalRenderMetrics.dictionaryStagingDuration(
+        System.nanoTime() - dictionaryStartedNanos);
 
     TerminalBufferKind nextActiveBuffer =
         commit.activeBuffer != null ? commit.activeBuffer : activeBuffer;
@@ -320,7 +319,7 @@ public final class RemoteTerminalModel {
       for (HistoryPush push : historyPushes) {
         if (push == null || push.historySeq <= previousSeq
             || !nextExtent.contains(push.historySeq)
-            || push.lineId <= 0 || push.lineVersion <= 0) {
+            || push.key == null) {
           throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
         }
         previousSeq = push.historySeq;
@@ -364,8 +363,7 @@ public final class RemoteTerminalModel {
           throw new CommitValidationException(CommitFailure.DUPLICATE_SCREEN_ROW);
         }
         writtenRows.set(write.row);
-        TerminalLine decoded =
-            decodeLineData(write.lineData, columns, stagedStyles, stagedLinks);
+        TerminalLine decoded = legacyLine(write.line.key(), 0, write.line.body());
         TerminalLine normalized = normalizeCompleteLine(decoded, columns);
         if (normalized == null || normalized.id <= 0 || normalized.historySeq != 0) {
           throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
@@ -418,8 +416,8 @@ public final class RemoteTerminalModel {
         for (HistoryPush push : historyPushes) {
           HistoryLineRef previous = historyIndexEditor.ref(push.historySeq);
           if (previous != null
-              && (previous.lineId != push.lineId
-                  || previous.lineVersion != push.lineVersion)) {
+              && (previous.lineId != push.key.lineId()
+                  || previous.lineVersion != push.key.lineVersion())) {
             historyEditor.invalidate(push.historySeq);
             historyIndexEditor.removeBinding(push.historySeq);
           }
@@ -428,16 +426,16 @@ public final class RemoteTerminalModel {
           if (!pushedSeqs.add(push.historySeq)) {
             throw new CommitValidationException(CommitFailure.DUPLICATE_HISTORY_SEQUENCE);
           }
-          if (!pushedIds.add(push.lineId) || !nextExtent.contains(push.historySeq)) {
+          if (!pushedIds.add(push.key.lineId()) || !nextExtent.contains(push.historySeq)) {
             throw new CommitValidationException(CommitFailure.HISTORY_PROMOTION_CONFLICT);
           }
-          if (finalActive.contains(push.lineId)) {
+          if (finalActive.contains(push.key.lineId())) {
             throw new CommitValidationException(CommitFailure.ACTIVE_HISTORY_LINE_ID_CONFLICT);
           }
           historyIndexEditor.bindAuthoritative(
-              push.historySeq, push.lineId, push.lineVersion);
-          TerminalLine held = lineEditor.line(push.lineId);
-          if (held != null && held.version == push.lineVersion) {
+              push.historySeq, push.key.lineId(), push.key.lineVersion());
+          TerminalLine held = lineEditor.line(push.key.lineId());
+          if (held != null && held.version == push.key.lineVersion()) {
             historyEditor.put(push.historySeq, held.withHistorySeq(push.historySeq));
           }
         }
@@ -496,8 +494,6 @@ public final class RemoteTerminalModel {
       modes = nextModes;
       palette = nextPalette;
       activeBuffer = nextActiveBuffer;
-      canonicalStyles = Collections.unmodifiableMap(stagedStyles);
-      canonicalLinks = Collections.unmodifiableMap(stagedLinks);
       displayExtent = finalExtent;
       remoteAvailableExtent = finalExtent;
       firstAvailableHistorySeq = finalExtent.firstSeq;
@@ -509,8 +505,8 @@ public final class RemoteTerminalModel {
           historyChanged, false, cursorChanged,
           previousCursor != null ? previousCursor.row : -1,
           nextCursor != null ? nextCursor.row : -1,
-          paletteChanged, !commit.dictionaryAdditions.styles.isEmpty(),
-          !commit.dictionaryAdditions.links.isEmpty(), modesChanged,
+          paletteChanged, false,
+          false, modesChanged,
           activeBufferChanged);
       if (historyChanged) {
         mergeHistoryPushDirtyRange(finalHistoryPushes, !oldExtent.equals(finalExtent));
@@ -553,9 +549,9 @@ public final class RemoteTerminalModel {
 
   public synchronized boolean applyHistoryRange(HistoryRangeResult range, long anchorSeq) {
     return applyHistoryRange(range, anchorSeq,
-        range != null && !range.lines.isEmpty() ? range.lines.get(0).historySeq : 1,
+        range != null && !range.lines.isEmpty() ? range.lines.get(0).historySeq() : 1,
         range != null && !range.lines.isEmpty()
-            ? range.lines.get(range.lines.size() - 1).historySeq : 0);
+            ? range.lines.get(range.lines.size() - 1).historySeq() : 0);
   }
 
   public synchronized boolean applyHistoryRange(
@@ -588,8 +584,9 @@ public final class RemoteTerminalModel {
     List<TerminalLine> normalizedLines = new ArrayList<>(range.lines.size());
     Set<Long> responseLineIds = new HashSet<>();
     long previousSeq = 0;
-    for (TerminalLine line : range.lines) {
-      TerminalLine normalized = normalizeHistoryLine(line);
+    for (HistoryBodyEntry entry : range.lines) {
+      TerminalLine normalized =
+          normalizeHistoryLine(legacyLine(entry.key(), entry.historySeq(), entry.body()));
       long seq = normalized.historySeq;
       if (seq < requestedFromSeq || seq > requestedToSeq) {
         throw new IllegalArgumentException("HistoryRange line outside negotiated bounds");
@@ -623,6 +620,9 @@ public final class RemoteTerminalModel {
       }
       long historySeq = normalized.historySeq;
       HistoryLineRef ref = historyIndexEditor.ref(historySeq);
+      if (ref == null && historyCatalogComplete) {
+        continue;
+      }
       if (ref != null
           && (ref.lineId != normalized.id || ref.lineVersion != normalized.version)) {
         continue;
@@ -637,7 +637,9 @@ public final class RemoteTerminalModel {
       }
       try {
         TerminalLine canonical = lineEditor.put(normalized);
-        historyIndexEditor.bind(historySeq, canonical.id, canonical.version);
+        if (ref == null) {
+          historyIndexEditor.bind(historySeq, canonical.id, canonical.version);
+        }
         editor.put(historySeq, canonical);
         appliedLines.add(normalized);
       } catch (CommitValidationException invalidLineage) {
@@ -974,6 +976,27 @@ public final class RemoteTerminalModel {
       throw new IllegalStateException("screen.v2 contains invalid history line");
     }
     return line;
+  }
+
+  /**
+   * Phase-1 renderer adapter. Wire 字典 ID 已在 protocol 边界消失；这里的旧渲染
+   * 类型只承载语义值，后续 Renderer 迁移到 RenderLine 后删除。
+   */
+  private static TerminalLine legacyLine(LineKey key, long historySeq, LineBody body) {
+    TerminalCell[] cells = new TerminalCell[body.length()];
+    for (int column = 0; column < body.length(); column++) {
+      CellValue cell = body.at(column);
+      StyleValue style = cell.style();
+      LinkValue link = cell.link();
+      TerminalStyle legacyStyle = style == null ? null : new TerminalStyle(
+          0, style.fg(), style.bg(), style.underlineColor(), style.attrs());
+      Hyperlink legacyLink = link == null ? null : new Hyperlink(0, link.uri());
+      cells[column] = cell.isDefault() ? TerminalCell.EMPTY
+          : cell.isSpacer() ? TerminalCell.SPACER
+          : new TerminalCell(cell.text(), cell.width(), legacyStyle, legacyLink);
+    }
+    return new TerminalLine(
+        key.lineId(), key.lineVersion(), historySeq, body.wrapped, cells);
   }
 
   /**

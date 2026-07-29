@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 import com.google.protobuf.ByteString;
 import com.webterm.terminal.model.DictionaryEntries;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.HistoryBodyEntry;
 import com.webterm.terminal.model.HistoryLineRef;
 import com.webterm.terminal.model.HistoryMutation;
 import com.webterm.terminal.model.HistoryPush;
@@ -25,6 +26,9 @@ import com.webterm.terminal.model.TerminalLine;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalCommit;
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
 
 import java.util.ArrayList;
@@ -168,7 +172,7 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   @Test
-  public void historyRangeProtocolErrorCompletesRequestAndStopsPump() {
+  public void historyRangeProtocolErrorCompletesRequestAndQuarantinesRangeWithoutReconnect() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(domainBaseline()));
     model.consumeRenderUpdate();
@@ -183,8 +187,8 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
             range.instanceId, range.layoutEpoch, range.generation,
             new HistoryExtent(1, 300),
             java.util.Arrays.asList(
-                domainLine(9000, 100, "a"),
-                domainLine(9000, 101, "b"))));
+                historyEntry(9000, 100, "a"),
+                historyEntry(9000, 101, "b"))));
         return () -> {};
       }
 
@@ -195,7 +199,8 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
 
     Map<String, Object> loader = runtime.diagnosticsSnapshot().historyLoader;
     assertEquals(false, loader.get("hasActiveRequest"));
-    assertEquals(false, loader.get("hasDemand"));
+    assertEquals(true, loader.get("hasDemand"));
+    assertEquals(true, loader.get("hasUnavailableRange"));
   }
 
   @Test
@@ -229,8 +234,8 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
             range.instanceId, range.layoutEpoch, range.generation,
             new HistoryExtent(1, 300),
             Collections.singletonList(request == 1
-                ? domainLine(1001, 100, "old")
-                : domainLine(2001, 100, "new"))));
+                ? historyEntry(1001, 100, "old")
+                : historyEntry(2001, 100, "new"))));
         return () -> {};
       }
 
@@ -410,13 +415,22 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
 
   private static HistoryRangeSource.Result decodedRange(
       @NonNull HistoryRangeLoader.Range range) {
-    List<TerminalLine> lines = new ArrayList<>();
+    List<HistoryBodyEntry> lines = new ArrayList<>();
     for (long seq = range.fromSeq; seq <= range.toSeq; seq++) {
-      lines.add(domainLine(10_000 + seq, seq, "h"));
+      lines.add(historyEntry(10_000 + seq, seq, "h"));
     }
     return new HistoryRangeSource.Result(
         range.instanceId, range.layoutEpoch, range.generation,
         new HistoryExtent(1, 300), lines);
+  }
+
+  private static HistoryBodyEntry historyEntry(long id, long historySeq, String text) {
+    return new HistoryBodyEntry(
+        historySeq,
+        new LineKey(id, 1),
+        new LineBody(1, false, new CellValue[] {
+            new CellValue(text, (byte) 1, null, null)
+        }));
   }
 
   private static FakeV2Connection connect(TerminalSessionRuntime runtime) {

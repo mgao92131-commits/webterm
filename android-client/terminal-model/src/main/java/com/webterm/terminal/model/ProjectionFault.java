@@ -1,0 +1,13 @@
+package com.webterm.terminal.model;
+
+/** 只有 WS 权威投影连续性错误可以产生这些故障。 */
+public enum ProjectionFault {
+  IDENTITY_MISMATCH,
+  LAYOUT_EPOCH_MISMATCH,
+  REVISION_GAP,
+  DICTIONARY_GENERATION_MISMATCH,
+  HISTORY_GENERATION_MISMATCH,
+  INVALID_BASELINE,
+  INVALID_SCREEN_MUTATION,
+  INVALID_HISTORY_MUTATION
+}

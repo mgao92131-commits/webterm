@@ -10692,6 +10692,50 @@ public final class TerminalScreenV2Proto {
      * @return The historyGeneration.
      */
     long getHistoryGeneration();
+
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush>
+        getHistoryBindingsList();
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush getHistoryBindings(int index);
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    int getHistoryBindingsCount();
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder>
+        getHistoryBindingsOrBuilderList();
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder getHistoryBindingsOrBuilder(
+        int index);
   }
   /**
    * Protobuf type {@code webterm.terminal.screen.v2.Baseline}
@@ -10719,6 +10763,7 @@ public final class TerminalScreenV2Proto {
       instanceId_ = "";
       activeBuffer_ = 0;
       screenLines_ = java.util.Collections.emptyList();
+      historyBindings_ = java.util.Collections.emptyList();
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -11098,6 +11143,67 @@ public final class TerminalScreenV2Proto {
       return historyGeneration_;
     }
 
+    public static final int HISTORY_BINDINGS_FIELD_NUMBER = 18;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush> historyBindings_;
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush> getHistoryBindingsList() {
+      return historyBindings_;
+    }
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder>
+        getHistoryBindingsOrBuilderList() {
+      return historyBindings_;
+    }
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    @java.lang.Override
+    public int getHistoryBindingsCount() {
+      return historyBindings_.size();
+    }
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush getHistoryBindings(int index) {
+      return historyBindings_.get(index);
+    }
+    /**
+     * <pre>
+     * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+     * </pre>
+     *
+     * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder getHistoryBindingsOrBuilder(
+        int index) {
+      return historyBindings_.get(index);
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -11156,6 +11262,9 @@ public final class TerminalScreenV2Proto {
       }
       if (historyGeneration_ != 0L) {
         output.writeUInt64(17, historyGeneration_);
+      }
+      for (int i = 0; i < historyBindings_.size(); i++) {
+        output.writeMessage(18, historyBindings_.get(i));
       }
       getUnknownFields().writeTo(output);
     }
@@ -11224,6 +11333,10 @@ public final class TerminalScreenV2Proto {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt64Size(17, historyGeneration_);
       }
+      for (int i = 0; i < historyBindings_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(18, historyBindings_.get(i));
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -11289,6 +11402,8 @@ public final class TerminalScreenV2Proto {
           != other.getDictionaryGeneration()) return false;
       if (getHistoryGeneration()
           != other.getHistoryGeneration()) return false;
+      if (!getHistoryBindingsList()
+          .equals(other.getHistoryBindingsList())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -11350,6 +11465,10 @@ public final class TerminalScreenV2Proto {
       hash = (37 * hash) + HISTORY_GENERATION_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getHistoryGeneration());
+      if (getHistoryBindingsCount() > 0) {
+        hash = (37 * hash) + HISTORY_BINDINGS_FIELD_NUMBER;
+        hash = (53 * hash) + getHistoryBindingsList().hashCode();
+      }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -11488,6 +11607,7 @@ public final class TerminalScreenV2Proto {
           getModesFieldBuilder();
           getPaletteFieldBuilder();
           getDictionaryFieldBuilder();
+          getHistoryBindingsFieldBuilder();
         }
       }
       @java.lang.Override
@@ -11543,6 +11663,13 @@ public final class TerminalScreenV2Proto {
         }
         dictionaryGeneration_ = 0L;
         historyGeneration_ = 0L;
+        if (historyBindingsBuilder_ == null) {
+          historyBindings_ = java.util.Collections.emptyList();
+        } else {
+          historyBindings_ = null;
+          historyBindingsBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00008000);
         return this;
       }
 
@@ -11584,6 +11711,15 @@ public final class TerminalScreenV2Proto {
           result.screenLines_ = screenLines_;
         } else {
           result.screenLines_ = screenLinesBuilder_.build();
+        }
+        if (historyBindingsBuilder_ == null) {
+          if (((bitField0_ & 0x00008000) != 0)) {
+            historyBindings_ = java.util.Collections.unmodifiableList(historyBindings_);
+            bitField0_ = (bitField0_ & ~0x00008000);
+          }
+          result.historyBindings_ = historyBindings_;
+        } else {
+          result.historyBindings_ = historyBindingsBuilder_.build();
         }
       }
 
@@ -11740,6 +11876,32 @@ public final class TerminalScreenV2Proto {
         if (other.getHistoryGeneration() != 0L) {
           setHistoryGeneration(other.getHistoryGeneration());
         }
+        if (historyBindingsBuilder_ == null) {
+          if (!other.historyBindings_.isEmpty()) {
+            if (historyBindings_.isEmpty()) {
+              historyBindings_ = other.historyBindings_;
+              bitField0_ = (bitField0_ & ~0x00008000);
+            } else {
+              ensureHistoryBindingsIsMutable();
+              historyBindings_.addAll(other.historyBindings_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.historyBindings_.isEmpty()) {
+            if (historyBindingsBuilder_.isEmpty()) {
+              historyBindingsBuilder_.dispose();
+              historyBindingsBuilder_ = null;
+              historyBindings_ = other.historyBindings_;
+              bitField0_ = (bitField0_ & ~0x00008000);
+              historyBindingsBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getHistoryBindingsFieldBuilder() : null;
+            } else {
+              historyBindingsBuilder_.addAllMessages(other.historyBindings_);
+            }
+          }
+        }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
         return this;
@@ -11863,6 +12025,19 @@ public final class TerminalScreenV2Proto {
                 bitField0_ |= 0x00004000;
                 break;
               } // case 136
+              case 146: {
+                com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush m =
+                    input.readMessage(
+                        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.parser(),
+                        extensionRegistry);
+                if (historyBindingsBuilder_ == null) {
+                  ensureHistoryBindingsIsMutable();
+                  historyBindings_.add(m);
+                } else {
+                  historyBindingsBuilder_.addMessage(m);
+                }
+                break;
+              } // case 146
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -13290,6 +13465,318 @@ public final class TerminalScreenV2Proto {
         historyGeneration_ = 0L;
         onChanged();
         return this;
+      }
+
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush> historyBindings_ =
+        java.util.Collections.emptyList();
+      private void ensureHistoryBindingsIsMutable() {
+        if (!((bitField0_ & 0x00008000) != 0)) {
+          historyBindings_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush>(historyBindings_);
+          bitField0_ |= 0x00008000;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder> historyBindingsBuilder_;
+
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush> getHistoryBindingsList() {
+        if (historyBindingsBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(historyBindings_);
+        } else {
+          return historyBindingsBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public int getHistoryBindingsCount() {
+        if (historyBindingsBuilder_ == null) {
+          return historyBindings_.size();
+        } else {
+          return historyBindingsBuilder_.getCount();
+        }
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush getHistoryBindings(int index) {
+        if (historyBindingsBuilder_ == null) {
+          return historyBindings_.get(index);
+        } else {
+          return historyBindingsBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder setHistoryBindings(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush value) {
+        if (historyBindingsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.set(index, value);
+          onChanged();
+        } else {
+          historyBindingsBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder setHistoryBindings(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder builderForValue) {
+        if (historyBindingsBuilder_ == null) {
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          historyBindingsBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder addHistoryBindings(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush value) {
+        if (historyBindingsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.add(value);
+          onChanged();
+        } else {
+          historyBindingsBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder addHistoryBindings(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush value) {
+        if (historyBindingsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.add(index, value);
+          onChanged();
+        } else {
+          historyBindingsBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder addHistoryBindings(
+          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder builderForValue) {
+        if (historyBindingsBuilder_ == null) {
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.add(builderForValue.build());
+          onChanged();
+        } else {
+          historyBindingsBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder addHistoryBindings(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder builderForValue) {
+        if (historyBindingsBuilder_ == null) {
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          historyBindingsBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder addAllHistoryBindings(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush> values) {
+        if (historyBindingsBuilder_ == null) {
+          ensureHistoryBindingsIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, historyBindings_);
+          onChanged();
+        } else {
+          historyBindingsBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder clearHistoryBindings() {
+        if (historyBindingsBuilder_ == null) {
+          historyBindings_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00008000);
+          onChanged();
+        } else {
+          historyBindingsBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public Builder removeHistoryBindings(int index) {
+        if (historyBindingsBuilder_ == null) {
+          ensureHistoryBindingsIsMutable();
+          historyBindings_.remove(index);
+          onChanged();
+        } else {
+          historyBindingsBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder getHistoryBindingsBuilder(
+          int index) {
+        return getHistoryBindingsFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder getHistoryBindingsOrBuilder(
+          int index) {
+        if (historyBindingsBuilder_ == null) {
+          return historyBindings_.get(index);  } else {
+          return historyBindingsBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder>
+           getHistoryBindingsOrBuilderList() {
+        if (historyBindingsBuilder_ != null) {
+          return historyBindingsBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(historyBindings_);
+        }
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder addHistoryBindingsBuilder() {
+        return getHistoryBindingsFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.getDefaultInstance());
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder addHistoryBindingsBuilder(
+          int index) {
+        return getHistoryBindingsFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.getDefaultInstance());
+      }
+      /**
+       * <pre>
+       * Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
+       * </pre>
+       *
+       * <code>repeated .webterm.terminal.screen.v2.HistoryPush history_bindings = 18;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder>
+           getHistoryBindingsBuilderList() {
+        return getHistoryBindingsFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder>
+          getHistoryBindingsFieldBuilder() {
+        if (historyBindingsBuilder_ == null) {
+          historyBindingsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPush.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryPushOrBuilder>(
+                  historyBindings_,
+                  ((bitField0_ & 0x00008000) != 0),
+                  getParentForChildren(),
+                  isClean());
+          historyBindings_ = null;
+        }
+        return historyBindingsBuilder_;
       }
 
       // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v2.Baseline)
@@ -44056,7 +44543,7 @@ public final class TerminalScreenV2Proto {
       "}\n\nDictionary\0229\n\006styles\030\001 \003(\0132).webterm." +
       "terminal.screen.v2.TerminalStyle\0224\n\005link" +
       "s\030\002 \003(\0132%.webterm.terminal.screen.v2.Hyp" +
-      "erlink\"\314\005\n\010Baseline\022\022\n\nsession_id\030\001 \001(\t\022" +
+      "erlink\"\211\006\n\010Baseline\022\022\n\nsession_id\030\001 \001(\t\022" +
       "\023\n\013instance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001" +
       "(\004\022\027\n\017screen_revision\030\004 \001(\004\0226\n\010geometry\030" +
       "\006 \001(\0132$.webterm.terminal.screen.v2.Geome" +
@@ -44073,155 +44560,157 @@ public final class TerminalScreenV2Proto {
       "een.v2.TerminalPalette\022:\n\ndictionary\030\017 \001" +
       "(\0132&.webterm.terminal.screen.v2.Dictiona" +
       "ry\022\035\n\025dictionary_generation\030\020 \001(\004\022\032\n\022his" +
-      "tory_generation\030\021 \001(\004J\004\010\005\020\006J\004\010\t\020\nJ\004\010\022\020\023J" +
-      "\004\010\023\020\024\"\337\004\n\016TerminalCommit\022\023\n\013instance_id\030" +
-      "\001 \001(\t\022\024\n\014layout_epoch\030\002 \001(\004\022\025\n\rbase_revi" +
-      "sion\030\004 \001(\004\022\020\n\010revision\030\005 \001(\004\022:\n\006screen\030\006" +
-      " \001(\0132*.webterm.terminal.screen.v2.Screen" +
-      "Mutation\022<\n\007history\030\007 \001(\0132+.webterm.term" +
-      "inal.screen.v2.HistoryMutation\0222\n\006cursor" +
-      "\030\010 \001(\0132\".webterm.terminal.screen.v2.Curs" +
-      "or\0220\n\005modes\030\t \001(\0132!.webterm.terminal.scr" +
-      "een.v2.Modes\022<\n\007palette\030\n \001(\0132+.webterm." +
-      "terminal.screen.v2.TerminalPalette\022D\n\024di" +
-      "ctionary_additions\030\013 \001(\0132&.webterm.termi" +
-      "nal.screen.v2.Dictionary\022B\n\ractive_buffe" +
-      "r\030\014 \001(\0162&.webterm.terminal.screen.v2.Buf" +
-      "ferKindH\000\210\001\001\022\035\n\025dictionary_generation\030\r " +
-      "\001(\004\022\032\n\022history_generation\030\016 \001(\004B\020\n\016_acti" +
-      "ve_bufferJ\004\010\003\020\004\"\206\001\n\016ScreenMutation\0228\n\006sc" +
-      "roll\030\001 \001(\0132(.webterm.terminal.screen.v2." +
-      "ScreenScroll\022:\n\006writes\030\002 \003(\0132*.webterm.t" +
-      "erminal.screen.v2.ScreenRowWrite\"Q\n\014Scre" +
-      "enScroll\022\017\n\007top_row\030\001 \001(\005\022\034\n\024bottom_row_" +
-      "exclusive\030\002 \001(\005\022\022\n\ndelta_rows\030\003 \001(\005\"Q\n\016S" +
-      "creenRowWrite\022\013\n\003row\030\001 \001(\005\0222\n\004line\030\002 \001(\013" +
-      "2$.webterm.terminal.screen.v2.LineData\"\227" +
-      "\001\n\017HistoryMutation\022?\n\014final_extent\030\001 \001(\013" +
-      "2).webterm.terminal.screen.v2.HistoryExt" +
-      "ent\0227\n\006pushes\030\002 \003(\0132\'.webterm.terminal.s" +
-      "creen.v2.HistoryPushJ\004\010\003\020\004J\004\010\004\020\005\"I\n\013Hist" +
-      "oryPush\022\023\n\013history_seq\030\001 \001(\004\022\017\n\007line_id\030" +
-      "\002 \001(\004\022\024\n\014line_version\030\003 \001(\004\" \n\014ScreenLay" +
-      "out\022\020\n\010line_ids\030\001 \003(\004\"\332\001\n\010LineData\022\017\n\007li" +
-      "ne_id\030\001 \001(\004\022\024\n\014line_version\030\002 \001(\004\022\017\n\007wra" +
-      "pped\030\003 \001(\010\022\021\n\tutf8_text\030\004 \001(\014\022:\n\013style_s" +
-      "pans\030\005 \003(\0132%.webterm.terminal.screen.v2." +
-      "StyleSpan\022\023\n\013history_seq\030\007 \001(\004\022\022\n\nglyph_" +
-      "meta\030\010 \001(\014\022\030\n\020physical_columns\030\t \001(\rJ\004\010\006" +
-      "\020\007\"R\n\tStyleSpan\022\021\n\tstart_col\030\001 \001(\005\022\017\n\007en" +
-      "d_col\030\002 \001(\005\022\020\n\010style_id\030\003 \001(\r\022\017\n\007link_id" +
-      "\030\004 \001(\r\"X\n\005Color\0223\n\004kind\030\001 \001(\0162%.webterm." +
-      "terminal.screen.v2.ColorKind\022\r\n\005index\030\002 " +
-      "\001(\005\022\013\n\003rgb\030\003 \001(\r\"\353\001\n\rTerminalStyle\022\n\n\002id" +
-      "\030\001 \001(\r\022-\n\002fg\030\002 \001(\0132!.webterm.terminal.sc" +
-      "reen.v2.Color\022-\n\002bg\030\003 \001(\0132!.webterm.term" +
-      "inal.screen.v2.Color\022:\n\017underline_color\030" +
-      "\004 \001(\0132!.webterm.terminal.screen.v2.Color" +
-      "\0224\n\005attrs\030\005 \001(\0132%.webterm.terminal.scree" +
-      "n.v2.CellAttrs\"\211\002\n\tCellAttrs\022\014\n\004bold\030\001 \001" +
-      "(\010\022\013\n\003dim\030\002 \001(\010\022\016\n\006italic\030\003 \001(\010\022\021\n\tunder" +
-      "line\030\004 \001(\010\022\030\n\020double_underline\030\005 \001(\010\022\027\n\017" +
-      "curly_underline\030\006 \001(\010\022\030\n\020dotted_underlin" +
-      "e\030\007 \001(\010\022\030\n\020dashed_underline\030\010 \001(\010\022\022\n\nbli" +
-      "nk_slow\030\t \001(\010\022\022\n\nblink_fast\030\n \001(\010\022\017\n\007rev" +
-      "erse\030\013 \001(\010\022\016\n\006hidden\030\014 \001(\010\022\016\n\006strike\030\r \001" +
-      "(\010\"4\n\tHyperlink\022\n\n\002id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t" +
-      "\022\016\n\006params\030\003 \001(\t\"z\n\006Cursor\022\013\n\003row\030\001 \001(\005\022" +
-      "\013\n\003col\030\002 \001(\005\022\017\n\007visible\030\003 \001(\010\0226\n\005shape\030\004" +
-      " \001(\0162\'.webterm.terminal.screen.v2.Cursor" +
-      "Shape\022\r\n\005blink\030\005 \001(\010\"\367\001\n\005Modes\022\032\n\022applic" +
-      "ation_cursor\030\001 \001(\010\022\032\n\022application_keypad" +
-      "\030\002 \001(\010\022\027\n\017bracketed_paste\030\003 \001(\010\022A\n\016mouse" +
-      "_tracking\030\004 \001(\0162).webterm.terminal.scree" +
-      "n.v2.MouseTracking\022A\n\016mouse_encoding\030\005 \001" +
-      "(\0162).webterm.terminal.screen.v2.MouseEnc" +
-      "oding\022\027\n\017focus_reporting\030\006 \001(\010\"\254\002\n\017Termi" +
-      "nalPalette\0225\n\ndefault_fg\030\001 \001(\0132!.webterm" +
-      ".terminal.screen.v2.Color\0225\n\ndefault_bg\030" +
-      "\002 \001(\0132!.webterm.terminal.screen.v2.Color" +
-      "\0227\n\014cursor_color\030\003 \001(\0132!.webterm.termina" +
-      "l.screen.v2.Color\022\025\n\rreverse_video\030\004 \001(\010" +
-      "\022G\n\016indexed_colors\030\005 \003(\0132/.webterm.termi" +
-      "nal.screen.v2.IndexedPaletteColor\022\022\n\ngen" +
-      "eration\030\006 \001(\004\"1\n\023IndexedPaletteColor\022\r\n\005" +
-      "index\030\001 \001(\005\022\013\n\003rgb\030\002 \001(\r\"8\n\rAcquireLayou" +
-      "t\022\022\n\nrequest_id\030\001 \001(\t\022\023\n\013interactive\030\002 \001" +
-      "(\010\"\250\001\n\013LayoutLease\022\022\n\nrequest_id\030\001 \001(\t\022\020" +
-      "\n\010lease_id\030\002 \001(\t\022\017\n\007granted\030\003 \001(\010\022\023\n\013int" +
-      "eractive\030\004 \001(\010\0226\n\010geometry\030\005 \001(\0132$.webte" +
-      "rm.terminal.screen.v2.Geometry\022\025\n\rexpire" +
-      "s_at_ms\030\006 \001(\004\"!\n\rReleaseLayout\022\020\n\010lease_" +
-      "id\030\001 \001(\t\"J\n\006Resize\022\014\n\004cols\030\001 \001(\005\022\014\n\004rows" +
-      "\030\002 \001(\005\022\020\n\010lease_id\030\003 \001(\t\022\022\n\nrequest_id\030\004" +
-      " \001(\t\"\315\002\n\rTerminalInput\022\020\n\010lease_id\030\001 \001(\t" +
-      "\0225\n\004text\030\n \001(\0132%.webterm.terminal.screen" +
-      ".v2.TextInputH\000\0223\n\003key\030\013 \001(\0132$.webterm.t" +
-      "erminal.screen.v2.KeyInputH\000\0227\n\005paste\030\014 " +
-      "\001(\0132&.webterm.terminal.screen.v2.PasteIn" +
-      "putH\000\0227\n\005mouse\030\r \001(\0132&.webterm.terminal." +
-      "screen.v2.MouseInputH\000\0227\n\005focus\030\016 \001(\0132&." +
-      "webterm.terminal.screen.v2.FocusInputH\000B" +
-      "\007\n\005inputJ\004\010\002\020\003J\004\010\003\020\004\"\031\n\tTextInput\022\014\n\004dat" +
-      "a\030\001 \001(\t\"d\n\010KeyInput\022\013\n\003key\030\001 \001(\t\022:\n\tmodi" +
-      "fiers\030\002 \001(\0132\'.webterm.terminal.screen.v2" +
-      ".ModifierSet\022\017\n\007pressed\030\003 \001(\010\"\032\n\nPasteIn" +
-      "put\022\014\n\004data\030\001 \001(\t\"\301\001\n\nMouseInput\022\013\n\003row\030" +
-      "\001 \001(\005\022\013\n\003col\030\002 \001(\005\0227\n\006button\030\003 \001(\0162\'.web" +
-      "term.terminal.screen.v2.MouseButton\022\023\n\013w" +
-      "heel_delta\030\004 \001(\005\022:\n\tmodifiers\030\005 \001(\0132\'.we" +
-      "bterm.terminal.screen.v2.ModifierSet\022\017\n\007" +
-      "pressed\030\006 \001(\010\"\035\n\nFocusInput\022\017\n\007focused\030\001" +
-      " \001(\010\"E\n\013ModifierSet\022\r\n\005shift\030\001 \001(\010\022\013\n\003al" +
-      "t\030\002 \001(\010\022\014\n\004ctrl\030\003 \001(\010\022\014\n\004meta\030\004 \001(\010\"\365\002\n\016" +
-      "TerminalEffect\022\023\n\013instance_id\030\001 \001(\t\022\027\n\017s" +
-      "creen_revision\030\002 \001(\004\0220\n\004bell\030\n \001(\0132 .web" +
-      "term.terminal.screen.v2.BellH\000\022J\n\016clipbo" +
-      "ard_read\030\r \001(\01320.webterm.terminal.screen" +
-      ".v2.ClipboardReadRequestH\000\022L\n\017clipboard_" +
-      "write\030\016 \001(\01321.webterm.terminal.screen.v2" +
-      ".ClipboardWriteRequestH\000\022G\n\014notification" +
-      "\030\017 \001(\0132/.webterm.terminal.screen.v2.Desk" +
-      "topNotificationH\000B\010\n\006effectJ\004\010\013\020\014J\004\010\014\020\rJ" +
-      "\004\010\020\020\021J\004\010\021\020\022\"\006\n\004Bell\"=\n\024ClipboardReadRequ" +
-      "est\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboard\030\002 \001" +
-      "(\t\"L\n\025ClipboardWriteRequest\022\022\n\nrequest_i" +
-      "d\030\001 \001(\t\022\021\n\tclipboard\030\002 \001(\t\022\014\n\004data\030\003 \001(\014" +
-      "\"2\n\023DesktopNotification\022\r\n\005title\030\001 \001(\t\022\014" +
-      "\n\004body\030\002 \001(\t\"W\n\021ClipboardResponse\022\022\n\nreq" +
-      "uest_id\030\001 \001(\t\022\017\n\007allowed\030\002 \001(\010\022\017\n\007timeou" +
-      "t\030\003 \001(\010\022\014\n\004data\030\004 \001(\014\"\024\n\004Exit\022\014\n\004code\030\001 " +
-      "\001(\005\"\037\n\004Ping\022\027\n\017screen_revision\030\001 \001(\004\"\037\n\004" +
-      "Pong\022\027\n\017screen_revision\030\001 \001(\004*S\n\017Initial" +
-      "SyncMode\022\032\n\026INITIAL_SYNC_MODE_AUTO\020\000\022$\n " +
-      "INITIAL_SYNC_MODE_FORCE_BASELINE\020\001*Z\n\nBu" +
-      "fferKind\022\033\n\027BUFFER_KIND_UNSPECIFIED\020\000\022\024\n" +
-      "\020BUFFER_KIND_MAIN\020\001\022\031\n\025BUFFER_KIND_ALTER" +
-      "NATE\020\002*\240\001\n\tColorKind\022\032\n\026COLOR_KIND_UNSPE" +
-      "CIFIED\020\000\022\031\n\025COLOR_KIND_DEFAULT_FG\020\001\022\031\n\025C" +
-      "OLOR_KIND_DEFAULT_BG\020\002\022\025\n\021COLOR_KIND_CUR" +
-      "SOR\020\003\022\026\n\022COLOR_KIND_INDEXED\020\004\022\022\n\016COLOR_K" +
-      "IND_RGB\020\005*u\n\013CursorShape\022\034\n\030CURSOR_SHAPE" +
-      "_UNSPECIFIED\020\000\022\026\n\022CURSOR_SHAPE_BLOCK\020\001\022\024" +
-      "\n\020CURSOR_SHAPE_BAR\020\002\022\032\n\026CURSOR_SHAPE_UND" +
-      "ERLINE\020\003*\374\001\n\rMouseTracking\022\036\n\032MOUSE_TRAC" +
-      "KING_UNSPECIFIED\020\000\022\027\n\023MOUSE_TRACKING_NON" +
-      "E\020\001\022\026\n\022MOUSE_TRACKING_X10\020\002\022\030\n\024MOUSE_TRA" +
-      "CKING_VT200\020\003\022\"\n\036MOUSE_TRACKING_VT200_HI" +
-      "GHLIGHT\020\004\022\037\n\033MOUSE_TRACKING_BUTTON_EVENT" +
-      "\020\005\022\034\n\030MOUSE_TRACKING_ANY_EVENT\020\006\022\035\n\031MOUS" +
-      "E_TRACKING_SGR_PIXELS\020\007*\222\001\n\rMouseEncodin" +
-      "g\022\036\n\032MOUSE_ENCODING_UNSPECIFIED\020\000\022\026\n\022MOU" +
-      "SE_ENCODING_X10\020\001\022\027\n\023MOUSE_ENCODING_UTF8" +
-      "\020\002\022\026\n\022MOUSE_ENCODING_SGR\020\003\022\030\n\024MOUSE_ENCO" +
-      "DING_URXVT\020\004*\242\001\n\013MouseButton\022\034\n\030MOUSE_BU" +
-      "TTON_UNSPECIFIED\020\000\022\025\n\021MOUSE_BUTTON_LEFT\020" +
-      "\001\022\027\n\023MOUSE_BUTTON_MIDDLE\020\002\022\026\n\022MOUSE_BUTT" +
-      "ON_RIGHT\020\003\022\026\n\022MOUSE_BUTTON_WHEEL\020\004\022\025\n\021MO" +
-      "USE_BUTTON_MOVE\020\005Bu\n\'com.webterm.termina" +
-      "l.protocol.generatedB\025TerminalScreenV2Pr" +
-      "otoZ3webterm/go-core/internal/screenprot" +
-      "ocol/generatedv2b\006proto3"
+      "tory_generation\030\021 \001(\004\022A\n\020history_binding" +
+      "s\030\022 \003(\0132\'.webterm.terminal.screen.v2.His" +
+      "toryPushJ\004\010\005\020\006J\004\010\t\020\nJ\004\010\023\020\024\"\337\004\n\016TerminalC" +
+      "ommit\022\023\n\013instance_id\030\001 \001(\t\022\024\n\014layout_epo" +
+      "ch\030\002 \001(\004\022\025\n\rbase_revision\030\004 \001(\004\022\020\n\010revis" +
+      "ion\030\005 \001(\004\022:\n\006screen\030\006 \001(\0132*.webterm.term" +
+      "inal.screen.v2.ScreenMutation\022<\n\007history" +
+      "\030\007 \001(\0132+.webterm.terminal.screen.v2.Hist" +
+      "oryMutation\0222\n\006cursor\030\010 \001(\0132\".webterm.te" +
+      "rminal.screen.v2.Cursor\0220\n\005modes\030\t \001(\0132!" +
+      ".webterm.terminal.screen.v2.Modes\022<\n\007pal" +
+      "ette\030\n \001(\0132+.webterm.terminal.screen.v2." +
+      "TerminalPalette\022D\n\024dictionary_additions\030" +
+      "\013 \001(\0132&.webterm.terminal.screen.v2.Dicti" +
+      "onary\022B\n\ractive_buffer\030\014 \001(\0162&.webterm.t" +
+      "erminal.screen.v2.BufferKindH\000\210\001\001\022\035\n\025dic" +
+      "tionary_generation\030\r \001(\004\022\032\n\022history_gene" +
+      "ration\030\016 \001(\004B\020\n\016_active_bufferJ\004\010\003\020\004\"\206\001\n" +
+      "\016ScreenMutation\0228\n\006scroll\030\001 \001(\0132(.webter" +
+      "m.terminal.screen.v2.ScreenScroll\022:\n\006wri" +
+      "tes\030\002 \003(\0132*.webterm.terminal.screen.v2.S" +
+      "creenRowWrite\"Q\n\014ScreenScroll\022\017\n\007top_row" +
+      "\030\001 \001(\005\022\034\n\024bottom_row_exclusive\030\002 \001(\005\022\022\n\n" +
+      "delta_rows\030\003 \001(\005\"Q\n\016ScreenRowWrite\022\013\n\003ro" +
+      "w\030\001 \001(\005\0222\n\004line\030\002 \001(\0132$.webterm.terminal" +
+      ".screen.v2.LineData\"\227\001\n\017HistoryMutation\022" +
+      "?\n\014final_extent\030\001 \001(\0132).webterm.terminal" +
+      ".screen.v2.HistoryExtent\0227\n\006pushes\030\002 \003(\013" +
+      "2\'.webterm.terminal.screen.v2.HistoryPus" +
+      "hJ\004\010\003\020\004J\004\010\004\020\005\"I\n\013HistoryPush\022\023\n\013history_" +
+      "seq\030\001 \001(\004\022\017\n\007line_id\030\002 \001(\004\022\024\n\014line_versi" +
+      "on\030\003 \001(\004\" \n\014ScreenLayout\022\020\n\010line_ids\030\001 \003" +
+      "(\004\"\332\001\n\010LineData\022\017\n\007line_id\030\001 \001(\004\022\024\n\014line" +
+      "_version\030\002 \001(\004\022\017\n\007wrapped\030\003 \001(\010\022\021\n\tutf8_" +
+      "text\030\004 \001(\014\022:\n\013style_spans\030\005 \003(\0132%.webter" +
+      "m.terminal.screen.v2.StyleSpan\022\023\n\013histor" +
+      "y_seq\030\007 \001(\004\022\022\n\nglyph_meta\030\010 \001(\014\022\030\n\020physi" +
+      "cal_columns\030\t \001(\rJ\004\010\006\020\007\"R\n\tStyleSpan\022\021\n\t" +
+      "start_col\030\001 \001(\005\022\017\n\007end_col\030\002 \001(\005\022\020\n\010styl" +
+      "e_id\030\003 \001(\r\022\017\n\007link_id\030\004 \001(\r\"X\n\005Color\0223\n\004" +
+      "kind\030\001 \001(\0162%.webterm.terminal.screen.v2." +
+      "ColorKind\022\r\n\005index\030\002 \001(\005\022\013\n\003rgb\030\003 \001(\r\"\353\001" +
+      "\n\rTerminalStyle\022\n\n\002id\030\001 \001(\r\022-\n\002fg\030\002 \001(\0132" +
+      "!.webterm.terminal.screen.v2.Color\022-\n\002bg" +
+      "\030\003 \001(\0132!.webterm.terminal.screen.v2.Colo" +
+      "r\022:\n\017underline_color\030\004 \001(\0132!.webterm.ter" +
+      "minal.screen.v2.Color\0224\n\005attrs\030\005 \001(\0132%.w" +
+      "ebterm.terminal.screen.v2.CellAttrs\"\211\002\n\t" +
+      "CellAttrs\022\014\n\004bold\030\001 \001(\010\022\013\n\003dim\030\002 \001(\010\022\016\n\006" +
+      "italic\030\003 \001(\010\022\021\n\tunderline\030\004 \001(\010\022\030\n\020doubl" +
+      "e_underline\030\005 \001(\010\022\027\n\017curly_underline\030\006 \001" +
+      "(\010\022\030\n\020dotted_underline\030\007 \001(\010\022\030\n\020dashed_u" +
+      "nderline\030\010 \001(\010\022\022\n\nblink_slow\030\t \001(\010\022\022\n\nbl" +
+      "ink_fast\030\n \001(\010\022\017\n\007reverse\030\013 \001(\010\022\016\n\006hidde" +
+      "n\030\014 \001(\010\022\016\n\006strike\030\r \001(\010\"4\n\tHyperlink\022\n\n\002" +
+      "id\030\001 \001(\r\022\013\n\003uri\030\002 \001(\t\022\016\n\006params\030\003 \001(\t\"z\n" +
+      "\006Cursor\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\022\017\n\007vis" +
+      "ible\030\003 \001(\010\0226\n\005shape\030\004 \001(\0162\'.webterm.term" +
+      "inal.screen.v2.CursorShape\022\r\n\005blink\030\005 \001(" +
+      "\010\"\367\001\n\005Modes\022\032\n\022application_cursor\030\001 \001(\010\022" +
+      "\032\n\022application_keypad\030\002 \001(\010\022\027\n\017bracketed" +
+      "_paste\030\003 \001(\010\022A\n\016mouse_tracking\030\004 \001(\0162).w" +
+      "ebterm.terminal.screen.v2.MouseTracking\022" +
+      "A\n\016mouse_encoding\030\005 \001(\0162).webterm.termin" +
+      "al.screen.v2.MouseEncoding\022\027\n\017focus_repo" +
+      "rting\030\006 \001(\010\"\254\002\n\017TerminalPalette\0225\n\ndefau" +
+      "lt_fg\030\001 \001(\0132!.webterm.terminal.screen.v2" +
+      ".Color\0225\n\ndefault_bg\030\002 \001(\0132!.webterm.ter" +
+      "minal.screen.v2.Color\0227\n\014cursor_color\030\003 " +
+      "\001(\0132!.webterm.terminal.screen.v2.Color\022\025" +
+      "\n\rreverse_video\030\004 \001(\010\022G\n\016indexed_colors\030" +
+      "\005 \003(\0132/.webterm.terminal.screen.v2.Index" +
+      "edPaletteColor\022\022\n\ngeneration\030\006 \001(\004\"1\n\023In" +
+      "dexedPaletteColor\022\r\n\005index\030\001 \001(\005\022\013\n\003rgb\030" +
+      "\002 \001(\r\"8\n\rAcquireLayout\022\022\n\nrequest_id\030\001 \001" +
+      "(\t\022\023\n\013interactive\030\002 \001(\010\"\250\001\n\013LayoutLease\022" +
+      "\022\n\nrequest_id\030\001 \001(\t\022\020\n\010lease_id\030\002 \001(\t\022\017\n" +
+      "\007granted\030\003 \001(\010\022\023\n\013interactive\030\004 \001(\010\0226\n\010g" +
+      "eometry\030\005 \001(\0132$.webterm.terminal.screen." +
+      "v2.Geometry\022\025\n\rexpires_at_ms\030\006 \001(\004\"!\n\rRe" +
+      "leaseLayout\022\020\n\010lease_id\030\001 \001(\t\"J\n\006Resize\022" +
+      "\014\n\004cols\030\001 \001(\005\022\014\n\004rows\030\002 \001(\005\022\020\n\010lease_id\030" +
+      "\003 \001(\t\022\022\n\nrequest_id\030\004 \001(\t\"\315\002\n\rTerminalIn" +
+      "put\022\020\n\010lease_id\030\001 \001(\t\0225\n\004text\030\n \001(\0132%.we" +
+      "bterm.terminal.screen.v2.TextInputH\000\0223\n\003" +
+      "key\030\013 \001(\0132$.webterm.terminal.screen.v2.K" +
+      "eyInputH\000\0227\n\005paste\030\014 \001(\0132&.webterm.termi" +
+      "nal.screen.v2.PasteInputH\000\0227\n\005mouse\030\r \001(" +
+      "\0132&.webterm.terminal.screen.v2.MouseInpu" +
+      "tH\000\0227\n\005focus\030\016 \001(\0132&.webterm.terminal.sc" +
+      "reen.v2.FocusInputH\000B\007\n\005inputJ\004\010\002\020\003J\004\010\003\020" +
+      "\004\"\031\n\tTextInput\022\014\n\004data\030\001 \001(\t\"d\n\010KeyInput" +
+      "\022\013\n\003key\030\001 \001(\t\022:\n\tmodifiers\030\002 \001(\0132\'.webte" +
+      "rm.terminal.screen.v2.ModifierSet\022\017\n\007pre" +
+      "ssed\030\003 \001(\010\"\032\n\nPasteInput\022\014\n\004data\030\001 \001(\t\"\301" +
+      "\001\n\nMouseInput\022\013\n\003row\030\001 \001(\005\022\013\n\003col\030\002 \001(\005\022" +
+      "7\n\006button\030\003 \001(\0162\'.webterm.terminal.scree" +
+      "n.v2.MouseButton\022\023\n\013wheel_delta\030\004 \001(\005\022:\n" +
+      "\tmodifiers\030\005 \001(\0132\'.webterm.terminal.scre" +
+      "en.v2.ModifierSet\022\017\n\007pressed\030\006 \001(\010\"\035\n\nFo" +
+      "cusInput\022\017\n\007focused\030\001 \001(\010\"E\n\013ModifierSet" +
+      "\022\r\n\005shift\030\001 \001(\010\022\013\n\003alt\030\002 \001(\010\022\014\n\004ctrl\030\003 \001" +
+      "(\010\022\014\n\004meta\030\004 \001(\010\"\365\002\n\016TerminalEffect\022\023\n\013i" +
+      "nstance_id\030\001 \001(\t\022\027\n\017screen_revision\030\002 \001(" +
+      "\004\0220\n\004bell\030\n \001(\0132 .webterm.terminal.scree" +
+      "n.v2.BellH\000\022J\n\016clipboard_read\030\r \001(\01320.we" +
+      "bterm.terminal.screen.v2.ClipboardReadRe" +
+      "questH\000\022L\n\017clipboard_write\030\016 \001(\01321.webte" +
+      "rm.terminal.screen.v2.ClipboardWriteRequ" +
+      "estH\000\022G\n\014notification\030\017 \001(\0132/.webterm.te" +
+      "rminal.screen.v2.DesktopNotificationH\000B\010" +
+      "\n\006effectJ\004\010\013\020\014J\004\010\014\020\rJ\004\010\020\020\021J\004\010\021\020\022\"\006\n\004Bell" +
+      "\"=\n\024ClipboardReadRequest\022\022\n\nrequest_id\030\001" +
+      " \001(\t\022\021\n\tclipboard\030\002 \001(\t\"L\n\025ClipboardWrit" +
+      "eRequest\022\022\n\nrequest_id\030\001 \001(\t\022\021\n\tclipboar" +
+      "d\030\002 \001(\t\022\014\n\004data\030\003 \001(\014\"2\n\023DesktopNotifica" +
+      "tion\022\r\n\005title\030\001 \001(\t\022\014\n\004body\030\002 \001(\t\"W\n\021Cli" +
+      "pboardResponse\022\022\n\nrequest_id\030\001 \001(\t\022\017\n\007al" +
+      "lowed\030\002 \001(\010\022\017\n\007timeout\030\003 \001(\010\022\014\n\004data\030\004 \001" +
+      "(\014\"\024\n\004Exit\022\014\n\004code\030\001 \001(\005\"\037\n\004Ping\022\027\n\017scre" +
+      "en_revision\030\001 \001(\004\"\037\n\004Pong\022\027\n\017screen_revi" +
+      "sion\030\001 \001(\004*S\n\017InitialSyncMode\022\032\n\026INITIAL" +
+      "_SYNC_MODE_AUTO\020\000\022$\n INITIAL_SYNC_MODE_F" +
+      "ORCE_BASELINE\020\001*Z\n\nBufferKind\022\033\n\027BUFFER_" +
+      "KIND_UNSPECIFIED\020\000\022\024\n\020BUFFER_KIND_MAIN\020\001" +
+      "\022\031\n\025BUFFER_KIND_ALTERNATE\020\002*\240\001\n\tColorKin" +
+      "d\022\032\n\026COLOR_KIND_UNSPECIFIED\020\000\022\031\n\025COLOR_K" +
+      "IND_DEFAULT_FG\020\001\022\031\n\025COLOR_KIND_DEFAULT_B" +
+      "G\020\002\022\025\n\021COLOR_KIND_CURSOR\020\003\022\026\n\022COLOR_KIND" +
+      "_INDEXED\020\004\022\022\n\016COLOR_KIND_RGB\020\005*u\n\013Cursor" +
+      "Shape\022\034\n\030CURSOR_SHAPE_UNSPECIFIED\020\000\022\026\n\022C" +
+      "URSOR_SHAPE_BLOCK\020\001\022\024\n\020CURSOR_SHAPE_BAR\020" +
+      "\002\022\032\n\026CURSOR_SHAPE_UNDERLINE\020\003*\374\001\n\rMouseT" +
+      "racking\022\036\n\032MOUSE_TRACKING_UNSPECIFIED\020\000\022" +
+      "\027\n\023MOUSE_TRACKING_NONE\020\001\022\026\n\022MOUSE_TRACKI" +
+      "NG_X10\020\002\022\030\n\024MOUSE_TRACKING_VT200\020\003\022\"\n\036MO" +
+      "USE_TRACKING_VT200_HIGHLIGHT\020\004\022\037\n\033MOUSE_" +
+      "TRACKING_BUTTON_EVENT\020\005\022\034\n\030MOUSE_TRACKIN" +
+      "G_ANY_EVENT\020\006\022\035\n\031MOUSE_TRACKING_SGR_PIXE" +
+      "LS\020\007*\222\001\n\rMouseEncoding\022\036\n\032MOUSE_ENCODING" +
+      "_UNSPECIFIED\020\000\022\026\n\022MOUSE_ENCODING_X10\020\001\022\027" +
+      "\n\023MOUSE_ENCODING_UTF8\020\002\022\026\n\022MOUSE_ENCODIN" +
+      "G_SGR\020\003\022\030\n\024MOUSE_ENCODING_URXVT\020\004*\242\001\n\013Mo" +
+      "useButton\022\034\n\030MOUSE_BUTTON_UNSPECIFIED\020\000\022" +
+      "\025\n\021MOUSE_BUTTON_LEFT\020\001\022\027\n\023MOUSE_BUTTON_M" +
+      "IDDLE\020\002\022\026\n\022MOUSE_BUTTON_RIGHT\020\003\022\026\n\022MOUSE" +
+      "_BUTTON_WHEEL\020\004\022\025\n\021MOUSE_BUTTON_MOVE\020\005Bu" +
+      "\n\'com.webterm.terminal.protocol.generate" +
+      "dB\025TerminalScreenV2ProtoZ3webterm/go-cor" +
+      "e/internal/screenprotocol/generatedv2b\006p" +
+      "roto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -44280,7 +44769,7 @@ public final class TerminalScreenV2Proto {
     internal_static_webterm_terminal_screen_v2_Baseline_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_webterm_terminal_screen_v2_Baseline_descriptor,
-        new java.lang.String[] { "SessionId", "InstanceId", "LayoutEpoch", "ScreenRevision", "Geometry", "ActiveBuffer", "HistoryExtent", "ScreenLayout", "ScreenLines", "Cursor", "Modes", "Palette", "Dictionary", "DictionaryGeneration", "HistoryGeneration", });
+        new java.lang.String[] { "SessionId", "InstanceId", "LayoutEpoch", "ScreenRevision", "Geometry", "ActiveBuffer", "HistoryExtent", "ScreenLayout", "ScreenLines", "Cursor", "Modes", "Palette", "Dictionary", "DictionaryGeneration", "HistoryGeneration", "HistoryBindings", });
     internal_static_webterm_terminal_screen_v2_TerminalCommit_descriptor =
       getDescriptor().getMessageTypes().get(9);
     internal_static_webterm_terminal_screen_v2_TerminalCommit_fieldAccessorTable = new

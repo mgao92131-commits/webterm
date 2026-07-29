@@ -22,6 +22,25 @@ public final class ScreenMessageV2Validator {
       throw new IllegalArgumentException("invalid Baseline bounds");
     }
     validateExtent(baseline.getHistoryExtent());
+    long historyFirst = baseline.getHistoryExtent().getFirstSeq();
+    long historyLast = baseline.getHistoryExtent().getLastSeq();
+    long expectedBindings = historyLast >= historyFirst ? historyLast - historyFirst + 1 : 0;
+    if (baseline.getHistoryBindingsCount() != expectedBindings) {
+      throw new IllegalArgumentException("incomplete Baseline history catalog");
+    }
+    long previousHistorySeq = 0;
+    java.util.HashSet<Long> historyLineIds = new java.util.HashSet<>();
+    for (TerminalScreenV2Proto.HistoryPush binding :
+        baseline.getHistoryBindingsList()) {
+      if (binding.getHistorySeq() <= previousHistorySeq
+          || binding.getHistorySeq() < historyFirst
+          || binding.getHistorySeq() > historyLast
+          || binding.getLineId() <= 0 || binding.getLineVersion() <= 0
+          || !historyLineIds.add(binding.getLineId())) {
+        throw new IllegalArgumentException("invalid Baseline history binding");
+      }
+      previousHistorySeq = binding.getHistorySeq();
+    }
     validateDictionary(baseline.getDictionary());
     for (TerminalScreenV2Proto.LineData line : baseline.getScreenLinesList()) validateLineData(line, cols);
   }

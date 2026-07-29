@@ -31,6 +31,26 @@ func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint32) ([]byte, error) 
 		DictionaryGeneration: frame.DictionaryGeneration,
 		HistoryGeneration:    frame.HistoryGeneration,
 	}
+	for _, binding := range frame.ScrollbackLineage {
+		if binding.HistorySeq < baseline.HistoryExtent.FirstSeq ||
+			binding.HistorySeq > baseline.HistoryExtent.LastSeq {
+			continue
+		}
+		baseline.HistoryBindings = append(baseline.HistoryBindings, &pb.HistoryPush{
+			HistorySeq:  binding.HistorySeq,
+			LineId:      binding.LineID,
+			LineVersion: binding.LineVersion,
+		})
+	}
+	expectedBindings := uint64(0)
+	if baseline.HistoryExtent.LastSeq >= baseline.HistoryExtent.FirstSeq {
+		expectedBindings = baseline.HistoryExtent.LastSeq - baseline.HistoryExtent.FirstSeq + 1
+	}
+	if uint64(len(baseline.HistoryBindings)) != expectedBindings {
+		return nil, fmt.Errorf(
+			"incomplete baseline history catalog: got %d bindings, want %d",
+			len(baseline.HistoryBindings), expectedBindings)
+	}
 	return marshalPayload(&pb.ScreenEnvelope_Baseline{Baseline: baseline})
 }
 

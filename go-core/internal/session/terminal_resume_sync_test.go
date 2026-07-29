@@ -52,22 +52,15 @@ func TestInitialResumeSyncComparesActualCommitAndBodylessPreserveBaseline(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kind != "baseline" {
-		t.Fatalf("large resume candidate kind=%q, want baseline", kind)
+	if kind != "commit" {
+		t.Fatalf("large resume candidate kind=%q, want commit with catalog-bearing baseline cost", kind)
 	}
 	env.Reset()
 	if err := proto.Unmarshal(payload, &env); err != nil {
 		t.Fatal(err)
 	}
-	baseline := env.GetBaseline()
-	if baseline == nil {
-		t.Fatal("large resume candidate did not encode baseline")
-	}
-	if baseline.ProtoReflect().Descriptor().Fields().ByName("history_tail") != nil {
-		t.Fatal("baseline schema still carries history_tail")
-	}
-	if baseline.GetHistoryExtent().GetLastSeq() != 128 {
-		t.Fatalf("preserve baseline extent=%+v", baseline.GetHistoryExtent())
+	if env.GetTerminalCommit() == nil {
+		t.Fatal("large resume candidate did not encode TerminalCommit")
 	}
 }
 
@@ -120,6 +113,13 @@ func resumeSyncState(rows, cols, historyLines int) terminalengine.ScreenFrame {
 				{Text: fmt.Sprintf("history-%03d", seq), Width: 1},
 			}}},
 		})
+		state.ScrollbackLineage = append(
+			state.ScrollbackLineage,
+			terminalengine.HistoryPush{
+				HistorySeq:  uint64(seq),
+				LineID:      uint64(1000 + seq),
+				LineVersion: 1,
+			})
 	}
 	return state
 }

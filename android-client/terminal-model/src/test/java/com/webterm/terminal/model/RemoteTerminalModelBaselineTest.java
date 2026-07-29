@@ -22,10 +22,14 @@ public final class RemoteTerminalModelBaselineTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(V2ModelTestData.baseline(1, 1)));
     ScreenBaseline invalid = new ScreenBaseline(
-        "s1", "i2", 2, 2, 2, 2, DictionaryEntries.EMPTY, 1, 1,
-        TerminalBufferKind.MAIN,
-        new HistoryExtent(1, 1),
-        Collections.singletonList(V2ModelTestData.line(2000, 1, 1, "b")),
+        "s1", "i2", 2, 2, 2, 2, 1, 1,
+        TerminalBufferKind.MAIN, new HistoryExtent(1, 1),
+        Collections.emptyList(),
+        Collections.singletonList(new ScreenLineContent(
+            new LineKey(2000, 1),
+            new LineBody(1, false, new CellValue[] {
+                new CellValue("b", (byte) 1, null, null)
+            }))),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
     try {
       model.applyBaseline(invalid);

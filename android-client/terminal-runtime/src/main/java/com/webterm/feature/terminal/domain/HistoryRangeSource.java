@@ -3,7 +3,7 @@ package com.webterm.feature.terminal.domain;
 import androidx.annotation.NonNull;
 
 import com.webterm.terminal.model.HistoryExtent;
-import com.webterm.terminal.model.TerminalLine;
+import com.webterm.terminal.model.HistoryBodyEntry;
 
 import java.util.List;
 
@@ -20,11 +20,11 @@ public interface HistoryRangeSource {
     public final long layoutEpoch;
     public final long historyGeneration;
     public final HistoryExtent currentExtent;
-    public final List<TerminalLine> lines;
+    public final List<HistoryBodyEntry> lines;
 
     public Result(@NonNull String instanceId, long layoutEpoch, long historyGeneration,
                   @NonNull HistoryExtent currentExtent,
-                  @NonNull List<TerminalLine> lines) {
+                  @NonNull List<HistoryBodyEntry> lines) {
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
       this.historyGeneration = historyGeneration;
