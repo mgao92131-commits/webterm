@@ -91,6 +91,40 @@ public final class TerminalSessionRuntimePipelineMetricsTest {
   }
 
   @Test
+  public void suspendAbortsActiveRecovery() {
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("suspend-recovery", new RemoteTerminalModel(), Runnable::run);
+    FakeV2Connection connection = connect(runtime);
+    connection.listener.onScreenMessage(baselineEnvelope(100));
+    connection.listener.onScreenMessage(commitEnvelope(99, 101));
+    assertEquals(true, runtime.diagnosticsSnapshot().pipeline.get("recoveryActive"));
+
+    runtime.suspendConnection();
+
+    Map<String, Object> diagnostics = runtime.diagnosticsSnapshot().pipeline;
+    assertEquals(false, diagnostics.get("recoveryActive"));
+    assertEquals("SESSION_SUSPENDED", diagnostics.get("recoveryFinalOutcome"));
+    assertEquals(1L, diagnostics.get("recoveryAbortedCount"));
+  }
+
+  @Test
+  public void newConnectionDoesNotInheritOldRecovery() {
+    TerminalSessionRuntime runtime =
+        new TerminalSessionRuntime("replace-recovery", new RemoteTerminalModel(), Runnable::run);
+    FakeV2Connection first = connect(runtime);
+    first.listener.onScreenMessage(baselineEnvelope(100));
+    first.listener.onScreenMessage(commitEnvelope(99, 101));
+
+    FakeV2Connection replacement = new FakeV2Connection();
+    runtime.attachConnection(replacement);
+
+    Map<String, Object> diagnostics = runtime.diagnosticsSnapshot().pipeline;
+    assertEquals(false, diagnostics.get("recoveryActive"));
+    assertEquals("CONNECTION_REPLACED", diagnostics.get("recoveryFinalOutcome"));
+    assertEquals(1L, diagnostics.get("recoveryAbortedCount"));
+  }
+
+  @Test
   public void dictionaryMismatchRebuildsOnceAndNextHelloForcesBaseline() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     TerminalSessionRuntime runtime =

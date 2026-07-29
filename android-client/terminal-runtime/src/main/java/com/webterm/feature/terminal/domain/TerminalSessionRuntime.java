@@ -452,6 +452,10 @@ public final class TerminalSessionRuntime {
 
   public void attachConnection(@NonNull ScreenConnection connection) {
     ScreenConnection previous = this.connection;
+    if (previous != connection && recoveryArbiter.abort("CONNECTION_REPLACED")) {
+      Diagnostics.info("terminal_recovery", "recovery_aborted",
+          recoveryDiagnosticFields());
+    }
     if (previous != null && previous != connection) {
       previous.releaseLayout();
       previous.close();
@@ -592,6 +596,10 @@ public final class TerminalSessionRuntime {
     connectionEpoch.incrementAndGet();
     connection = null;
     connectionRequiresReplacement = false;
+    if (recoveryArbiter.abort("SESSION_SUSPENDED")) {
+      Diagnostics.info("terminal_recovery", "recovery_aborted",
+          recoveryDiagnosticFields());
+    }
     modelExecutor.execute(() -> {
       bumpSyncGeneration();
       resetResyncRecovery();
@@ -1366,8 +1374,8 @@ public final class TerminalSessionRuntime {
     boolean recoveryWasActive = recoveryArbiter.isRecovering();
     recoveryArbiter.close();
     if (recoveryWasActive) {
-      Diagnostics.warn("terminal_recovery", "recovery_failed",
-          recoveryArbiter.diagnosticsSnapshot());
+      Diagnostics.info("terminal_recovery", "recovery_aborted",
+          recoveryDiagnosticFields());
     }
     shutdownHistoryLoading();
     screenMailbox.reset();
@@ -1682,11 +1690,16 @@ public final class TerminalSessionRuntime {
       TerminalResumeMetrics.screenMailboxRecovered("snapshot");
     }
     resyncCoordinator.onAuthoritativeSnapshot();
-    boolean wasRecovering = recoveryArbiter.isRecovering();
-    recoveryArbiter.complete(connectionEpoch.get(), snapshotKind);
-    if (wasRecovering && !recoveryArbiter.isRecovering()) {
-      Diagnostics.info("terminal_recovery", "recovery_completed",
-          recoveryArbiter.diagnosticsSnapshot());
+    RecoveryArbiter.CompletionResult completion =
+        recoveryArbiter.completeAuthoritative(connectionEpoch.get(), snapshotKind);
+    if (completion == RecoveryArbiter.CompletionResult.COMPLETED_AFTER_EPOCH_CHANGE) {
+      Diagnostics.warn(
+          "terminal_recovery",
+          "recovery_completed_after_epoch_change",
+          recoveryDiagnosticFields());
+    } else if (completion == RecoveryArbiter.CompletionResult.COMPLETED) {
+      Diagnostics.info(
+          "terminal_recovery", "recovery_completed", recoveryDiagnosticFields());
     }
     historyDemandMailbox.invalidatePending();
     historyLoader.resetLifecycle();
@@ -2130,6 +2143,17 @@ public final class TerminalSessionRuntime {
     for (int i = 0; i + 1 < pairs.length; i += 2) {
       fields.put(String.valueOf(pairs[i]), pairs[i + 1]);
     }
+    return fields;
+  }
+
+  private Map<String, Object> recoveryDiagnosticFields() {
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put("sessionId", sessionId);
+    fields.put("runtimeLifecycleId", runtimeLifecycleId);
+    fields.put("connectionEpoch", connectionEpoch.get());
+    fields.put("syncGeneration", publishedSyncGeneration);
+    fields.put("transportGeneration", currentTransportGeneration());
+    fields.putAll(recoveryArbiter.diagnosticsSnapshot());
     return fields;
   }
 

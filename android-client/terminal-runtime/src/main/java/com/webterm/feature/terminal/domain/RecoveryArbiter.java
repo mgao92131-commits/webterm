@@ -20,6 +20,12 @@ public final class RecoveryArbiter {
     TRANSPORT_RECONNECT
   }
 
+  public enum CompletionResult {
+    NO_ACTIVE_RECOVERY,
+    COMPLETED,
+    COMPLETED_AFTER_EPOCH_CHANGE
+  }
+
   public interface Actions {
     void execute(@NonNull Level level, @NonNull String recoveryId, @NonNull String reason);
   }
@@ -61,6 +67,7 @@ public final class RecoveryArbiter {
   private long recoveryStartedCount;
   private long recoveryCompletedCount;
   private long recoveryFailedCount;
+  private long recoveryAbortedCount;
   private long recoveryUpgradeCount;
   private long duplicateTriggerSuppressedCount;
 
@@ -104,7 +111,7 @@ public final class RecoveryArbiter {
     }
 
     if (level != null) {
-      finishActive("SUPERSEDED_BY_NEW_EPOCH", "", false);
+      finishActive("SUPERSEDED_BY_NEW_EPOCH", "", false, true);
     }
     recoveryId = UUID.randomUUID().toString();
     level = requested;
@@ -144,21 +151,35 @@ public final class RecoveryArbiter {
     attempt++;
   }
 
-  public synchronized void complete(
+  public synchronized CompletionResult completeAuthoritative(
       long completedConnectionEpoch, @NonNull String authoritativeSnapshotKind) {
-    if (level == null || completedConnectionEpoch != connectionEpoch) return;
-    finishActive("RECOVERED", authoritativeSnapshotKind, true);
+    if (level == null) return CompletionResult.NO_ACTIVE_RECOVERY;
+    boolean epochChanged = completedConnectionEpoch != connectionEpoch;
+    finishActive(
+        epochChanged ? "RECOVERED_AFTER_EPOCH_CHANGE" : "RECOVERED",
+        authoritativeSnapshotKind,
+        true,
+        false);
+    return epochChanged
+        ? CompletionResult.COMPLETED_AFTER_EPOCH_CHANGE
+        : CompletionResult.COMPLETED;
+  }
+
+  public synchronized boolean abort(@NonNull String outcome) {
+    if (level == null) return false;
+    finishActive(outcome, "", false, true);
+    return true;
   }
 
   public synchronized void fail(@NonNull String outcome) {
     if (level == null) return;
-    finishActive(outcome, "", false);
+    finishActive(outcome, "", false, false);
   }
 
   public synchronized void close() {
     if (closed) return;
     closed = true;
-    if (level != null) finishActive("CLOSED", "", false);
+    if (level != null) finishActive("RUNTIME_CLOSED", "", false, true);
   }
 
   public synchronized boolean isRecovering() {
@@ -177,6 +198,7 @@ public final class RecoveryArbiter {
   @NonNull
   public synchronized Map<String, Object> diagnosticsSnapshot() {
     Map<String, Object> result = new LinkedHashMap<>();
+    result.put("recoveryActive", level != null);
     result.put("recoveryId", recoveryId);
     result.put("recoveryLevel", level != null
         ? level.name() : (lastLevel != null ? lastLevel.name() : ""));
@@ -199,6 +221,7 @@ public final class RecoveryArbiter {
     result.put("recoveryStartedCount", recoveryStartedCount);
     result.put("recoveryCompletedCount", recoveryCompletedCount);
     result.put("recoveryFailedCount", recoveryFailedCount);
+    result.put("recoveryAbortedCount", recoveryAbortedCount);
     result.put("recoveryUpgradeCount", recoveryUpgradeCount);
     result.put("duplicateTriggerSuppressedCount", duplicateTriggerSuppressedCount);
     return result;
@@ -223,13 +246,19 @@ public final class RecoveryArbiter {
     }
   }
 
-  private void finishActive(String outcome, String completedSnapshotKind, boolean completed) {
+  private void finishActive(
+      String outcome, String completedSnapshotKind, boolean completed, boolean aborted) {
     lastDurationMs = elapsedMillis(startedAtNanos);
     completedAtEpochMs = clock.currentTimeMillis();
     finalOutcome = outcome;
     snapshotKind = completedSnapshotKind;
-    if (completed) recoveryCompletedCount++;
-    else recoveryFailedCount++;
+    if (completed) {
+      recoveryCompletedCount++;
+    } else if (aborted) {
+      recoveryAbortedCount++;
+    } else {
+      recoveryFailedCount++;
+    }
     level = null;
   }
 

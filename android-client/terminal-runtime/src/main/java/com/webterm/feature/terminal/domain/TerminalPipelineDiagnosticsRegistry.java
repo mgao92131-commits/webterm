@@ -130,6 +130,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
         long recoveryStartedCount = 0L;
         long recoveryCompletedCount = 0L;
         long recoveryFailedCount = 0L;
+        long recoveryAbortedCount = 0L;
         long recoveryUpgradeCount = 0L;
         long duplicateTriggerSuppressedCount = 0L;
         long projectionArrivalCount = 0L;
@@ -161,6 +162,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             recoveryStartedCount += longOf(pipeline, "recoveryStartedCount");
             recoveryCompletedCount += longOf(pipeline, "recoveryCompletedCount");
             recoveryFailedCount += longOf(pipeline, "recoveryFailedCount");
+            recoveryAbortedCount += longOf(pipeline, "recoveryAbortedCount");
             recoveryUpgradeCount += longOf(pipeline, "recoveryUpgradeCount");
             duplicateTriggerSuppressedCount +=
                 longOf(pipeline, "duplicateTriggerSuppressedCount");
@@ -196,6 +198,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
         recoveryStartedCount += archived.recoveryStartedCount;
         recoveryCompletedCount += archived.recoveryCompletedCount;
         recoveryFailedCount += archived.recoveryFailedCount;
+        recoveryAbortedCount += archived.recoveryAbortedCount;
         recoveryUpgradeCount += archived.recoveryUpgradeCount;
         duplicateTriggerSuppressedCount += archived.duplicateTriggerSuppressedCount;
         projectionArrivalCount += archived.projectionArrivalCount;
@@ -233,6 +236,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
         out.put("recoveryStartedCount", recoveryStartedCount);
         out.put("recoveryCompletedCount", recoveryCompletedCount);
         out.put("recoveryFailedCount", recoveryFailedCount);
+        out.put("recoveryAbortedCount", recoveryAbortedCount);
         out.put("recoveryUpgradeCount", recoveryUpgradeCount);
         out.put("duplicateTriggerSuppressedCount", duplicateTriggerSuppressedCount);
         out.put("projectionArrivalCount", projectionArrivalCount);
@@ -463,6 +467,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
         long recoveryStartedCount;
         long recoveryCompletedCount;
         long recoveryFailedCount;
+        long recoveryAbortedCount;
         long recoveryUpgradeCount;
         long duplicateTriggerSuppressedCount;
         long projectionArrivalCount;
@@ -513,6 +518,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             recoveryStartedCount += longOf(pipeline, "recoveryStartedCount");
             recoveryCompletedCount += longOf(pipeline, "recoveryCompletedCount");
             recoveryFailedCount += longOf(pipeline, "recoveryFailedCount");
+            recoveryAbortedCount += longOf(pipeline, "recoveryAbortedCount");
             recoveryUpgradeCount += longOf(pipeline, "recoveryUpgradeCount");
             duplicateTriggerSuppressedCount +=
                 longOf(pipeline, "duplicateTriggerSuppressedCount");
@@ -571,6 +577,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             recoveryStartedCount = 0L;
             recoveryCompletedCount = 0L;
             recoveryFailedCount = 0L;
+            recoveryAbortedCount = 0L;
             recoveryUpgradeCount = 0L;
             duplicateTriggerSuppressedCount = 0L;
             projectionArrivalCount = 0L;
@@ -621,6 +628,7 @@ public final class TerminalPipelineDiagnosticsRegistry {
             out.recoveryStartedCount = recoveryStartedCount;
             out.recoveryCompletedCount = recoveryCompletedCount;
             out.recoveryFailedCount = recoveryFailedCount;
+            out.recoveryAbortedCount = recoveryAbortedCount;
             out.recoveryUpgradeCount = recoveryUpgradeCount;
             out.duplicateTriggerSuppressedCount = duplicateTriggerSuppressedCount;
             out.projectionArrivalCount = projectionArrivalCount;

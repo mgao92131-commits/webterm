@@ -52,7 +52,7 @@ public final class RecoveryArbiterTest {
   }
 
   @Test
-  public void epochAdvanceLetsAuthoritativeSnapshotCloseSameRecovery() {
+  public void authoritativeSnapshotCompletesRecoveryAfterEpochAdvance() {
     FakeClock clock = new FakeClock();
     RecoveryArbiter arbiter = new RecoveryArbiter((level, id, reason) -> {}, clock);
 
@@ -60,15 +60,15 @@ public final class RecoveryArbiterTest {
     String recoveryId = arbiter.activeRecoveryId();
     arbiter.advanceEpoch(recoveryId, 21, 9);
     clock.advanceMillis(25);
-    arbiter.complete(20, "BASELINE");
-    assertTrue(arbiter.isRecovering());
-    arbiter.complete(21, "BASELINE");
+    assertEquals(
+        RecoveryArbiter.CompletionResult.COMPLETED_AFTER_EPOCH_CHANGE,
+        arbiter.completeAuthoritative(20, "BASELINE"));
 
     assertFalse(arbiter.isRecovering());
     Map<String, Object> metrics = arbiter.diagnosticsSnapshot();
     assertEquals(1L, metrics.get("recoveryCompletedCount"));
     assertEquals(0L, metrics.get("recoveryFailedCount"));
-    assertEquals("RECOVERED", metrics.get("recoveryFinalOutcome"));
+    assertEquals("RECOVERED_AFTER_EPOCH_CHANGE", metrics.get("recoveryFinalOutcome"));
     assertEquals("BASELINE", metrics.get("recoverySnapshotKind"));
     assertEquals(25L, metrics.get("recoveryDurationMs"));
   }
@@ -85,7 +85,23 @@ public final class RecoveryArbiterTest {
         RecoveryArbiter.Level.CHANNEL_REBUILD, "late timeout", 1, 1, false));
     assertFalse(arbiter.isRecovering());
     assertEquals(1, actions.size());
-    assertEquals(1L, arbiter.diagnosticsSnapshot().get("recoveryFailedCount"));
+    assertEquals(0L, arbiter.diagnosticsSnapshot().get("recoveryFailedCount"));
+    assertEquals(1L, arbiter.diagnosticsSnapshot().get("recoveryAbortedCount"));
+  }
+
+  @Test
+  public void abortEndsRecoveryWithoutCountingFailure() {
+    RecoveryArbiter arbiter =
+        new RecoveryArbiter((level, id, reason) -> {}, new FakeClock());
+    arbiter.request(RecoveryArbiter.Level.IN_BAND_RESYNC, "gap", 4, 2, false);
+
+    assertTrue(arbiter.abort("SESSION_SUSPENDED"));
+    assertFalse(arbiter.isRecovering());
+    assertFalse(arbiter.abort("DUPLICATE_ABORT"));
+    Map<String, Object> metrics = arbiter.diagnosticsSnapshot();
+    assertEquals("SESSION_SUSPENDED", metrics.get("recoveryFinalOutcome"));
+    assertEquals(1L, metrics.get("recoveryAbortedCount"));
+    assertEquals(0L, metrics.get("recoveryFailedCount"));
   }
 
   @Test
