@@ -110,6 +110,8 @@ public final class DeviceConnection {
     private final LogicalChannelRegistry channelRegistry = new LogicalChannelRegistry();
     private final MuxOutboundQueue outboundQueue =
         new MuxOutboundQueue(MAX_PENDING_TUNNEL_FRAMES, MAX_PENDING_TUNNEL_BYTES);
+    private final MuxInboundMailbox inboundMailbox = new MuxInboundMailbox();
+    private final Runnable inboundDrainRunnable = this::drainInboundEvents;
     private final MuxControlCodec controlCodec = new MuxControlCodec();
     private final DeviceControlPlane controlPlane;
     private volatile int activeChannelCount;
@@ -208,6 +210,7 @@ public final class DeviceConnection {
         public final boolean agentRecoveryContextClearPending;
         public final MuxOutboundQueue.Snapshot outboundQueue;
         public final InboundDropSnapshot inboundDrops;
+        public final MuxInboundMailbox.Snapshot inboundMailbox;
         /** 仅 recentClosed 填充；活跃快照为 0。 */
         public final long closedAtEpochMs;
         /** 仅 recentClosed 填充；活跃快照为空。 */
@@ -225,13 +228,14 @@ public final class DeviceConnection {
                             int recoveryAttemptCount, String recoveryInitialFailureKind,
                             boolean agentRecoveryContextClearPending,
                             MuxOutboundQueue.Snapshot outboundQueue,
-                            InboundDropSnapshot inboundDrops) {
+                            InboundDropSnapshot inboundDrops,
+                            MuxInboundMailbox.Snapshot inboundMailbox) {
             this(baseUrl, deviceId, connectionId, recoveryId, physicalDesired, physicalConnected,
                 physicalConnecting, stopped, transportGeneration, activeChannelCount,
                 lastCloseReason, connectionStartedAtNanos, connectedAtNanos, snapshotPublishedAtNanos,
                 connectElapsedMs, connectedElapsedMs, recoveryStartedAtNanos,
                 recoveryAttemptCount, recoveryInitialFailureKind, agentRecoveryContextClearPending,
-                outboundQueue, inboundDrops, 0L, "");
+                outboundQueue, inboundDrops, inboundMailbox, 0L, "");
         }
 
         DiagnosticsSnapshot(String baseUrl, String deviceId, String connectionId, String recoveryId,
@@ -247,6 +251,7 @@ public final class DeviceConnection {
                             boolean agentRecoveryContextClearPending,
                             MuxOutboundQueue.Snapshot outboundQueue,
                             InboundDropSnapshot inboundDrops,
+                            MuxInboundMailbox.Snapshot inboundMailbox,
                             long closedAtEpochMs, String closeReason) {
             this.baseUrl = baseUrl != null ? baseUrl : "";
             this.deviceId = deviceId != null ? deviceId : "";
@@ -271,6 +276,7 @@ public final class DeviceConnection {
             this.agentRecoveryContextClearPending = agentRecoveryContextClearPending;
             this.outboundQueue = outboundQueue;
             this.inboundDrops = inboundDrops;
+            this.inboundMailbox = inboundMailbox;
             this.closedAtEpochMs = closedAtEpochMs;
             this.closeReason = closeReason != null ? closeReason : "";
         }
@@ -304,7 +310,7 @@ public final class DeviceConnection {
                 connectionStartedAtNanos, connectedAtNanos, snapshotPublishedAtNanos,
                 connectElapsedMs, connectedElapsedMs, recoveryStartedAtNanos, recoveryAttemptCount,
                 recoveryInitialFailureKind, agentRecoveryContextClearPending,
-                outboundQueue, inboundDrops,
+                outboundQueue, inboundDrops, inboundMailbox,
                 closedAtEpochMs, closeReason != null ? closeReason.name() : "");
         }
     }
@@ -331,6 +337,7 @@ public final class DeviceConnection {
 
     private void installTransport() {
         int generation = ++transportGeneration;
+        inboundMailbox.clearOverflowGeneration(generation - 1);
         String handshakeCookie = cookie == null ? "" : cookie;
         installedCredentialGeneration = credentialGeneration;
         String wsUrl = WebTermUrls.toWebSocketUrl(this.baseUrl) + "/ws/sessions";
@@ -380,11 +387,12 @@ public final class DeviceConnection {
             () -> onPhysicalConnectTimeout(generation), PHYSICAL_CONNECT_TIMEOUT_MS);
         sourceTransport.start(new MuxTransport.Listener() {
             @Override public void onOpen() {
-                runOnState(() -> onPhysicalOpen(generation, sourceTransport));
+                offerInbound(MuxInboundMailbox.InboundEvent.Open.of(generation, sourceTransport));
             }
 
             @Override public void onText(String text) {
-                runOnState(() -> handleControlMessage(generation, sourceTransport, text));
+                offerInbound(MuxInboundMailbox.InboundEvent.Text.of(
+                    generation, sourceTransport, text));
             }
 
             @Override public void onBinary(byte[] data) {
@@ -393,12 +401,13 @@ public final class DeviceConnection {
 
             @Override public void onBinaryBuffer(ByteBuffer data) {
                 ByteBuffer frame = data.asReadOnlyBuffer();
-                runOnState(() -> dispatchBinaryFrame(generation, sourceTransport, frame));
+                offerInbound(MuxInboundMailbox.InboundEvent.Binary.of(
+                    generation, sourceTransport, frame));
             }
 
             @Override public void onClosed(int code, String reason) {
-                runOnState(() ->
-                    handlePhysicalDisconnected(generation, sourceTransport, code, reason));
+                offerInbound(MuxInboundMailbox.InboundEvent.Closed.of(
+                    generation, sourceTransport, code, reason));
             }
 
             @Override public void onError(String message) {
@@ -406,10 +415,75 @@ public final class DeviceConnection {
             }
 
             @Override public void onError(int code, String message) {
-                runOnState(() ->
-                    handlePhysicalDisconnected(generation, sourceTransport, code, message));
+                offerInbound(MuxInboundMailbox.InboundEvent.Error.of(
+                    generation, sourceTransport, code, message));
             }
         });
+    }
+
+    private void offerInbound(MuxInboundMailbox.InboundEvent event) {
+        MuxInboundMailbox.Offer offer = inboundMailbox.offer(event);
+        if (offer.scheduleDrain) {
+            if (!stateHandler.post(inboundDrainRunnable)) {
+                // Handler 已关闭时同步清空，避免持有 ByteBuffer。
+                inboundMailbox.clear();
+            }
+        }
+        if (offer.overflowed) {
+            Diagnostics.warn("device_connection", "inbound_mailbox_overflow", physicalFields(
+                "overflowGeneration", offer.overflowGeneration,
+                "overflowFrames", offer.overflowFrames,
+                "overflowBytes", offer.overflowBytes));
+            stateHandler.post(() -> handleInboundOverflow(offer.overflowGeneration));
+        }
+    }
+
+    private void drainInboundEvents() {
+        long deadline = System.nanoTime() + MuxInboundMailbox.MAX_DRAIN_NANOS;
+        int processed = 0;
+        while (processed < MuxInboundMailbox.MAX_DRAIN_EVENTS
+                && System.nanoTime() < deadline) {
+            MuxInboundMailbox.InboundEvent event = inboundMailbox.poll();
+            if (event == null) break;
+            dispatchInboundEvent(event);
+            processed++;
+        }
+        inboundMailbox.noteDrainBatch(processed);
+        if (inboundMailbox.finishDrainOrReschedule()) {
+            stateHandler.post(inboundDrainRunnable);
+        } else {
+            publishDiagnosticsSnapshot();
+        }
+    }
+
+    private void dispatchInboundEvent(MuxInboundMailbox.InboundEvent event) {
+        if (event instanceof MuxInboundMailbox.InboundEvent.Open open) {
+            onPhysicalOpen(open.generation(), open.sourceTransport());
+        } else if (event instanceof MuxInboundMailbox.InboundEvent.Text text) {
+            handleControlMessage(text.generation(), text.sourceTransport(), text.text());
+        } else if (event instanceof MuxInboundMailbox.InboundEvent.Binary binary) {
+            dispatchBinaryFrame(binary.generation(), binary.sourceTransport(), binary.data());
+        } else if (event instanceof MuxInboundMailbox.InboundEvent.Closed closed) {
+            handlePhysicalDisconnected(
+                closed.generation(), closed.sourceTransport(), closed.code(), closed.reason());
+        } else if (event instanceof MuxInboundMailbox.InboundEvent.Error error) {
+            handlePhysicalDisconnected(
+                error.generation(), error.sourceTransport(), error.code(), error.message());
+        }
+    }
+
+    private void handleInboundOverflow(int generation) {
+        if (stopped) return;
+        if (generation != transportGeneration) {
+            inboundMailbox.clearOverflowGeneration(generation);
+            return;
+        }
+        reconnectTransport(
+            TransportReconnectTrigger.INBOUND_OVERFLOW,
+            ConnectionCloseReason.RECONNECT_RESET,
+            true,
+            "inbound mailbox overflow");
+        inboundMailbox.clearOverflowGeneration(generation);
     }
 
     private void onPhysicalOpen(int generation, MuxTransport sourceTransport) {
@@ -859,7 +933,11 @@ public final class DeviceConnection {
             recoveryStartedAtNanos, recoveryAttemptCount,
             recoveryInitialFailure != null ? recoveryInitialFailure.name() : "",
             agentRecoveryContextClearPending,
-            outboundQueue.snapshot(), inboundDropSnapshot());
+            outboundQueue.snapshot(), inboundDropSnapshot(), inboundMailbox.snapshot());
+    }
+
+    MuxInboundMailbox.Snapshot inboundMailboxSnapshot() {
+        return inboundMailbox.snapshot();
     }
 
     /** 诊断导出：只返回 state handler 已发布的不可变快照。 */
@@ -876,7 +954,7 @@ public final class DeviceConnection {
             recoveryStartedAtNanos, recoveryAttemptCount,
             recoveryInitialFailure != null ? recoveryInitialFailure.name() : "",
             agentRecoveryContextClearPending,
-            outboundQueue.snapshot(), inboundDropSnapshot());
+            outboundQueue.snapshot(), inboundDropSnapshot(), inboundMailbox.snapshot());
     }
 
     private boolean sendChannelOpen(LogicalChannelRegistry.Channel channel) {
@@ -941,6 +1019,7 @@ public final class DeviceConnection {
         agentRecoveryContextClearPending = false;
         if (!preserveRecovery) clearRecoveryState();
         if (closeInstalledTransport && transport != null) transport.close();
+        inboundMailbox.clear();
         publishDiagnosticsSnapshot();
     }
 
