@@ -1,6 +1,7 @@
 package com.webterm.terminal.model;
 
 import java.util.ArrayList;
+import java.util.AbstractList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -44,28 +45,68 @@ public final class UnifiedContentAxis {
   }
 
   private final List<Item> items;
-  private final Map<Long, Long> rowByLineId;
-  private final Map<LineKey, Long> rowByLineKey;
+  private final HistoryPart history;
+  private final Map<Long, Long> activeRowByLineId;
+  private final Map<LineKey, Long> activeRowByLineKey;
   private final long rowCount;
   private final long historyRowCount;
 
   private UnifiedContentAxis(
-      List<Item> items, Map<Long, Long> rowByLineId,
-      Map<LineKey, Long> rowByLineKey,
-      long rowCount, long historyRowCount) {
-    this.items = Collections.unmodifiableList(items);
-    this.rowByLineId = Collections.unmodifiableMap(rowByLineId);
-    this.rowByLineKey = Collections.unmodifiableMap(rowByLineKey);
+      HistoryPart history, List<Item> activeItems,
+      Map<Long, Long> activeRowByLineId, Map<LineKey, Long> activeRowByLineKey,
+      long rowCount) {
+    this.history = history;
+    this.items = new CombinedItems(history.items, activeItems);
+    this.activeRowByLineId = Collections.unmodifiableMap(activeRowByLineId);
+    this.activeRowByLineKey = Collections.unmodifiableMap(activeRowByLineKey);
     this.rowCount = rowCount;
-    this.historyRowCount = historyRowCount;
+    this.historyRowCount = history.rowCount;
   }
 
   public static UnifiedContentAxis empty() {
     return new UnifiedContentAxis(
-        Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(), 0, 0);
+        HistoryPart.EMPTY, Collections.emptyList(),
+        Collections.emptyMap(), Collections.emptyMap(), 0);
   }
 
   static UnifiedContentAxis build(TerminalSurfaceState surface) {
+    RenderLine[] rows = new RenderLine[surface.activeRows.size()];
+    for (int row = 0; row < rows.length; row++) {
+      LineKey key = surface.activeRows.keyAt(row);
+      LineBody body = surface.bodyCache.body(key);
+      if (body == null) {
+        throw new IllegalStateException("ActiveRows references missing LineKey " + key);
+      }
+      rows[row] = new RenderLine(key, body);
+    }
+    return build(surface, ScreenRenderView.takeOwnership(rows), null, true);
+  }
+
+  static UnifiedContentAxis build(
+      TerminalSurfaceState surface,
+      ScreenRenderView screen,
+      UnifiedContentAxis previous,
+      boolean rebuildHistory) {
+    HistoryPart history = previous != null && !rebuildHistory
+        ? previous.history : buildHistory(surface);
+    List<Item> activeItems = new ArrayList<>(screen.size());
+    Map<Long, Long> activeRowsById = new HashMap<>();
+    Map<LineKey, Long> activeRowsByKey = new HashMap<>();
+    long row = history.rowCount;
+    for (int activeRow = 0; activeRow < screen.size(); activeRow++) {
+      RenderLine line = screen.lineAt(activeRow);
+      LineKey key = line.key();
+      activeItems.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, key.lineId(), line));
+      activeRowsById.put(key.lineId(), row);
+      activeRowsByKey.put(key, row);
+      row++;
+    }
+    return new UnifiedContentAxis(
+        history, Collections.unmodifiableList(activeItems),
+        activeRowsById, activeRowsByKey, row);
+  }
+
+  private static HistoryPart buildHistory(TerminalSurfaceState surface) {
     List<Item> result = new ArrayList<>();
     Map<Long, Long> rowsById = new HashMap<>();
     Map<LineKey, Long> rowsByKey = new HashMap<>();
@@ -104,20 +145,11 @@ public final class UnifiedContentAxis {
           nextSeq, extent.lastSeq, 0, null));
       row += count;
     }
-    long historyRows = row;
-    for (int activeRow = 0; activeRow < surface.activeRows.size(); activeRow++) {
-      LineKey key = surface.activeRows.keyAt(activeRow);
-      LineBody body = surface.bodyCache.body(key);
-      if (body == null) {
-        throw new IllegalStateException("ActiveRows references missing LineKey " + key);
-      }
-      RenderLine line = new RenderLine(key, body);
-      result.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, key.lineId(), line));
-      rowsById.put(key.lineId(), row);
-      rowsByKey.put(key, row);
-      row++;
-    }
-    return new UnifiedContentAxis(result, rowsById, rowsByKey, row, historyRows);
+    return new HistoryPart(
+        Collections.unmodifiableList(result),
+        Collections.unmodifiableMap(rowsById),
+        Collections.unmodifiableMap(rowsByKey),
+        row);
   }
 
   public List<Item> items() {
@@ -133,11 +165,13 @@ public final class UnifiedContentAxis {
   }
 
   public Long rowOfLineId(long lineId) {
-    return rowByLineId.get(lineId);
+    Long active = activeRowByLineId.get(lineId);
+    return active != null ? active : history.rowByLineId.get(lineId);
   }
 
   public Long rowOfLineKey(LineKey key) {
-    return rowByLineKey.get(key);
+    Long active = activeRowByLineKey.get(key);
+    return active != null ? active : history.rowByLineKey.get(key);
   }
 
   public Item itemAtRow(long axisRow) {
@@ -158,5 +192,44 @@ public final class UnifiedContentAxis {
       }
     }
     throw new IllegalStateException("axis row not covered");
+  }
+
+  private static final class HistoryPart {
+    static final HistoryPart EMPTY = new HistoryPart(
+        Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(), 0);
+
+    final List<Item> items;
+    final Map<Long, Long> rowByLineId;
+    final Map<LineKey, Long> rowByLineKey;
+    final long rowCount;
+
+    HistoryPart(
+        List<Item> items, Map<Long, Long> rowByLineId,
+        Map<LineKey, Long> rowByLineKey, long rowCount) {
+      this.items = items;
+      this.rowByLineId = rowByLineId;
+      this.rowByLineKey = rowByLineKey;
+      this.rowCount = rowCount;
+    }
+  }
+
+  private static final class CombinedItems extends AbstractList<Item> {
+    private final List<Item> history;
+    private final List<Item> active;
+
+    CombinedItems(List<Item> history, List<Item> active) {
+      this.history = history;
+      this.active = active;
+    }
+
+    @Override
+    public Item get(int index) {
+      return index < history.size() ? history.get(index) : active.get(index - history.size());
+    }
+
+    @Override
+    public int size() {
+      return history.size() + active.size();
+    }
   }
 }

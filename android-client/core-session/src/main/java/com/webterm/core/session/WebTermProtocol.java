@@ -4,6 +4,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 
 import okio.ByteString;
 
@@ -65,12 +66,12 @@ public final class WebTermProtocol {
     static final class TunnelFrame {
         final String tunnelId;
         final byte extraByte;
-        final byte[] payload;
+        final ByteBuffer payload;
 
-        TunnelFrame(String tunnelId, byte extraByte, byte[] payload) {
+        TunnelFrame(String tunnelId, byte extraByte, ByteBuffer payload) {
             this.tunnelId = tunnelId;
             this.extraByte = extraByte;
-            this.payload = payload;
+            this.payload = payload.asReadOnlyBuffer();
         }
     }
 
@@ -89,15 +90,22 @@ public final class WebTermProtocol {
     }
 
     static TunnelFrame decodeTunnelFrame(byte[] data) {
-        if (data == null || data.length < 3) return null;
-        if ((data[0] & 0xff) != MSG_TYPE_WS_DATA) return null;
-        int idLen = data[1] & 0xff;
-        if (data.length < 2 + idLen + 1) return null;
-        String tunnelId = new String(data, 2, idLen, StandardCharsets.UTF_8);
-        byte extraByte = data[2 + idLen];
+        return data == null ? null : decodeTunnelFrame(ByteBuffer.wrap(data));
+    }
+
+    static TunnelFrame decodeTunnelFrame(ByteBuffer data) {
+        if (data == null || data.remaining() < 3) return null;
+        ByteBuffer frame = data.asReadOnlyBuffer();
+        int start = frame.position();
+        if ((frame.get(start) & 0xff) != MSG_TYPE_WS_DATA) return null;
+        int idLen = frame.get(start + 1) & 0xff;
+        if (frame.remaining() < 2 + idLen + 1) return null;
+        ByteBuffer idBytes = frame.duplicate();
+        idBytes.position(start + 2).limit(start + 2 + idLen);
+        String tunnelId = StandardCharsets.UTF_8.decode(idBytes.slice()).toString();
+        byte extraByte = frame.get(start + 2 + idLen);
         int payloadStart = 3 + idLen;
-        byte[] payload = new byte[data.length - payloadStart];
-        System.arraycopy(data, payloadStart, payload, 0, payload.length);
-        return new TunnelFrame(tunnelId, extraByte, payload);
+        frame.position(start + payloadStart);
+        return new TunnelFrame(tunnelId, extraByte, frame.slice().asReadOnlyBuffer());
     }
 }

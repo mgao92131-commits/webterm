@@ -40,6 +40,7 @@ public final class RemoteTerminalRenderer {
   private final Rect clipBounds = new Rect();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
+  private int phaseMetricsFrame;
 
   private float cellWidth;
   private float lineHeight;
@@ -127,23 +128,21 @@ public final class RemoteTerminalRenderer {
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn,
                      @Nullable TerminalLineRenderNodeCache lineCache) {
     long renderStartedNanos = System.nanoTime();
+    boolean samplePhases = (++phaseMetricsFrame & 63) == 1;
     long viewportCalculationNanos = 0L;
     long historyRowLookupNanos = 0L;
     long screenRowLookupNanos = 0L;
     long renderNodeDrawOrRecordNanos = 0L;
     long canvasDrawNanos = 0L;
     try {
-    long screenCopyStartedNanos = System.nanoTime();
-    RenderLine[] screen = model.screenView.copyLines();
-    screenRowLookupNanos += System.nanoTime() - screenCopyStartedNanos;
     if (lineHeight <= 0 || cellWidth <= 0) return;
 
-    long viewportStartedNanos = System.nanoTime();
+    long viewportStartedNanos = samplePhases ? System.nanoTime() : 0L;
     UnifiedContentAxis axis = model.contentAxis;
     // The content axis is the only vertical coordinate space. History and
     // ActiveRows remain semantic item kinds, not independent layout systems.
     HistoryRenderView history = model.history;
-    int screenRows = screen.length;
+    int screenRows = model.screenView.size();
     long historyRowsLong = axis.historyRowCount();
     int historyRows = (int) Math.min(Integer.MAX_VALUE, historyRowsLong);
     int maxScrollOffset = Math.round(historyRows * lineHeight);
@@ -164,7 +163,9 @@ public final class RemoteTerminalRenderer {
         (long) Math.floor((clip.top - contentTopY) / lineHeight) - 1L);
     long lastAxisRow = Math.min(axisRows,
         (long) Math.ceil((clip.bottom - contentTopY) / lineHeight) + 1L);
-    viewportCalculationNanos = System.nanoTime() - viewportStartedNanos;
+    if (samplePhases) {
+      viewportCalculationNanos = System.nanoTime() - viewportStartedNanos;
+    }
 
     TerminalPalette palette = model.palette;
     int canvasBackground = resolveColor(palette,
@@ -174,33 +175,45 @@ public final class RemoteTerminalRenderer {
     TerminalCursor cursor = model.cursor;
     boolean cursorVisible = shouldDrawCursor(
         viewport, model.activeBuffer, cursor, cursorBlinkOn);
-    long backgroundDrawStartedNanos = System.nanoTime();
+    long backgroundDrawStartedNanos = samplePhases ? System.nanoTime() : 0L;
     canvas.drawColor(canvasBackground);
-    canvasDrawNanos += System.nanoTime() - backgroundDrawStartedNanos;
-    for (long axisRow = firstAxisRow; axisRow < lastAxisRow; axisRow++) {
-      long rowLookupStartedNanos = System.nanoTime();
+    if (samplePhases) {
+      canvasDrawNanos += System.nanoTime() - backgroundDrawStartedNanos;
+    }
+    int historyClipSaveCount = -1;
+    try {
+      for (long axisRow = firstAxisRow; axisRow < lastAxisRow; axisRow++) {
+      long rowLookupStartedNanos = samplePhases ? System.nanoTime() : 0L;
       UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
-      long rowLookupNanos = System.nanoTime() - rowLookupStartedNanos;
-      if (item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE) {
-        screenRowLookupNanos += rowLookupNanos;
-      } else {
-        historyRowLookupNanos += rowLookupNanos;
+      if (samplePhases) {
+        long rowLookupNanos = System.nanoTime() - rowLookupStartedNanos;
+        if (item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE) {
+          screenRowLookupNanos += rowLookupNanos;
+        } else {
+          historyRowLookupNanos += rowLookupNanos;
+        }
       }
       float y = contentTopY + axisRow * lineHeight;
       boolean active = item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE;
       if (!active && (y + lineHeight <= topInset + 0.001f || y >= screenTopY)) continue;
+      if (!active && historyClipSaveCount < 0) {
+        historyClipSaveCount = canvas.save();
+        canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
+      } else if (active && historyClipSaveCount >= 0) {
+        canvas.restoreToCount(historyClipSaveCount);
+        historyClipSaveCount = -1;
+      }
 
       if (item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE) {
         long historySeq = item.fromHistorySeq + (axisRow - item.startRow);
         long historyIndex = historySeq - history.firstSeq();
         if (historyIndex >= 0 && historyIndex <= Integer.MAX_VALUE) {
-          long drawStartedNanos = System.nanoTime();
-          canvas.save();
-          canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
+          long drawStartedNanos = samplePhases ? System.nanoTime() : 0L;
           drawHistoryPlaceholder(canvas, model.columns, history, (int) historyIndex, y,
               canvasBackground);
-          canvas.restore();
-          canvasDrawNanos += System.nanoTime() - drawStartedNanos;
+          if (samplePhases) {
+            canvasDrawNanos += System.nanoTime() - drawStartedNanos;
+          }
         }
         continue;
       }
@@ -210,46 +223,63 @@ public final class RemoteTerminalRenderer {
       long historySeq = active ? 0 : item.fromHistorySeq;
       if (!active) {
         visibleHistoryRows++;
-        canvas.save();
-        canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
       }
       TerminalLineRenderNodeCache.LineDrawResult cacheResult;
       if (useCache) {
-        long nodeStartedNanos = System.nanoTime();
+        long nodeStartedNanos = samplePhases ? System.nanoTime() : 0L;
         cacheResult = lineCache.drawOrRecord(canvas, line, y, !active);
-        renderNodeDrawOrRecordNanos += System.nanoTime() - nodeStartedNanos;
+        if (samplePhases) {
+          renderNodeDrawOrRecordNanos += System.nanoTime() - nodeStartedNanos;
+        }
       } else {
         cacheResult = TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
       }
       if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
-        long drawStartedNanos = System.nanoTime();
+        long drawStartedNanos = samplePhases ? System.nanoTime() : 0L;
         if (useCache) {
           drawTerminalLineContent(canvas, model.columns, palette, line, y, canvasBackground);
         } else {
           drawLine(canvas, model.columns, palette, line, y, historySeq, screenRow,
               normalizedSelection, cursor, active && cursorVisible, canvasBackground);
         }
-        canvasDrawNanos += System.nanoTime() - drawStartedNanos;
+        if (samplePhases) {
+          canvasDrawNanos += System.nanoTime() - drawStartedNanos;
+        }
       }
       if (useCache) {
-        long overlayStartedNanos = System.nanoTime();
+        long overlayStartedNanos = samplePhases ? System.nanoTime() : 0L;
         drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
             historySeq, screenRow, normalizedSelection, canvasBackground);
         if (active && cursorVisible && cursor.row == screenRow) {
           drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
               screenRow, cursor, canvasBackground);
         }
-        canvasDrawNanos += System.nanoTime() - overlayStartedNanos;
+        if (samplePhases) {
+          canvasDrawNanos += System.nanoTime() - overlayStartedNanos;
+        }
       }
-      if (!active) canvas.restore();
+      }
+    } finally {
+      if (historyClipSaveCount >= 0) {
+        canvas.restoreToCount(historyClipSaveCount);
+      }
     }
     TerminalRenderMetrics.visibleHistoryRowsDrawn(visibleHistoryRows);
     } finally {
-      TerminalRenderMetrics.renderFramePhases(
-          viewportCalculationNanos, historyRowLookupNanos, screenRowLookupNanos,
-          renderNodeDrawOrRecordNanos, canvasDrawNanos);
+      if (samplePhases) {
+        TerminalRenderMetrics.renderFramePhases(
+            scalePhaseSample(viewportCalculationNanos),
+            scalePhaseSample(historyRowLookupNanos),
+            scalePhaseSample(screenRowLookupNanos),
+            scalePhaseSample(renderNodeDrawOrRecordNanos),
+            scalePhaseSample(canvasDrawNanos));
+      }
       TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
     }
+  }
+
+  private static long scalePhaseSample(long nanos) {
+    return nanos > Long.MAX_VALUE / 64L ? Long.MAX_VALUE : nanos * 64L;
   }
 
   static boolean shouldDrawCursor(

@@ -130,7 +130,7 @@ public final class RemoteTerminalModel {
     pendingRenderDirty.mergeHistoryRange(
         displayExtent().firstSeq, displayExtent().lastSeq, true);
     pendingTerminalState.merge(geometryChanged, true, false, false, 0, 0);
-    publishPendingRenderUpdate();
+    publishPendingRenderUpdate(true);
     return result;
   }
 
@@ -163,13 +163,8 @@ public final class RemoteTerminalModel {
     return new StagedCommit(commit.baseRevision, () -> {
       HistoryExtent oldExtent = previous.mainSurface.historyCatalog.extent();
       install(next);
-      BitSet changedRows = null;
-      if (delta.screenChanged()) {
-        changedRows = new BitSet(rows);
-        changedRows.set(0, rows);
-      }
       pendingRenderDirty.merge(
-          false, changedRows, 0, null, rows,
+          false, delta.changedRows(), delta.screenScrollRows(), delta.exposedRows(), rows,
           delta.historyChanged(), delta.geometryChanged(), cursorChanged,
           previous.cursor.row, next.cursor.row,
           paletteChanged, false, false, modesChanged, bufferChanged);
@@ -432,6 +427,10 @@ public final class RemoteTerminalModel {
   }
 
   private void publishPendingRenderUpdate() {
+    publishPendingRenderUpdate(false);
+  }
+
+  private void publishPendingRenderUpdate(boolean forceSnapshotRebuild) {
     if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) return;
     long started = System.nanoTime();
     try {
@@ -439,7 +438,7 @@ public final class RemoteTerminalModel {
       TerminalStateUpdate currentState = pendingTerminalState;
       pendingRenderDirty = new RenderDirtyState();
       pendingTerminalState = new TerminalStateUpdate();
-      publishRenderSnapshot();
+      publishRenderSnapshot(currentDirty, forceSnapshotRebuild);
       RenderSnapshot currentSnapshot = renderSnapshot;
       long version = publicationVersion.incrementAndGet();
       pendingPublication.getAndUpdate(previous -> {
@@ -463,22 +462,37 @@ public final class RemoteTerminalModel {
     }
   }
 
-  private void publishRenderSnapshot() {
+  private void publishRenderSnapshot(
+      RenderDirtyState dirty, boolean forceSnapshotRebuild) {
     if (state == null) {
       renderSnapshot = RenderSnapshot.empty();
       publishProjectionReadView();
       return;
     }
     TerminalSurfaceState surface = state.activeSurface();
-    RenderLine[] screen = new RenderLine[surface.activeRows.size()];
-    for (int row = 0; row < screen.length; row++) {
-      LineKey key = surface.activeRows.keyAt(row);
-      LineBody body = surface.bodyCache.body(key);
-      if (body == null) {
-        throw new IllegalStateException("active row body missing for " + key);
-      }
-      screen[row] = new RenderLine(key, body);
-    }
+    RenderSnapshot previous = renderSnapshot;
+    boolean screenChanged = forceSnapshotRebuild
+        || dirty.fullInvalidate || dirty.geometryChanged || dirty.activeBufferChanged
+        || dirty.screenScrollRows != 0
+        || !dirty.changedScreenRows.isEmpty()
+        || !dirty.exposedScreenRows.isEmpty()
+        || previous.screenView.size() != surface.activeRows.size();
+    ScreenRenderView screenView = screenChanged
+        ? buildScreenRenderView(
+            surface, previous.screenView, dirty,
+            forceSnapshotRebuild || dirty.fullInvalidate
+                || dirty.geometryChanged || dirty.activeBufferChanged)
+        : previous.screenView;
+    boolean historyChanged = forceSnapshotRebuild
+        || dirty.historyChanged || dirty.activeBufferChanged;
+    HistoryRenderView historyView = historyChanged
+        ? new SemanticHistoryRenderView(surface.historyCatalog, surface.bodyCache)
+        : previous.history;
+    UnifiedContentAxis contentAxis =
+        screenChanged || historyChanged
+            ? UnifiedContentAxis.build(
+                surface, screenView, previous.contentAxis, historyChanged)
+            : previous.contentAxis;
     renderSnapshot = new RenderSnapshot(
         instanceId,
         layoutEpoch,
@@ -487,16 +501,60 @@ public final class RemoteTerminalModel {
         rows,
         columns,
         activeBuffer,
-        new ScreenRenderView(screen),
-        new SemanticHistoryRenderView(
-            surface.historyCatalog, surface.bodyCache),
-        UnifiedContentAxis.build(surface),
+        screenView,
+        historyView,
+        contentAxis,
         state.cursor,
         state.modes,
         state.palette,
         displayExtent().firstSeq,
         false);
     publishProjectionReadView();
+  }
+
+  private static ScreenRenderView buildScreenRenderView(
+      TerminalSurfaceState surface, ScreenRenderView previous,
+      RenderDirtyState dirty, boolean rebuildAll) {
+    int rowCount = surface.activeRows.size();
+    if (rebuildAll || previous.size() != rowCount) {
+      RenderLine[] rebuilt = new RenderLine[rowCount];
+      for (int row = 0; row < rowCount; row++) {
+        rebuilt[row] = renderLineAt(surface, row);
+      }
+      return ScreenRenderView.takeOwnership(rebuilt);
+    }
+
+    RenderLine[] screen = previous.copyLines();
+    int shift = dirty.screenScrollRows;
+    if (Math.abs((long) shift) >= rowCount) {
+      for (int row = 0; row < rowCount; row++) {
+        screen[row] = renderLineAt(surface, row);
+      }
+      return ScreenRenderView.takeOwnership(screen);
+    }
+    if (shift > 0) {
+      System.arraycopy(screen, shift, screen, 0, rowCount - shift);
+    } else if (shift < 0) {
+      int amount = -shift;
+      System.arraycopy(screen, 0, screen, amount, rowCount - amount);
+    }
+    BitSet rebuildRows = (BitSet) dirty.changedScreenRows.clone();
+    rebuildRows.or(dirty.exposedScreenRows);
+    for (int row = rebuildRows.nextSetBit(0);
+         row >= 0 && row < rowCount;
+         row = rebuildRows.nextSetBit(row + 1)) {
+      screen[row] = renderLineAt(surface, row);
+    }
+    return ScreenRenderView.takeOwnership(screen);
+  }
+
+  private static RenderLine renderLineAt(TerminalSurfaceState surface, int row) {
+    LineKey key = surface.activeRows.keyAt(row);
+    LineBody body = surface.bodyCache.body(key);
+    if (body == null) {
+      throw new IllegalStateException("active row body missing for " + key);
+    }
+    return new RenderLine(key, body);
   }
 
   private void publishProjectionReadView() {

@@ -49,6 +49,7 @@ public final class TerminalLineRenderNodeCache {
   private long victimScanCount;
   private long victimScannedEntries;
   private long allPinnedFallbackCount;
+  private int clockHand;
 
   TerminalLineRenderNodeCache() {
     this(name -> new RenderNodeTerminalRowNode(name));
@@ -79,7 +80,10 @@ public final class TerminalLineRenderNodeCache {
         || this.fontGeneration != fontGeneration
         || this.paletteGeneration != paletteGeneration
         || this.styleGeneration != styleGeneration;
-    if (generationChanged) lines.clear();
+    if (generationChanged) {
+      lines.clear();
+      clockHand = 0;
+    }
 
     capacity = nextCapacity;
     columns = nextColumns;
@@ -114,6 +118,7 @@ public final class TerminalLineRenderNodeCache {
     if (cached != null && cached.node.hasDisplayList() && matchesRecordedLine(cached, line)) {
       cached.lastUsedFrame = frameNumber;
       cached.lastDrawnFrame = frameNumber;
+      cached.recentlyUsed = true;
       frameRowHits++;
       if (historyLine) frameHistoryHits++;
       cached.node.draw(canvas, rowTop);
@@ -162,6 +167,7 @@ public final class TerminalLineRenderNodeCache {
       if (victim < 0) return null;
       cached = lines.valueAt(victim);
       lines.removeAt(victim);
+      clockHand = lines.size() == 0 ? 0 : victim % lines.size();
     } else {
       cached = new CachedLine(nodeFactory.create("terminal-line-" + (++nextNodeId)));
     }
@@ -169,29 +175,43 @@ public final class TerminalLineRenderNodeCache {
     cached.lineVersion = Long.MIN_VALUE;
     cached.recordedLine = null;
     cached.lastDrawnFrame = Long.MIN_VALUE;
+    cached.recentlyUsed = false;
     lines.put(lineId, cached);
     return cached;
   }
 
   private int findVictim(boolean includePinned) {
-    int victim = -1;
-    long oldestFrame = Long.MAX_VALUE;
+    int size = lines.size();
+    if (size == 0) return -1;
     int scanned = 0;
-    for (int i = 0; i < lines.size(); i++) {
-      CachedLine candidate = lines.valueAt(i);
+    int eligible = 0;
+    int limit = size * 2;
+    for (int step = 0; step < limit; step++) {
+      int index = (clockHand + step) % size;
+      CachedLine candidate = lines.valueAt(index);
       scanned++;
       if (!includePinned && candidate.lastDrawnFrame == frameNumber) continue;
-      if (candidate.lastUsedFrame < oldestFrame) {
-        oldestFrame = candidate.lastUsedFrame;
-        victim = i;
+      eligible++;
+      if (candidate.recentlyUsed) {
+        candidate.recentlyUsed = false;
+        continue;
       }
+      recordVictimScan(scanned, false);
+      return index;
     }
-    boolean allPinned = !includePinned && victim < 0;
+
+    // eligible == 0 表示本帧所有节点都已提交给 Canvas，不能安全重录。
+    // 正常 Clock 路径最多两圈一定能找到引用位已被清除的节点。
+    boolean allPinned = !includePinned && eligible == 0;
+    recordVictimScan(scanned, allPinned);
+    return -1;
+  }
+
+  private void recordVictimScan(int scanned, boolean allPinned) {
     victimScanCount++;
     victimScannedEntries += scanned;
     if (allPinned) allPinnedFallbackCount++;
     TerminalRenderMetrics.renderNodeVictimScan(scanned, allPinned);
-    return victim;
   }
 
   private boolean record(@NonNull CachedLine cached, @NonNull RenderLine line) {
@@ -209,6 +229,7 @@ public final class TerminalLineRenderNodeCache {
     cached.lineId = line.key().lineId();
     cached.lineVersion = line.key().lineVersion();
     cached.recordedLine = line;
+    cached.recentlyUsed = true;
     frameRowMisses++;
     return true;
   }
@@ -218,6 +239,7 @@ public final class TerminalLineRenderNodeCache {
       int victim = findVictim(true);
       if (victim < 0) return;
       lines.removeAt(victim);
+      clockHand = lines.size() == 0 ? 0 : victim % lines.size();
     }
   }
 
@@ -260,6 +282,7 @@ public final class TerminalLineRenderNodeCache {
     @Nullable RenderLine recordedLine;
     long lastUsedFrame;
     long lastDrawnFrame = Long.MIN_VALUE;
+    boolean recentlyUsed;
 
     CachedLine(@NonNull TerminalRowNode node) {
       this.node = node;

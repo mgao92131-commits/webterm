@@ -125,7 +125,7 @@ public final class ScreenMailboxTest {
         sawBackground = true;
       } else {
         assertEquals(ScreenMailbox.MessageKind.TERMINAL_COMMIT, message.kind);
-        assertEquals((byte) expectedProjection++, message.payload[0]);
+        assertEquals((byte) expectedProjection++, message.payload.get(0));
       }
     }
     assertTrue(sawBackground);
@@ -154,7 +154,7 @@ public final class ScreenMailboxTest {
           offer(mailbox, source, message.kind, 1);
         } else if (message.kind == ScreenMailbox.MessageKind.TERMINAL_COMMIT) {
           projection++;
-          assertEquals((byte) expectedProjection, message.payload[0]);
+          assertEquals((byte) expectedProjection, message.payload.get(0));
           expectedProjection++;
           offer(mailbox, source, message.kind, expectedProjection);
         } else if (message.kind == ScreenMailbox.MessageKind.PONG) {
@@ -187,9 +187,9 @@ public final class ScreenMailboxTest {
     assertEquals(97, dropped);
     assertEquals(3, mailbox.pendingMessages());
     assertEquals(3, mailbox.pendingBytes());
-    assertEquals((byte) 97, mailbox.poll().message.payload[0]);
-    assertEquals((byte) 98, mailbox.poll().message.payload[0]);
-    assertEquals((byte) 99, mailbox.poll().message.payload[0]);
+    assertEquals((byte) 97, mailbox.poll().message.payload.get(0));
+    assertEquals((byte) 98, mailbox.poll().message.payload.get(0));
+    assertEquals((byte) 99, mailbox.poll().message.payload.get(0));
     assertEquals(0, mailbox.pendingMessages());
     assertEquals(0, mailbox.pendingBytes());
   }
@@ -240,8 +240,8 @@ public final class ScreenMailboxTest {
     ScreenMailbox.Drain drain;
     while ((drain = mailbox.poll()) != null) {
       if (drain.message.kind != ScreenMailbox.MessageKind.CLIPBOARD_EFFECT) continue;
-      sawRead |= drain.message.payload[0] == 40;
-      sawWrite |= drain.message.payload[0] == 42;
+      sawRead |= drain.message.payload.get(0) == 40;
+      sawWrite |= drain.message.payload.get(0) == 42;
     }
     assertTrue(sawRead);
     assertTrue(sawWrite);
@@ -343,8 +343,8 @@ public final class ScreenMailboxTest {
         ScreenMailbox.MessageKind.TERMINAL_COMMIT);
 
     assertNotNull(mailbox.poll().fence);
-    assertEquals(4, mailbox.poll().message.payload[0]);
-    assertEquals(5, mailbox.poll().message.payload[0]);
+    assertEquals(4, mailbox.poll().message.payload.get(0));
+    assertEquals(5, mailbox.poll().message.payload.get(0));
     assertNull(mailbox.poll());
   }
 
@@ -377,9 +377,9 @@ public final class ScreenMailboxTest {
     mailbox.offer(1L, source, new byte[] {2}, true, ScreenMailbox.MessageKind.EXIT);
     mailbox.offer(1L, source, new byte[] {3}, true, ScreenMailbox.MessageKind.EXIT);
 
-    assertEquals(1, mailbox.poll().message.payload[0]);
-    assertEquals(2, mailbox.poll().message.payload[0]);
-    assertEquals(3, mailbox.poll().message.payload[0]);
+    assertEquals(1, mailbox.poll().message.payload.get(0));
+    assertEquals(2, mailbox.poll().message.payload.get(0));
+    assertEquals(3, mailbox.poll().message.payload.get(0));
   }
 
   @Test
@@ -391,7 +391,7 @@ public final class ScreenMailboxTest {
         ScreenMailbox.MessageKind.TERMINAL_COMMIT);
     mailbox.offer(1L, source, new byte[] {3, 4}, true,
         ScreenMailbox.MessageKind.TERMINAL_COMMIT);
-    assertEquals(1, mailbox.poll().message.payload[0]);
+    assertEquals(1, mailbox.poll().message.payload.get(0));
     mailbox.offer(1L, source, new byte[] {5}, true,
         ScreenMailbox.MessageKind.TERMINAL_COMMIT);
     mailbox.offer(1L, source, new byte[] {6}, true,

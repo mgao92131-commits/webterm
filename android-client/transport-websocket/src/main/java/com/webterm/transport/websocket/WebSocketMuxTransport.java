@@ -101,11 +101,10 @@ public final class WebSocketMuxTransport implements MuxTransport {
             @Override
             public void onMessage(@NonNull WebSocket webSocket, @NonNull okio.ByteString bytes) {
                 if (!isCurrent(attempt, webSocket)) return;
-                byte[] payload = bytes.toByteArray();
                 if (trafficAccumulator != null) {
-                    trafficAccumulator.recordRx(payload.length);
+                    trafficAccumulator.recordRx(bytes.size());
                 }
-                attempt.listener.onBinary(payload);
+                attempt.listener.onBinaryBuffer(bytes.asByteBuffer());
             }
 
             @Override

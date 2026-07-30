@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -104,6 +105,31 @@ public final class TerminalLineRenderNodeCacheTest {
     begin(cache, model.renderSnapshot());
     cache.drawOrRecord(canvas, line(10, 1, "a"), 0, false);
     assertNotSame(old, cache.nodeForLineForTest(10));
+  }
+
+  @Test
+  public void clockEvictionKeepsCurrentFrameNodesAndFindsNextVictimInConstantWork() {
+    TerminalLineRenderNodeCache cache = cache();
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot();
+    for (int id = 1; id <= cache.capacityForTest(); id++) {
+      begin(cache, snapshot);
+      cache.drawOrRecord(canvas, line(id, 1, "x"), 0, false);
+      cache.endFrame();
+    }
+
+    begin(cache, snapshot);
+    cache.drawOrRecord(canvas, line(1, 1, "x"), 0, false);
+    cache.drawOrRecord(canvas, line(97, 1, "x"), 20, false);
+    cache.endFrame();
+    assertNotNull(cache.recordedLineForTest(1));
+    assertNotNull(cache.recordedLineForTest(97));
+    assertEquals(cache.capacityForTest(), cache.sizeForTest());
+
+    long scannedBefore = cache.victimScannedEntriesForTest();
+    begin(cache, snapshot);
+    cache.drawOrRecord(canvas, line(98, 1, "x"), 0, false);
+    cache.endFrame();
+    assertTrue(cache.victimScannedEntriesForTest() - scannedBefore <= 2);
   }
 
   private TerminalLineRenderNodeCache cache() {

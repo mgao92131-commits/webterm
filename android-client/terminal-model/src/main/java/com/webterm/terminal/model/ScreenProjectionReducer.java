@@ -1,6 +1,7 @@
 package com.webterm.terminal.model;
 
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -100,7 +101,7 @@ public final class ScreenProjectionReducer {
           baseline.modes == null ? TerminalModes.defaults() : baseline.modes,
           baseline.palette == null ? TerminalPalette.defaults() : baseline.palette);
       return new ProjectionResult.Applied(
-          state, new ProjectionDelta(true, true, true, true));
+          state, new ProjectionDelta(true, null, null, 0, true, true));
     } catch (CommitValidationException invalid) {
       return needs(ProjectionFault.MODEL_REJECTED_BASELINE);
     } catch (RuntimeException invalid) {
@@ -140,15 +141,21 @@ public final class ScreenProjectionReducer {
           commit.modes == null ? current.modes : commit.modes,
           commit.palette == null ? current.palette : commit.palette);
       return new ProjectionResult.Applied(
-          next, new ProjectionDelta(false, false, false, false));
+          next, new ProjectionDelta(false, null, null, 0, false, false));
     }
     try {
       TerminalSurfaceTransaction tx = source.beginTransaction();
       LineKey[] rows = source.activeRows.size() == current.rows
           ? source.activeRows.copyKeys() : new LineKey[current.rows];
-      boolean screenChanged = bufferChanged;
+      BitSet changedRows = new BitSet(current.rows);
+      BitSet exposedRows = new BitSet(current.rows);
+      int screenScrollRows = 0;
       if (commit.screen != null) {
         applyScroll(rows, commit.screen.scroll, current.rows, bufferChanged);
+        if (commit.screen.scroll != null) {
+          screenScrollRows = commit.screen.scroll.deltaRows;
+          markExposedRows(exposedRows, current.rows, screenScrollRows);
+        }
         boolean[] written = new boolean[current.rows];
         for (ScreenRowWrite write : commit.screen.writes) {
           if (write == null || write.line == null || write.row < 0
@@ -160,8 +167,8 @@ public final class ScreenProjectionReducer {
           written[write.row] = true;
           tx.bodyCache().putBody(write.line.key(), write.line.body());
           rows[write.row] = write.line.key();
+          changedRows.set(write.row);
         }
-        screenChanged = true;
       } else if (bufferChanged) {
         return new ProjectionResult.NeedsBaseline(
             ProjectionFault.INVALID_SCREEN_MUTATION);
@@ -233,7 +240,8 @@ public final class ScreenProjectionReducer {
           commit.modes == null ? current.modes : commit.modes,
           commit.palette == null ? current.palette : commit.palette);
       return new ProjectionResult.Applied(
-          next, new ProjectionDelta(false, screenChanged, historyChanged, false));
+          next, new ProjectionDelta(
+              false, changedRows, exposedRows, screenScrollRows, historyChanged, false));
     } catch (CommitValidationException invalidHistory) {
       return new ProjectionResult.NeedsBaseline(
           ProjectionFault.INVALID_HISTORY_MUTATION);
@@ -282,6 +290,14 @@ public final class ScreenProjectionReducer {
       int amount = -shift;
       System.arraycopy(rows, 0, rows, amount, height - amount);
       Arrays.fill(rows, 0, amount, null);
+    }
+  }
+
+  private static void markExposedRows(BitSet exposedRows, int rowCount, int shift) {
+    if (shift > 0) {
+      exposedRows.set(rowCount - shift, rowCount);
+    } else if (shift < 0) {
+      exposedRows.set(0, -shift);
     }
   }
 }

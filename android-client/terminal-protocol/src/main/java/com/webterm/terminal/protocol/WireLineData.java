@@ -1,5 +1,6 @@
 package com.webterm.terminal.protocol;
 
+import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -13,20 +14,29 @@ public final class WireLineData {
   public final long historySeq;
   public final int physicalColumns;
   public final boolean wrapped;
-  public final byte[] utf8Text;
-  public final byte[] glyphMeta;
+  public final ByteString utf8Text;
+  public final ByteString glyphMeta;
   public final List<Span> styleSpans;
 
   public WireLineData(
       long lineId, long lineVersion, long historySeq, int physicalColumns, boolean wrapped,
       byte[] utf8Text, byte[] glyphMeta, List<Span> styleSpans) {
+    this(lineId, lineVersion, historySeq, physicalColumns, wrapped,
+        utf8Text == null ? ByteString.EMPTY : ByteString.copyFrom(utf8Text),
+        glyphMeta == null ? ByteString.EMPTY : ByteString.copyFrom(glyphMeta),
+        styleSpans);
+  }
+
+  public WireLineData(
+      long lineId, long lineVersion, long historySeq, int physicalColumns, boolean wrapped,
+      ByteString utf8Text, ByteString glyphMeta, List<Span> styleSpans) {
     this.lineId = lineId;
     this.lineVersion = lineVersion;
     this.historySeq = historySeq;
     this.physicalColumns = physicalColumns;
     this.wrapped = wrapped;
-    this.utf8Text = utf8Text == null ? new byte[0] : utf8Text.clone();
-    this.glyphMeta = glyphMeta == null ? new byte[0] : glyphMeta.clone();
+    this.utf8Text = utf8Text == null ? ByteString.EMPTY : utf8Text;
+    this.glyphMeta = glyphMeta == null ? ByteString.EMPTY : glyphMeta;
     this.styleSpans = Collections.unmodifiableList(new ArrayList<>(
         styleSpans == null ? Collections.emptyList() : styleSpans));
     int previousEnd = 0;

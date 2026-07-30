@@ -1,5 +1,6 @@
 package com.webterm.transport.api;
 
+import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
 public interface MuxTransport {
@@ -7,6 +8,16 @@ public interface MuxTransport {
         void onOpen();
         void onText(String text);
         void onBinary(byte[] data);
+        /**
+         * 零拷贝入站入口。默认实现兼容旧调用方；需要保留 backing slice 的消费方可覆盖本方法。
+         */
+        default void onBinaryBuffer(ByteBuffer data) {
+            ByteBuffer source = data == null
+                ? ByteBuffer.allocate(0) : data.asReadOnlyBuffer();
+            byte[] copied = new byte[source.remaining()];
+            source.get(copied);
+            onBinary(copied);
+        }
         void onClosed(int code, String reason);
         void onError(String message);
         /** HTTP handshake status when available; 0 denotes a transport error. */

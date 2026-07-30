@@ -6,8 +6,6 @@ import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.google.protobuf.CodedInputStream;
-import com.google.protobuf.WireFormat;
 import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
@@ -40,6 +38,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -47,7 +46,6 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.ArrayDeque;
-import java.io.IOException;
 
 /**
  * 无 Activity 的终端会话运行时。持有连接、远端模型和模型执行器。
@@ -173,6 +171,9 @@ public final class TerminalSessionRuntime {
 
     interface Listener {
       void onScreenMessage(@NonNull byte[] payload);
+      default void onScreenMessageBuffer(@NonNull ByteBuffer payload) {
+        onScreenMessage(copyBytes(payload));
+      }
       void onConnected();
       void onDisconnected(@Nullable String reason);
       default void onAuthenticationRequired(@Nullable String reason) {}
@@ -489,6 +490,11 @@ public final class TerminalSessionRuntime {
     connection.setListener(new ScreenConnection.Listener() {
       @Override
       public void onScreenMessage(@NonNull byte[] payload) {
+        onScreenMessageBuffer(ByteBuffer.wrap(payload));
+      }
+
+      @Override
+      public void onScreenMessageBuffer(@NonNull ByteBuffer payload) {
         if (TerminalSessionRuntime.this.connection != connection) return;
         handleScreenMessage(connectionEpoch.get(), connection, payload);
       }
@@ -1528,11 +1534,13 @@ public final class TerminalSessionRuntime {
 
   private void handleScreenMessage(long messageEpoch,
                                    @NonNull ScreenConnection sourceConnection,
-                                   @NonNull byte[] payload) {
-    boolean frameSizeValid = payload.length > 0 && payload.length <= 2 * 1024 * 1024;
+                                   @NonNull ByteBuffer payload) {
+    ByteBuffer frame = payload.asReadOnlyBuffer();
+    int payloadBytes = frame.remaining();
+    boolean frameSizeValid = payloadBytes > 0 && payloadBytes <= 2 * 1024 * 1024;
     if (isClosingOrClosed()) return;
-    ScreenMailbox.MessageKind kind = classifyScreenMessage(payload);
-    pipelineMetrics.onFrameReceived(kind.name(), payload.length);
+    ScreenMailbox.MessageKind kind = classifyScreenMessage(frame);
+    pipelineMetrics.onFrameReceived(kind.name(), payloadBytes);
     if (!frameSizeValid) {
       pipelineMetrics.incrementInvalidFrameSizeRejected();
     }
@@ -1540,15 +1548,16 @@ public final class TerminalSessionRuntime {
       pipelineMetrics.incrementUnknownEnvelopeCount();
     }
     // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
-    TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payload.length);
+    TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payloadBytes);
     // 捕获点 A：原始 screen protocol bytes 旁路记录（入队前）。不重复 parse。先做一次廉价的
     // isRecording() 判断，未记录时不构造身份对象；记录时携带流身份供控制器做会话级隔离。
     if (com.webterm.terminal.model.capture.TerminalCapture.isRecording()) {
       com.webterm.terminal.model.capture.TerminalCapture.recordWireFrame(
-          captureStreamIdentity(), messageEpoch, System.currentTimeMillis(), kind.name(), payload);
+          captureStreamIdentity(), messageEpoch, System.currentTimeMillis(), kind.name(),
+          copyBytes(frame));
     }
     ScreenMailbox.Offer offer = screenMailbox.offer(
-        messageEpoch, sourceConnection, payload, frameSizeValid, kind);
+        messageEpoch, sourceConnection, frame, frameSizeValid, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
     if (offer.droppedBackgroundMessages > 0) {
       pipelineMetrics.incrementBackgroundDropped(offer.droppedBackgroundMessages);
@@ -1641,53 +1650,95 @@ public final class TerminalSessionRuntime {
   /** Reads only envelope tags; it intentionally does not alter the protobuf-only wire payload. */
   @NonNull
   static ScreenMailbox.MessageKind classifyScreenMessage(@NonNull byte[] payload) {
-    try {
-      CodedInputStream input = CodedInputStream.newInstance(payload);
-      while (!input.isAtEnd()) {
-        int tag = input.readTag();
-        if (tag == 0) break;
-        int field = WireFormat.getTagFieldNumber(tag);
-        // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
-        // 字段 6/7 曾为 HistoryRange，已 reserved。
-        if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
-        if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
-        if (field == 16) return classifyEffectMessage(input, tag);
-        if (field == 19) return ScreenMailbox.MessageKind.EXIT;
-        if (field == 21) return ScreenMailbox.MessageKind.PONG;
-        if (field == 22) return ScreenMailbox.MessageKind.TERMINAL_COMMIT;
-        if (field == 23) return ScreenMailbox.MessageKind.RESUME_ACCEPTED;
-        if (!input.skipField(tag)) break;
-      }
-    } catch (IOException | RuntimeException ignored) {
-      // Full parse and validation retain responsibility for reporting malformed envelopes.
+    return classifyScreenMessage(ByteBuffer.wrap(payload));
+  }
+
+  static ScreenMailbox.MessageKind classifyScreenMessage(@NonNull ByteBuffer payload) {
+    ByteBuffer input = payload.asReadOnlyBuffer();
+    while (input.hasRemaining()) {
+      int tag = readRawVarint32(input);
+      if (tag <= 0) break;
+      int field = tag >>> 3;
+      int wireType = tag & 7;
+      // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
+      // 字段 6/7 曾为 HistoryRange，已 reserved。
+      if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
+      if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
+      if (field == 16) return classifyEffectMessage(input, wireType);
+      if (field == 19) return ScreenMailbox.MessageKind.EXIT;
+      if (field == 21) return ScreenMailbox.MessageKind.PONG;
+      if (field == 22) return ScreenMailbox.MessageKind.TERMINAL_COMMIT;
+      if (field == 23) return ScreenMailbox.MessageKind.RESUME_ACCEPTED;
+      if (!skipRawField(input, wireType)) break;
     }
     return ScreenMailbox.MessageKind.UNKNOWN;
   }
 
+  private static byte[] copyBytes(@NonNull ByteBuffer payload) {
+    ByteBuffer source = payload.asReadOnlyBuffer();
+    byte[] copied = new byte[source.remaining()];
+    source.get(copied);
+    return copied;
+  }
+
   @NonNull
   private static ScreenMailbox.MessageKind classifyEffectMessage(
-      @NonNull CodedInputStream input, int envelopeTag) throws IOException {
-    if (WireFormat.getTagWireType(envelopeTag) != WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+      @NonNull ByteBuffer input, int wireType) {
+    if (wireType != 2) {
       return ScreenMailbox.MessageKind.UNKNOWN;
     }
-    int length = input.readRawVarint32();
-    if (length < 0) return ScreenMailbox.MessageKind.UNKNOWN;
-    int oldLimit = input.pushLimit(length);
-    try {
-      while (!input.isAtEnd()) {
-        int tag = input.readTag();
-        if (tag == 0) break;
-        int field = WireFormat.getTagFieldNumber(tag);
-        // TerminalEffect oneof: clipboard_read=13, clipboard_write=14.
-        if (field == 13 || field == 14) {
-          return ScreenMailbox.MessageKind.CLIPBOARD_EFFECT;
-        }
-        if (!input.skipField(tag)) break;
-      }
-      return ScreenMailbox.MessageKind.EFFECT;
-    } finally {
-      input.popLimit(oldLimit);
+    int length = readRawVarint32(input);
+    if (length < 0 || length > input.remaining()) {
+      return ScreenMailbox.MessageKind.UNKNOWN;
     }
+    ByteBuffer effect = input.slice();
+    effect.limit(length);
+    while (effect.hasRemaining()) {
+      int tag = readRawVarint32(effect);
+      if (tag <= 0) break;
+      int field = tag >>> 3;
+      // TerminalEffect oneof: clipboard_read=13, clipboard_write=14.
+      if (field == 13 || field == 14) {
+        return ScreenMailbox.MessageKind.CLIPBOARD_EFFECT;
+      }
+      if (!skipRawField(effect, tag & 7)) break;
+    }
+    return ScreenMailbox.MessageKind.EFFECT;
+  }
+
+  private static int readRawVarint32(@NonNull ByteBuffer input) {
+    int result = 0;
+    for (int shift = 0; shift < 32 && input.hasRemaining(); shift += 7) {
+      int value = input.get() & 0xff;
+      result |= (value & 0x7f) << shift;
+      if ((value & 0x80) == 0) return result;
+    }
+    return -1;
+  }
+
+  private static boolean skipRawField(@NonNull ByteBuffer input, int wireType) {
+    switch (wireType) {
+      case 0:
+        for (int index = 0; index < 10 && input.hasRemaining(); index++) {
+          if ((input.get() & 0x80) == 0) return true;
+        }
+        return false;
+      case 1:
+        return advanceRaw(input, 8);
+      case 2:
+        int length = readRawVarint32(input);
+        return length >= 0 && advanceRaw(input, length);
+      case 5:
+        return advanceRaw(input, 4);
+      default:
+        return false;
+    }
+  }
+
+  private static boolean advanceRaw(@NonNull ByteBuffer input, int count) {
+    if (count < 0 || count > input.remaining()) return false;
+    input.position(input.position() + count);
+    return true;
   }
 
   // ---- resync 恢复状态机（以下方法只能在 modelExecutor 上调用） ----
@@ -1833,7 +1884,8 @@ public final class TerminalSessionRuntime {
     TerminalScreenV2Proto.ScreenEnvelope envelope;
     try {
       long parseStartedNanos = System.nanoTime();
-      envelope = TerminalScreenV2Proto.ScreenEnvelope.parseFrom(message.payload);
+      envelope = TerminalScreenV2Proto.ScreenEnvelope.parseFrom(
+          message.payload.asReadOnlyBuffer());
       TerminalRenderMetrics.protobufParseDuration(System.nanoTime() - parseStartedNanos);
       if (envelope.getProtocolVersion() != 2) {
         throw new IllegalArgumentException("unsupported screen protocol version");
@@ -2018,7 +2070,7 @@ public final class TerminalSessionRuntime {
           "localRevision", model.screenRevision,
           "rows", model.rows,
           "columns", model.columns,
-          "payloadBytes", message.payload.length,
+          "payloadBytes", message.payload.remaining(),
           "mailboxMessages", screenMailbox.pendingMessages(),
           "mailboxBytes", screenMailbox.pendingBytes()));
       if (requiresForceBaselineRecovery(e)) {
@@ -2037,7 +2089,7 @@ public final class TerminalSessionRuntime {
         Diagnostics.warn(
             "screen_protocol", "baseline_rejected",
             baselineFailureFields(
-                envelope.getBaseline(), message.payload.length,
+                envelope.getBaseline(), message.payload.remaining(),
                 failureStage, failureCode, e.getClass().getSimpleName()));
       } else {
         Diagnostics.warn("screen_protocol", "screen_v2_apply_failed", diagnosticFields(

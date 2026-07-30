@@ -41,7 +41,9 @@ public class WebTermProtocolTest {
         WebTermProtocol.TunnelFrame decoded = WebTermProtocol.decodeTunnelFrame(frame);
         assertEquals("term:s1", decoded.tunnelId);
         assertEquals(WebTermProtocol.WS_DATA_BINARY, decoded.extraByte & 0xff);
-        assertArrayEquals(payload, decoded.payload);
+        byte[] decodedPayload = new byte[decoded.payload.remaining()];
+        decoded.payload.asReadOnlyBuffer().get(decodedPayload);
+        assertArrayEquals(payload, decodedPayload);
     }
 
     @Test

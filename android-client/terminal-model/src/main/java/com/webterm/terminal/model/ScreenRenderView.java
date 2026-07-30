@@ -8,11 +8,19 @@ public final class ScreenRenderView {
   private final RenderLine[] rows;
 
   public ScreenRenderView(RenderLine[] rows) {
+    this(rows, true);
+  }
+
+  private ScreenRenderView(RenderLine[] rows, boolean copy) {
     if (rows == null) throw new IllegalArgumentException("screen render rows missing");
     for (RenderLine row : rows) {
       if (row == null) throw new IllegalArgumentException("screen render row missing");
     }
-    this.rows = Arrays.copyOf(rows, rows.length);
+    this.rows = copy ? Arrays.copyOf(rows, rows.length) : rows;
+  }
+
+  static ScreenRenderView takeOwnership(RenderLine[] rows) {
+    return new ScreenRenderView(rows, false);
   }
 
   public static ScreenRenderView empty() { return EMPTY; }

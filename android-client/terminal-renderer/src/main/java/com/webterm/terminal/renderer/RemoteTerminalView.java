@@ -1384,9 +1384,8 @@ public final class RemoteTerminalView extends View {
     if (cellW <= 0 || lineH <= 0) return null;
     int col = Math.max(0, Math.min(cols - 1, (int) (x / cellW)));
 
-    RenderLine[] screen = snapshot.screenView.copyLines();
     HistoryRenderView history = snapshot.history;
-    int screenRows = screen.length;
+    int screenRows = snapshot.screenView.size();
     int historyRows = history.size();
     if (screenRows == 0 && historyRows == 0) return null;
     float scrollOffset = viewportOffset(snapshot);
@@ -1398,7 +1397,8 @@ public final class RemoteTerminalView extends View {
     if (screenRows > 0 && (y >= screenTopY || historyRows == 0)) {
       int row = (int) ((y - screenTopY) / lineH);
       row = Math.max(0, Math.min(screenRows - 1, row));
-      return new TerminalSelection.Anchor(0, row, normalizeSelectionColumn(screen[row], col));
+      return new TerminalSelection.Anchor(
+          0, row, normalizeSelectionColumn(snapshot.screenView.lineAt(row), col));
     }
 
     if (historyRows == 0) return null;
@@ -1762,12 +1762,11 @@ public final class RemoteTerminalView extends View {
   public float getKeyboardProtectedBottomY() {
     if (renderedSnapshot == null) return 0f;
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    RenderLine[] screen = snapshot.screenView.copyLines();
-    if (screen.length == 0) return 0f;
-    int screenRows = screen.length;
+    int screenRows = snapshot.screenView.size();
+    if (screenRows == 0) return 0f;
     int lastContentRow = 0;
     for (int row = screenRows - 1; row >= 0; row--) {
-      if (!isLineBlank(screen[row])) {
+      if (!isLineBlank(snapshot.screenView.lineAt(row))) {
         lastContentRow = row;
         break;
       }

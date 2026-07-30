@@ -6,6 +6,7 @@ import androidx.annotation.Nullable;
 import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.nio.ByteBuffer;
 
 /** 连接代际感知的三 lane 有界 mailbox；overflow fence 永远先于后续消息处理。 */
 public final class ScreenMailbox {
@@ -66,23 +67,31 @@ public final class ScreenMailbox {
     public final long connectionEpoch;
     public final long mailboxGeneration;
     public final TerminalSessionRuntime.ScreenConnection sourceConnection;
-    public final byte[] payload;
+    public final ByteBuffer payload;
     public final MessageKind kind;
     public final long enqueuedAtNanos;
 
     Message(long connectionEpoch, long mailboxGeneration,
             TerminalSessionRuntime.ScreenConnection sourceConnection, byte[] payload,
             MessageKind kind) {
-      this(connectionEpoch, mailboxGeneration, sourceConnection, payload, kind, System.nanoTime());
+      this(connectionEpoch, mailboxGeneration, sourceConnection, ByteBuffer.wrap(payload),
+          kind, System.nanoTime());
     }
 
     Message(long connectionEpoch, long mailboxGeneration,
             TerminalSessionRuntime.ScreenConnection sourceConnection, byte[] payload,
             MessageKind kind, long enqueuedAtNanos) {
+      this(connectionEpoch, mailboxGeneration, sourceConnection, ByteBuffer.wrap(payload),
+          kind, enqueuedAtNanos);
+    }
+
+    Message(long connectionEpoch, long mailboxGeneration,
+            TerminalSessionRuntime.ScreenConnection sourceConnection, ByteBuffer payload,
+            MessageKind kind, long enqueuedAtNanos) {
       this.connectionEpoch = connectionEpoch;
       this.mailboxGeneration = mailboxGeneration;
       this.sourceConnection = sourceConnection;
-      this.payload = payload;
+      this.payload = payload.asReadOnlyBuffer();
       this.kind = kind;
       this.enqueuedAtNanos = enqueuedAtNanos;
     }
@@ -232,19 +241,29 @@ public final class ScreenMailbox {
                                   @NonNull byte[] payload,
                                   boolean validFrameSize,
                                   @NonNull MessageKind kind) {
+    return offer(connectionEpoch, source, ByteBuffer.wrap(payload), validFrameSize, kind);
+  }
+
+  public synchronized Offer offer(long connectionEpoch,
+                                  @NonNull TerminalSessionRuntime.ScreenConnection source,
+                                  @NonNull ByteBuffer payload,
+                                  boolean validFrameSize,
+                                  @NonNull MessageKind kind) {
+    ByteBuffer frame = payload.asReadOnlyBuffer();
+    int payloadBytes = frame.remaining();
     boolean projection = isProjectionMessage(kind);
     boolean urgent = isUrgentControl(kind);
     boolean reliable = isReliableControl(kind);
-    long nextProjectionBytes = pendingProjectionBytes + (projection ? payload.length : 0L);
-    long nextUrgentBytes = pendingUrgentBytes + (urgent ? payload.length : 0L);
-    long nextReliableBytes = pendingReliableBytes + (reliable ? payload.length : 0L);
+    long nextProjectionBytes = pendingProjectionBytes + (projection ? payloadBytes : 0L);
+    long nextUrgentBytes = pendingUrgentBytes + (urgent ? payloadBytes : 0L);
+    long nextReliableBytes = pendingReliableBytes + (reliable ? payloadBytes : 0L);
     long droppedBackgroundMessages = 0L;
     long droppedBackgroundBytes = 0L;
     if (projection) {
       projectionArrivalCount++;
     }
     if (!validFrameSize) {
-      long discarded = pendingBytes + payload.length;
+      long discarded = pendingBytes + payloadBytes;
       long discardedMessages = pendingMessages() + 1L;
       clearQueues();
       generation++;
@@ -258,7 +277,7 @@ public final class ScreenMailbox {
       fenceReason = "screen mailbox rejected oversized frame";
     } else if (projection && (pendingProjectionMessages >= projectionMaxMessages
         || nextProjectionBytes > projectionMaxBytes)) {
-      long discarded = pendingProjectionBytes + payload.length;
+      long discarded = pendingProjectionBytes + payloadBytes;
       long discardedMessages = pendingProjectionMessages + 1L;
       projectionMessages.clear();
       pendingBytes -= pendingProjectionBytes;
@@ -283,7 +302,7 @@ public final class ScreenMailbox {
       }
     } else if (urgent && (urgentMessages.size() >= urgentMaxMessages
         || nextUrgentBytes > urgentMaxBytes)) {
-      long discarded = pendingBytes + payload.length;
+      long discarded = pendingBytes + payloadBytes;
       long discardedMessages = pendingMessages() + 1L;
       clearQueues();
       generation++;
@@ -304,7 +323,7 @@ public final class ScreenMailbox {
       }
     } else if (reliable && (reliableMessages.size() >= reliableMaxMessages
         || nextReliableBytes > reliableMaxBytes)) {
-      long discarded = pendingBytes + payload.length;
+      long discarded = pendingBytes + payloadBytes;
       long discardedMessages = pendingMessages() + 1L;
       clearQueues();
       generation++;
@@ -324,10 +343,11 @@ public final class ScreenMailbox {
         overflowByFrameBudgetCount++;
       }
     } else {
-      Message message = new Message(connectionEpoch, generation, source, payload, kind);
+      Message message = new Message(
+          connectionEpoch, generation, source, frame, kind, System.nanoTime());
       if (projection) {
         projectionMessages.addLast(message);
-        pendingBytes += payload.length;
+        pendingBytes += payloadBytes;
         pendingProjectionMessages++;
         pendingProjectionBytes = nextProjectionBytes;
         projectionPendingMessagesHighWater =
@@ -336,29 +356,29 @@ public final class ScreenMailbox {
             Math.max(projectionPendingBytesHighWater, pendingProjectionBytes);
       } else if (urgent) {
         urgentMessages.addLast(message);
-        pendingBytes += payload.length;
+        pendingBytes += payloadBytes;
         pendingUrgentBytes = nextUrgentBytes;
       } else if (reliable) {
         reliableMessages.addLast(message);
-        pendingBytes += payload.length;
+        pendingBytes += payloadBytes;
         pendingReliableBytes = nextReliableBytes;
       } else {
         while (!backgroundMessages.isEmpty()
             && (backgroundMessages.size() >= backgroundMaxMessages
-                || pendingBackgroundBytes + payload.length > backgroundMaxBytes)) {
+                || pendingBackgroundBytes + payloadBytes > backgroundMaxBytes)) {
           Message dropped = backgroundMessages.removeFirst();
-          pendingBackgroundBytes -= dropped.payload.length;
-          pendingBytes -= dropped.payload.length;
+          pendingBackgroundBytes -= dropped.payload.remaining();
+          pendingBytes -= dropped.payload.remaining();
           droppedBackgroundMessages++;
-          droppedBackgroundBytes += dropped.payload.length;
+          droppedBackgroundBytes += dropped.payload.remaining();
         }
-        if (payload.length <= backgroundMaxBytes) {
+        if (payloadBytes <= backgroundMaxBytes) {
           backgroundMessages.addLast(message);
-          pendingBackgroundBytes += payload.length;
-          pendingBytes += payload.length;
+          pendingBackgroundBytes += payloadBytes;
+          pendingBytes += payloadBytes;
         } else {
           droppedBackgroundMessages++;
-          droppedBackgroundBytes += payload.length;
+          droppedBackgroundBytes += payloadBytes;
         }
       }
     }
@@ -385,18 +405,18 @@ public final class ScreenMailbox {
     }
     Message message = nextMessage();
     if (message != null) {
-      pendingBytes -= message.payload.length;
+      pendingBytes -= message.payload.remaining();
       if (isProjectionMessage(message.kind)) {
         projectionDrainCount++;
         recordResidence(System.nanoTime() - message.enqueuedAtNanos);
         pendingProjectionMessages--;
-        pendingProjectionBytes -= message.payload.length;
+        pendingProjectionBytes -= message.payload.remaining();
       } else if (isUrgentControl(message.kind)) {
-        pendingUrgentBytes -= message.payload.length;
+        pendingUrgentBytes -= message.payload.remaining();
       } else if (isReliableControl(message.kind)) {
-        pendingReliableBytes -= message.payload.length;
+        pendingReliableBytes -= message.payload.remaining();
       } else {
-        pendingBackgroundBytes -= message.payload.length;
+        pendingBackgroundBytes -= message.payload.remaining();
       }
       return new Drain(message, null);
     }

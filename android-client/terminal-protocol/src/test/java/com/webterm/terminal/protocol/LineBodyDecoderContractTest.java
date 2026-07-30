@@ -2,6 +2,7 @@ package com.webterm.terminal.protocol;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertSame;
 
 import com.webterm.terminal.model.LinkValue;
 import com.webterm.terminal.model.StyleValue;
@@ -46,6 +47,16 @@ public final class LineBodyDecoderContractTest {
         line(1, 0), dictionary(1, secondStyle, 0, null));
 
     assertNotEquals(a.body(), b.body());
+  }
+
+  @Test
+  public void plainAsciiCellsAreSharedAcrossDecodedLines() {
+    LineBodyDecoder decoder = new LineBodyDecoder();
+    DecodedLine first = decoder.decode(line(0, 0), dictionary(0, null, 0, null));
+    DecodedLine second = decoder.decode(line(0, 0), dictionary(0, null, 0, null));
+
+    assertSame(first.body().at(0), second.body().at(0));
+    assertEquals("x", first.body().at(0).text());
   }
 
   private static WireLineData line(int styleId, int linkId) {

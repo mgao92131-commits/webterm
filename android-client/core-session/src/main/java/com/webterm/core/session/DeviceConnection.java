@@ -15,6 +15,7 @@ import com.webterm.transport.api.TransportFactory;
 import org.json.JSONObject;
 
 import java.util.UUID;
+import java.nio.ByteBuffer;
 import java.util.Map;
 
 public final class DeviceConnection {
@@ -33,6 +34,13 @@ public final class DeviceConnection {
     public interface ChannelListener {
         void onConnected(String channelId);
         void onData(String channelId, byte[] payload, boolean binary);
+        default void onDataBuffer(String channelId, ByteBuffer payload, boolean binary) {
+            ByteBuffer source = payload == null
+                ? ByteBuffer.allocate(0) : payload.asReadOnlyBuffer();
+            byte[] copied = new byte[source.remaining()];
+            source.get(copied);
+            onData(channelId, copied, binary);
+        }
 
         /**
          * logical channel 或设备连接失败时触发，携带结构化失败信息。
@@ -380,7 +388,12 @@ public final class DeviceConnection {
             }
 
             @Override public void onBinary(byte[] data) {
-                runOnState(() -> dispatchBinaryFrame(generation, sourceTransport, data));
+                onBinaryBuffer(ByteBuffer.wrap(data));
+            }
+
+            @Override public void onBinaryBuffer(ByteBuffer data) {
+                ByteBuffer frame = data.asReadOnlyBuffer();
+                runOnState(() -> dispatchBinaryFrame(generation, sourceTransport, frame));
             }
 
             @Override public void onClosed(int code, String reason) {
@@ -721,7 +734,7 @@ public final class DeviceConnection {
     }
 
     private void dispatchBinaryFrame(
-            int generation, MuxTransport sourceTransport, byte[] data) {
+            int generation, MuxTransport sourceTransport, ByteBuffer data) {
         if (generation != transportGeneration || sourceTransport != transport
                 || !physicalConnected) {
             staleTransportGenerationDropped++;
@@ -736,14 +749,14 @@ public final class DeviceConnection {
         }
         LogicalChannelRegistry.Channel channel = channelRegistry.get(frame.tunnelId);
         if (channel == null) {
-            classifyMissingChannel(frame.tunnelId, generation, data.length);
+            classifyMissingChannel(frame.tunnelId, generation, data.remaining());
             publishDiagnosticsSnapshot();
             return;
         }
         if (channel.state == LogicalChannelRegistry.Channel.State.CLOSING) {
             channelNotOpenDropped++;
             framesWhileClosing++;
-            bytesWhileClosing += data.length;
+            bytesWhileClosing += data.remaining();
             publishDiagnosticsSnapshot();
             return;
         }
@@ -767,7 +780,7 @@ public final class DeviceConnection {
         }
         channel.lastFrameAtNanos = System.nanoTime();
         boolean binary = (frame.extraByte & 0xff) == WebTermProtocol.WS_DATA_BINARY;
-        channel.listener.onData(frame.tunnelId, frame.payload, binary);
+        channel.listener.onDataBuffer(frame.tunnelId, frame.payload, binary);
     }
 
     InboundDropSnapshot inboundDropSnapshot() {

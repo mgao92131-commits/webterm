@@ -142,7 +142,7 @@ public final class ScreenMessageV2Mapper {
     return new WireLineData(
         pb.getLineId(), pb.getLineVersion(), pb.getHistorySeq(),
         pb.getPhysicalColumns(), pb.getWrapped(),
-        pb.getUtf8Text().toByteArray(), pb.getGlyphMeta().toByteArray(), spans);
+        pb.getUtf8Text(), pb.getGlyphMeta(), spans);
   }
 
   private static WireDictionary wireDictionary(TerminalScreenV2Proto.Dictionary pb) {

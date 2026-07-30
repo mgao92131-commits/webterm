@@ -20,6 +20,7 @@ import dagger.assisted.AssistedFactory;
 import dagger.assisted.AssistedInject;
 
 import java.util.UUID;
+import java.nio.ByteBuffer;
 
 /**
  * 通过 device connection 建立 webterm.screen.v2 通道的 ScreenConnection 实现。
@@ -279,8 +280,13 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
       @Override
       public void onData(String callbackChannelId, byte[] payload, boolean binary) {
+        onDataBuffer(callbackChannelId, ByteBuffer.wrap(payload), binary);
+      }
+
+      @Override
+      public void onDataBuffer(String callbackChannelId, ByteBuffer payload, boolean binary) {
         if (!isCurrentCallback(channelConnection, callbackChannelId)) return;
-        if (listener != null) listener.onScreenMessage(payload);
+        if (listener != null) listener.onScreenMessageBuffer(payload);
       }
 
       @Override
