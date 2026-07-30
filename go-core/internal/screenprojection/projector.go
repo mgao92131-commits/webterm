@@ -45,15 +45,17 @@ type projectedLineUpdate struct {
 // rebuild 用完整投影（Full）重建全部行与元数据。
 func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter) {
 	previous := s.screen
-	if s.rowByLineID == nil {
-		s.rowByLineID = indexRowsByLineID(previous)
+	// 屏内容是权威；index 在冲突后可能已残缺，仅在 valid 时复用。
+	previousIndex := s.rowByLineID
+	if previousIndex == nil || !s.valid {
+		previousIndex = indexRowsByLineID(previous)
 	}
 	screen := make([]terminalengine.Line, proj.Rows)
 	newIndex := make(map[uint64]int, proj.Rows)
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(screen) {
-			line := s.reconcileExportLine(
-				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
+			candidate := exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
+			line := reconcileFromSnapshot(previous, previousIndex, candidate)
 			screen[row.Index] = line
 			if line.ID != 0 {
 				newIndex[line.ID] = row.Index
@@ -66,6 +68,58 @@ func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter
 	s.cols = proj.Cols
 	s.mergeMeta(proj)
 	s.valid = true
+}
+
+// rebuildSafely 在 LineID 冲突时基于未提交前的完整旧屏与新建索引回退。
+// 成功则原子替换；发现重复候选则返回 false，由调用方将 Projector 标为无效。
+func (s *projectedState) rebuildSafely(
+	proj headlessterm.ProjectionRead,
+	exp *exporter,
+) bool {
+	previousScreen := s.screen
+	previousIndex := indexRowsByLineID(previousScreen)
+
+	nextScreen := make([]terminalengine.Line, proj.Rows)
+	if len(previousScreen) == proj.Rows {
+		// 增量冲突：保留未 dirty 行，仅覆盖 DirtyRows。
+		copy(nextScreen, previousScreen)
+	} else if !proj.Full {
+		// 几何不一致且非 Full，脏行不足以重建。
+		return false
+	}
+
+	nextIndex := make(map[uint64]int, proj.Rows)
+	for _, row := range proj.DirtyRows {
+		if row.Index < 0 || row.Index >= len(nextScreen) {
+			continue
+		}
+		candidate := exp.exportProjectionRow(
+			row,
+			proj.Cursor.Row,
+			proj.Cursor.Col)
+		line := reconcileFromSnapshot(
+			previousScreen,
+			previousIndex,
+			candidate)
+		nextScreen[row.Index] = line
+	}
+	for row, line := range nextScreen {
+		if line.ID == 0 {
+			continue
+		}
+		if _, duplicate := nextIndex[line.ID]; duplicate {
+			return false
+		}
+		nextIndex[line.ID] = row
+	}
+
+	s.screen = nextScreen
+	s.rowByLineID = nextIndex
+	s.rows = proj.Rows
+	s.cols = proj.Cols
+	s.mergeMeta(proj)
+	s.valid = true
+	return true
 }
 
 // merge 只把 dirty 行重新转换为 Line 并替换缓存中对应下标；未变化行复用
@@ -86,8 +140,6 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 			line: s.reconcileExportLine(candidate),
 		})
 	}
-	// 三阶段提交：先用旧索引协调，再删旧绑定，最后写新绑定，避免滚动时
-	// 同一 LineID 短暂映射到两个行号。
 	for _, update := range s.updateScratch {
 		old := s.screen[update.row]
 		if old.ID == 0 {
@@ -98,18 +150,32 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 		}
 	}
 	for _, update := range s.updateScratch {
-		if update.line.ID != 0 {
-			if existing, ok := s.rowByLineID[update.line.ID]; ok && existing != update.row {
-				s.rebuild(proj, exp)
-				return
-			}
+		if update.line.ID == 0 {
+			continue
 		}
+		if existing, ok := s.rowByLineID[update.line.ID]; ok && existing != update.row {
+			if !s.rebuildSafely(proj, exp) {
+				s.valid = false
+			}
+			s.clearUpdateScratch()
+			return
+		}
+	}
+	for _, update := range s.updateScratch {
 		s.screen[update.row] = update.line
 		if update.line.ID != 0 {
 			s.rowByLineID[update.line.ID] = update.row
 		}
 	}
 	s.mergeMeta(proj)
+	s.clearUpdateScratch()
+}
+
+func (s *projectedState) clearUpdateScratch() {
+	for i := range s.updateScratch {
+		s.updateScratch[i] = projectedLineUpdate{}
+	}
+	s.updateScratch = s.updateScratch[:0]
 }
 
 // reconcileExportLine gives Line.Version wire semantics: it is the version of
@@ -119,20 +185,30 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 // Conversely, a projection-dirty cursor row whose output is unchanged must
 // retain its previous version and not create a needless LineData update.
 func (s *projectedState) reconcileExportLine(candidate terminalengine.Line) terminalengine.Line {
-	if candidate.ID == 0 || s.rowByLineID == nil {
+	return reconcileFromSnapshot(s.screen, s.rowByLineID, candidate)
+}
+
+// reconcileFromSnapshot 基于完整旧屏快照与对应索引协调版本，不依赖可能已
+// 被部分修改的持久索引。
+func reconcileFromSnapshot(
+	screen []terminalengine.Line,
+	index map[uint64]int,
+	candidate terminalengine.Line,
+) terminalengine.Line {
+	if candidate.ID == 0 || index == nil {
 		if candidate.Version == 0 {
 			candidate.Version = 1
 		}
 		return candidate
 	}
-	row, ok := s.rowByLineID[candidate.ID]
-	if !ok || row < 0 || row >= len(s.screen) {
+	row, ok := index[candidate.ID]
+	if !ok || row < 0 || row >= len(screen) {
 		if candidate.Version == 0 {
 			candidate.Version = 1
 		}
 		return candidate
 	}
-	prior := s.screen[row]
+	prior := screen[row]
 	if linesEqual(prior, candidate) {
 		candidate.Version = prior.Version
 		return candidate

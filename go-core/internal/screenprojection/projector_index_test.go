@@ -189,6 +189,100 @@ func TestProjectedStateValidateLineIndex(t *testing.T) {
 	}
 }
 
+func TestDuplicateCandidateDoesNotPublishPartialState(t *testing.T) {
+	state := projectedState{
+		valid: true,
+		rows:  2,
+		cols:  4,
+		screen: []terminalengine.Line{
+			testLine(1, 5, 0, "a"),
+			testLine(2, 7, 1, "b"),
+		},
+		rowByLineID: map[uint64]int{1: 0, 2: 1},
+	}
+	originalScreen := append([]terminalengine.Line(nil), state.screen...)
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	cells := make([]headlessterm.Cell, 4)
+	cells[0].Char = "X"
+	// 把 id=2 写到 row0，而 row1 仍占用 id=2 → 冲突。
+	proj := headlessterm.ProjectionRead{
+		Rows: 2, Cols: 4,
+		DirtyRows: []headlessterm.ProjectionRow{{
+			Index: 0, LineID: 2, LineVersion: 1, Cells: cells,
+		}},
+	}
+	state.merge(proj, exp)
+	if state.valid {
+		if !state.validateLineIndex() {
+			t.Fatalf("valid state must pass validateLineIndex: screen=%+v index=%+v",
+				state.screen, state.rowByLineID)
+		}
+	} else {
+		if state.screen[0].ID != originalScreen[0].ID || state.screen[1].ID != originalScreen[1].ID {
+			t.Fatalf("invalidated merge mutated screen to partial state: %+v", state.screen)
+		}
+		if state.screen[0].Version != originalScreen[0].Version {
+			t.Fatalf("partial version publish: got %d want %d",
+				state.screen[0].Version, originalScreen[0].Version)
+		}
+	}
+}
+
+func TestFallbackRebuildPreservesPriorLineVersion(t *testing.T) {
+	previous := []terminalengine.Line{
+		testLine(10, 9, 0, "same"),
+		testLine(11, 3, 1, "other"),
+	}
+	index := indexRowsByLineID(previous)
+	candidate := testLine(10, 1, 0, "same")
+	got := reconcileFromSnapshot(previous, index, candidate)
+	if got.Version != 9 {
+		t.Fatalf("version=%d want 9 from prior snapshot", got.Version)
+	}
+	changed := testLine(10, 1, 0, "diff")
+	got = reconcileFromSnapshot(previous, index, changed)
+	if got.Version != 10 {
+		t.Fatalf("version=%d want 10 after content change", got.Version)
+	}
+}
+
+func TestUpdateScratchDoesNotRetainLines(t *testing.T) {
+	state := projectedState{
+		valid: true,
+		rows:  2,
+		cols:  4,
+		screen: []terminalengine.Line{
+			testLine(1, 1, 0, "a"),
+			testLine(2, 1, 1, "b"),
+		},
+		rowByLineID: map[uint64]int{1: 0, 2: 1},
+	}
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	cells := make([]headlessterm.Cell, 4)
+	cells[0].Char = "B"
+	proj := headlessterm.ProjectionRead{
+		Rows: 2, Cols: 4,
+		DirtyRows: []headlessterm.ProjectionRow{{
+			Index: 1, LineID: 2, LineVersion: 2, Cells: cells,
+		}},
+	}
+	state.merge(proj, exp)
+	if len(state.updateScratch) != 0 {
+		t.Fatalf("scratch len=%d want 0", len(state.updateScratch))
+	}
+	for i, update := range state.updateScratch[:cap(state.updateScratch)] {
+		if update.line.ID != 0 || update.line.Runs != nil {
+			t.Fatalf("scratch[%d] retained line refs: %+v", i, update)
+		}
+	}
+}
+
 func BenchmarkProjectedStateSingleDirtyRow(b *testing.B) {
 	for _, rows := range []int{24, 80, 200} {
 		b.Run(fmt.Sprintf("rows_%d", rows), func(b *testing.B) {
