@@ -186,6 +186,33 @@ public final class TerminalRenderMetrics {
   }
   public static void historyCacheHit() { HISTORY_CACHE_HIT_COUNT.incrementAndGet(); }
   public static void historyCacheMiss() { HISTORY_CACHE_MISS_COUNT.incrementAndGet(); }
+
+  private static final AtomicLong HISTORY_AXIS_UPDATE_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_FULL_REBUILD_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_PAGES_REBUILT = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_PAGES_REUSED = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_ROWS_SCANNED = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_UPDATE_NANOS = new AtomicLong();
+
+  public static void historyAxisUpdate(
+      long durationNanos, int pagesRebuilt, int pagesReused, int rowsScanned, boolean fullRebuild) {
+    HISTORY_AXIS_UPDATE_COUNT.incrementAndGet();
+    HISTORY_AXIS_PAGES_REBUILT.addAndGet(Math.max(0, pagesRebuilt));
+    HISTORY_AXIS_PAGES_REUSED.addAndGet(Math.max(0, pagesReused));
+    HISTORY_AXIS_ROWS_SCANNED.addAndGet(Math.max(0, rowsScanned));
+    HISTORY_AXIS_UPDATE_NANOS.addAndGet(Math.max(0L, durationNanos));
+    if (fullRebuild) HISTORY_AXIS_FULL_REBUILD_COUNT.incrementAndGet();
+  }
+
+  public static void historyAxisFullRebuild(String reason) {
+    // 原因由调用方传入供后续诊断扩展；计数由 historyAxisUpdate(fullRebuild=true) 统一累加。
+  }
+
+  public static long historyAxisUpdateCount() { return HISTORY_AXIS_UPDATE_COUNT.get(); }
+  public static long historyAxisFullRebuildCount() { return HISTORY_AXIS_FULL_REBUILD_COUNT.get(); }
+  public static long historyAxisPagesRebuilt() { return HISTORY_AXIS_PAGES_REBUILT.get(); }
+  public static long historyAxisPagesReused() { return HISTORY_AXIS_PAGES_REUSED.get(); }
+  public static long historyAxisRowsScanned() { return HISTORY_AXIS_ROWS_SCANNED.get(); }
   /** 每帧结束批量提交行级热路径指标，每个非零项最多一次原子 add。 */
   public static void addRowCacheStats(long rowHits, long rowMisses,
                                       long historyHits, long historyMisses,

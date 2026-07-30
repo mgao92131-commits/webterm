@@ -491,8 +491,8 @@ public final class RemoteTerminalModel {
         : previous.history;
     UnifiedContentAxis contentAxis =
         screenChanged || historyChanged
-            ? UnifiedContentAxis.build(
-                surface, screenView, previous.contentAxis, historyChanged)
+            ? UnifiedContentAxis.update(
+                surface, screenView, previous.contentAxis, dirty)
             : previous.contentAxis;
     renderSnapshot = new RenderSnapshot(
         instanceId,

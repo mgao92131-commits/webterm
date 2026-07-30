@@ -6,10 +6,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * RenderSnapshot 的统一纵向内容轴：历史前缀（已加载行或缺失范围）后接 ActiveRows。
- * 所有滚动坐标均使用 axis row，不再维护 history/screen 两套坐标。
+ * 历史部分按 {@link HistoryResidencyIndex#PAGE_SIZE} 分页结构共享；普通正文加载只重建
+ * dirty 覆盖的页，未变页保持对象身份。
  */
 public final class UnifiedContentAxis {
   public enum Kind {
@@ -42,6 +44,20 @@ public final class UnifiedContentAxis {
     public long endRowExclusive() {
       return startRow + rowCount;
     }
+
+    static Item loaded(long startRow, long historySeq, RenderLine line) {
+      return new Item(Kind.LOADED_LINE, startRow, 1, historySeq, historySeq,
+          line.key().lineId(), line);
+    }
+
+    static Item missing(long startRow, long fromSeq, long toSeq) {
+      return new Item(Kind.MISSING_HISTORY_RANGE, startRow, toSeq - fromSeq + 1,
+          fromSeq, toSeq, 0, null);
+    }
+
+    static Item active(long startRow, RenderLine line) {
+      return new Item(Kind.ACTIVE_LINE, startRow, 1, 0, 0, line.key().lineId(), line);
+    }
   }
 
   private final List<Item> items;
@@ -58,7 +74,7 @@ public final class UnifiedContentAxis {
       long rowCount) {
     this.history = history;
     this.historyCatalog = historyCatalog != null ? historyCatalog : new HistoryCatalog();
-    this.items = new CombinedItems(history.items, activeItems);
+    this.items = new CombinedItems(history.segments, activeItems);
     this.activeRowByLineId = Collections.unmodifiableMap(activeRowByLineId);
     this.activeRowByLineKey = Collections.unmodifiableMap(activeRowByLineKey);
     this.rowCount = rowCount;
@@ -81,16 +97,41 @@ public final class UnifiedContentAxis {
       }
       rows[row] = new RenderLine(key, body);
     }
-    return build(surface, ScreenRenderView.takeOwnership(rows), null, true);
+    return update(surface, ScreenRenderView.takeOwnership(rows), null, null, true);
   }
 
+  /** @deprecated 保留旧签名；新路径请使用 {@link #update}. */
+  @Deprecated
   static UnifiedContentAxis build(
       TerminalSurfaceState surface,
       ScreenRenderView screen,
       UnifiedContentAxis previous,
       boolean rebuildHistory) {
-    HistoryPart history = previous != null && !rebuildHistory
-        ? previous.history : buildHistory(surface);
+    return update(surface, screen, previous, null, rebuildHistory);
+  }
+
+  static UnifiedContentAxis update(
+      TerminalSurfaceState surface,
+      ScreenRenderView screen,
+      UnifiedContentAxis previous,
+      RenderDirtyState dirty) {
+    boolean rebuildHistory = dirty == null || dirty.historyChanged || dirty.activeBufferChanged;
+    return update(surface, screen, previous, dirty, rebuildHistory);
+  }
+
+  private static UnifiedContentAxis update(
+      TerminalSurfaceState surface,
+      ScreenRenderView screen,
+      UnifiedContentAxis previous,
+      RenderDirtyState dirty,
+      boolean historyTouched) {
+    long started = System.nanoTime();
+    HistoryPart history;
+    if (!historyTouched && previous != null) {
+      history = previous.history;
+    } else {
+      history = updateHistory(surface, previous == null ? null : previous.history, dirty);
+    }
     List<Item> activeItems = new ArrayList<>(screen.size());
     Map<Long, Long> activeRowsById = new HashMap<>();
     Map<LineKey, Long> activeRowsByKey = new HashMap<>();
@@ -98,52 +139,151 @@ public final class UnifiedContentAxis {
     for (int activeRow = 0; activeRow < screen.size(); activeRow++) {
       RenderLine line = screen.lineAt(activeRow);
       LineKey key = line.key();
-      activeItems.add(new Item(Kind.ACTIVE_LINE, row, 1, 0, 0, key.lineId(), line));
+      activeItems.add(Item.active(row, line));
       activeRowsById.put(key.lineId(), row);
       activeRowsByKey.put(key, row);
       row++;
     }
+    TerminalRenderMetrics.historyAxisUpdate(
+        System.nanoTime() - started, history.pagesRebuilt, history.pagesReused,
+        history.rowsScanned, history.fullRebuild);
     return new UnifiedContentAxis(
         history, surface.historyCatalog, Collections.unmodifiableList(activeItems),
         activeRowsById, activeRowsByKey, row);
   }
 
-  private static HistoryPart buildHistory(TerminalSurfaceState surface) {
-    List<Item> result = new ArrayList<>();
-    long row = 0;
+  private static HistoryPart updateHistory(
+      TerminalSurfaceState surface, HistoryPart previous, RenderDirtyState dirty) {
     HistoryExtent extent = surface.historyCatalog.extent();
-    long nextSeq = extent.isEmpty() ? 1 : extent.firstSeq;
-    for (HistoryResidencyIndex.ResidentEntry resident
-        : surface.bodyCache.historyResidency().residentEntries()) {
-      long seq = resident.historySeq();
-      if (!extent.contains(seq)) continue;
-      if (seq > nextSeq) {
-        long count = seq - nextSeq;
-        result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, count,
-            nextSeq, seq - 1, 0, null));
-        row += count;
+    if (extent.isEmpty()) return HistoryPart.EMPTY;
+
+    boolean canIncremental = previous != null
+        && previous.extent != null
+        && previous.extent.equals(extent)
+        && dirty != null
+        && dirty.historyChanged
+        && !dirty.historyStructureChanged
+        && dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
+
+    if (!canIncremental) {
+      return buildHistoryFull(surface, "structure_or_unknown");
+    }
+
+    long fromSeq = Math.max(extent.firstSeq, dirty.changedHistoryFromSeq);
+    long toSeq = Math.min(extent.lastSeq, dirty.changedHistoryToSeq);
+    if (fromSeq > toSeq) {
+      return previous;
+    }
+
+    long firstPage = HistoryResidencyIndex.pageNumber(fromSeq);
+    long lastPage = HistoryResidencyIndex.pageNumber(toSeq);
+    Map<Long, HistoryAxisPage> pages = new HashMap<>(previous.pages);
+    int rebuilt = 0;
+    int reused = previous.pages.size();
+    int scanned = 0;
+    for (long pageNumber = firstPage; pageNumber <= lastPage; pageNumber++) {
+      HistoryAxisPage page = buildPage(surface, extent, pageNumber);
+      scanned += HistoryResidencyIndex.PAGE_SIZE;
+      rebuilt++;
+      reused--;
+      if (page.isEmpty()) {
+        pages.remove(pageNumber);
+      } else {
+        pages.put(pageNumber, page);
       }
+    }
+    List<Item> segments = buildSegments(extent, pages);
+    return new HistoryPart(
+        extent, Collections.unmodifiableMap(pages), segments,
+        extent.logicalSize(), rebuilt, Math.max(0, reused), scanned, false);
+  }
+
+  private static HistoryPart buildHistoryFull(TerminalSurfaceState surface, String reason) {
+    HistoryExtent extent = surface.historyCatalog.extent();
+    if (extent.isEmpty()) return HistoryPart.EMPTY;
+    Map<Long, HistoryAxisPage> pages = new HashMap<>();
+    int scanned = 0;
+    long firstPage = HistoryResidencyIndex.pageNumber(extent.firstSeq);
+    long lastPage = HistoryResidencyIndex.pageNumber(extent.lastSeq);
+    for (long pageNumber = firstPage; pageNumber <= lastPage; pageNumber++) {
+      HistoryAxisPage page = buildPage(surface, extent, pageNumber);
+      scanned += HistoryResidencyIndex.PAGE_SIZE;
+      if (!page.isEmpty()) pages.put(pageNumber, page);
+    }
+    List<Item> segments = buildSegments(extent, pages);
+    TerminalRenderMetrics.historyAxisFullRebuild(reason);
+    return new HistoryPart(
+        extent, Collections.unmodifiableMap(pages), segments,
+        extent.logicalSize(), pages.size(), 0, scanned, true);
+  }
+
+  private static HistoryAxisPage buildPage(
+      TerminalSurfaceState surface, HistoryExtent extent, long pageNumber) {
+    long pageFirst = HistoryResidencyIndex.pageFirstSeq(pageNumber);
+    long pageLast = HistoryResidencyIndex.pageLastSeq(pageNumber);
+    long from = Math.max(extent.firstSeq, pageFirst);
+    long to = Math.min(extent.lastSeq, pageLast);
+    if (from > to) return new HistoryAxisPage(pageNumber, List.of(), 0);
+
+    List<Item> items = new ArrayList<>();
+    int loaded = 0;
+    long missingFrom = -1;
+    for (long seq = from; seq <= to; seq++) {
+      long axisRow = seq - extent.firstSeq;
       LineKey expected = surface.historyCatalog.key(seq);
-      LineBody body = expected != null && expected.equals(resident.key())
+      LineKey resident = surface.bodyCache.historyResidency().key(seq);
+      LineBody body = expected != null && expected.equals(resident)
           ? surface.bodyCache.body(expected) : null;
       if (body != null) {
-        RenderLine line = new RenderLine(expected, body);
-        result.add(new Item(Kind.LOADED_LINE, row, 1,
-            seq, seq, expected.lineId(), line));
-      } else {
-        result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, 1,
-            seq, seq, 0, null));
+        if (missingFrom >= 0) {
+          items.add(Item.missing(missingFrom - extent.firstSeq, missingFrom, seq - 1));
+          missingFrom = -1;
+        }
+        items.add(Item.loaded(axisRow, seq, new RenderLine(expected, body)));
+        loaded++;
+      } else if (missingFrom < 0) {
+        missingFrom = seq;
       }
-      row++;
-      if (seq != Long.MAX_VALUE) nextSeq = seq + 1;
     }
-    if (!extent.isEmpty() && nextSeq <= extent.lastSeq) {
-      long count = extent.lastSeq - nextSeq + 1;
-      result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, count,
-          nextSeq, extent.lastSeq, 0, null));
-      row += count;
+    if (missingFrom >= 0) {
+      items.add(Item.missing(missingFrom - extent.firstSeq, missingFrom, to));
     }
-    return new HistoryPart(Collections.unmodifiableList(result), row);
+    if (loaded == 0) return new HistoryAxisPage(pageNumber, List.of(), 0);
+    return new HistoryAxisPage(pageNumber, items, loaded);
+  }
+
+  /**
+   * 将有正文的页与中间空洞拼成 segment 目录。空洞跨多个空页合并为单个 MISSING。
+   */
+  private static List<Item> buildSegments(
+      HistoryExtent extent, Map<Long, HistoryAxisPage> pages) {
+    if (pages.isEmpty()) {
+      return List.of(Item.missing(0, extent.firstSeq, extent.lastSeq));
+    }
+    TreeMap<Long, HistoryAxisPage> ordered = new TreeMap<>(pages);
+    List<Item> segments = new ArrayList<>();
+    long nextSeq = extent.firstSeq;
+    for (HistoryAxisPage page : ordered.values()) {
+      for (Item item : page.items) {
+        if (item.fromHistorySeq > nextSeq) {
+          segments.add(Item.missing(
+              nextSeq - extent.firstSeq, nextSeq, item.fromHistorySeq - 1));
+        }
+        // 重新锚定 startRow，保证 HistorySeq 是唯一位置来源。
+        if (item.kind == Kind.LOADED_LINE) {
+          segments.add(Item.loaded(
+              item.fromHistorySeq - extent.firstSeq, item.fromHistorySeq, item.line));
+        } else {
+          segments.add(Item.missing(
+              item.fromHistorySeq - extent.firstSeq, item.fromHistorySeq, item.toHistorySeq));
+        }
+        nextSeq = item.toHistorySeq + 1;
+      }
+    }
+    if (nextSeq <= extent.lastSeq) {
+      segments.add(Item.missing(nextSeq - extent.firstSeq, nextSeq, extent.lastSeq));
+    }
+    return Collections.unmodifiableList(segments);
   }
 
   public List<Item> items() {
@@ -161,15 +301,13 @@ public final class UnifiedContentAxis {
   public Long rowOfLineId(long lineId) {
     Long active = activeRowByLineId.get(lineId);
     if (active != null) return active;
-    Long seq = historyCatalog.historySeqByLineId(lineId);
-    return historyAxisRow(seq);
+    return historyAxisRow(historyCatalog.historySeqByLineId(lineId));
   }
 
   public Long rowOfLineKey(LineKey key) {
     Long active = activeRowByLineKey.get(key);
     if (active != null) return active;
-    Long seq = historyCatalog.historySeq(key);
-    return historyAxisRow(seq);
+    return historyAxisRow(historyCatalog.historySeq(key));
   }
 
   private Long historyAxisRow(Long seq) {
@@ -182,6 +320,9 @@ public final class UnifiedContentAxis {
   public Item itemAtRow(long axisRow) {
     if (axisRow < 0 || axisRow >= rowCount) {
       throw new IndexOutOfBoundsException("axisRow=" + axisRow + " rows=" + rowCount);
+    }
+    if (axisRow < historyRowCount) {
+      return history.itemAtAxisRow(axisRow, historyCatalog.extent());
     }
     int low = 0;
     int high = items.size() - 1;
@@ -199,15 +340,64 @@ public final class UnifiedContentAxis {
     throw new IllegalStateException("axis row not covered");
   }
 
+  /** 测试可见：未变更页是否保持同一对象。 */
+  HistoryAxisPage pageForTest(long pageNumber) {
+    return history.pages.get(pageNumber);
+  }
+
   private static final class HistoryPart {
-    static final HistoryPart EMPTY = new HistoryPart(Collections.emptyList(), 0);
+    static final HistoryPart EMPTY = new HistoryPart(
+        HistoryExtent.INITIAL_EMPTY, Map.of(), List.of(), 0, 0, 0, 0, false);
 
-    final List<Item> items;
+    final HistoryExtent extent;
+    final Map<Long, HistoryAxisPage> pages;
+    final List<Item> segments;
     final long rowCount;
+    final int pagesRebuilt;
+    final int pagesReused;
+    final int rowsScanned;
+    final boolean fullRebuild;
 
-    HistoryPart(List<Item> items, long rowCount) {
-      this.items = items;
+    HistoryPart(
+        HistoryExtent extent, Map<Long, HistoryAxisPage> pages, List<Item> segments,
+        long rowCount, int pagesRebuilt, int pagesReused, int rowsScanned, boolean fullRebuild) {
+      this.extent = extent;
+      this.pages = pages;
+      this.segments = segments;
       this.rowCount = rowCount;
+      this.pagesRebuilt = pagesRebuilt;
+      this.pagesReused = pagesReused;
+      this.rowsScanned = rowsScanned;
+      this.fullRebuild = fullRebuild;
+    }
+
+    Item itemAtAxisRow(long axisRow, HistoryExtent liveExtent) {
+      // 优先返回 segments 中的既有对象，保证 screen-only 更新时 Item 身份稳定。
+      int low = 0;
+      int high = segments.size() - 1;
+      while (low <= high) {
+        int mid = (low + high) >>> 1;
+        Item item = segments.get(mid);
+        if (axisRow < item.startRow) {
+          high = mid - 1;
+        } else if (axisRow >= item.endRowExclusive()) {
+          low = mid + 1;
+        } else {
+          return item;
+        }
+      }
+      HistoryExtent use = liveExtent != null && !liveExtent.isEmpty() ? liveExtent : extent;
+      long historySeq = use.firstSeq + axisRow;
+      long pageNumber = HistoryResidencyIndex.pageNumber(historySeq);
+      HistoryAxisPage page = pages.get(pageNumber);
+      if (page != null) {
+        for (Item item : page.items) {
+          if (historySeq >= item.fromHistorySeq && historySeq <= item.toHistorySeq) {
+            return item;
+          }
+        }
+      }
+      return Item.missing(axisRow, historySeq, historySeq);
     }
   }
 
