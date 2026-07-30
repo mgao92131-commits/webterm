@@ -46,16 +46,18 @@ public final class UnifiedContentAxis {
 
   private final List<Item> items;
   private final HistoryPart history;
+  private final HistoryCatalog historyCatalog;
   private final Map<Long, Long> activeRowByLineId;
   private final Map<LineKey, Long> activeRowByLineKey;
   private final long rowCount;
   private final long historyRowCount;
 
   private UnifiedContentAxis(
-      HistoryPart history, List<Item> activeItems,
+      HistoryPart history, HistoryCatalog historyCatalog, List<Item> activeItems,
       Map<Long, Long> activeRowByLineId, Map<LineKey, Long> activeRowByLineKey,
       long rowCount) {
     this.history = history;
+    this.historyCatalog = historyCatalog != null ? historyCatalog : new HistoryCatalog();
     this.items = new CombinedItems(history.items, activeItems);
     this.activeRowByLineId = Collections.unmodifiableMap(activeRowByLineId);
     this.activeRowByLineKey = Collections.unmodifiableMap(activeRowByLineKey);
@@ -65,7 +67,7 @@ public final class UnifiedContentAxis {
 
   public static UnifiedContentAxis empty() {
     return new UnifiedContentAxis(
-        HistoryPart.EMPTY, Collections.emptyList(),
+        HistoryPart.EMPTY, new HistoryCatalog(), Collections.emptyList(),
         Collections.emptyMap(), Collections.emptyMap(), 0);
   }
 
@@ -102,14 +104,12 @@ public final class UnifiedContentAxis {
       row++;
     }
     return new UnifiedContentAxis(
-        history, Collections.unmodifiableList(activeItems),
+        history, surface.historyCatalog, Collections.unmodifiableList(activeItems),
         activeRowsById, activeRowsByKey, row);
   }
 
   private static HistoryPart buildHistory(TerminalSurfaceState surface) {
     List<Item> result = new ArrayList<>();
-    Map<Long, Long> rowsById = new HashMap<>();
-    Map<LineKey, Long> rowsByKey = new HashMap<>();
     long row = 0;
     HistoryExtent extent = surface.historyCatalog.extent();
     long nextSeq = extent.isEmpty() ? 1 : extent.firstSeq;
@@ -130,8 +130,6 @@ public final class UnifiedContentAxis {
         RenderLine line = new RenderLine(expected, body);
         result.add(new Item(Kind.LOADED_LINE, row, 1,
             seq, seq, expected.lineId(), line));
-        rowsById.put(expected.lineId(), row);
-        rowsByKey.put(expected, row);
       } else {
         result.add(new Item(Kind.MISSING_HISTORY_RANGE, row, 1,
             seq, seq, 0, null));
@@ -145,11 +143,7 @@ public final class UnifiedContentAxis {
           nextSeq, extent.lastSeq, 0, null));
       row += count;
     }
-    return new HistoryPart(
-        Collections.unmodifiableList(result),
-        Collections.unmodifiableMap(rowsById),
-        Collections.unmodifiableMap(rowsByKey),
-        row);
+    return new HistoryPart(Collections.unmodifiableList(result), row);
   }
 
   public List<Item> items() {
@@ -166,12 +160,23 @@ public final class UnifiedContentAxis {
 
   public Long rowOfLineId(long lineId) {
     Long active = activeRowByLineId.get(lineId);
-    return active != null ? active : history.rowByLineId.get(lineId);
+    if (active != null) return active;
+    Long seq = historyCatalog.historySeqByLineId(lineId);
+    return historyAxisRow(seq);
   }
 
   public Long rowOfLineKey(LineKey key) {
     Long active = activeRowByLineKey.get(key);
-    return active != null ? active : history.rowByLineKey.get(key);
+    if (active != null) return active;
+    Long seq = historyCatalog.historySeq(key);
+    return historyAxisRow(seq);
+  }
+
+  private Long historyAxisRow(Long seq) {
+    if (seq == null) return null;
+    HistoryExtent extent = historyCatalog.extent();
+    if (extent.isEmpty() || !extent.contains(seq)) return null;
+    return seq - extent.firstSeq;
   }
 
   public Item itemAtRow(long axisRow) {
@@ -195,20 +200,13 @@ public final class UnifiedContentAxis {
   }
 
   private static final class HistoryPart {
-    static final HistoryPart EMPTY = new HistoryPart(
-        Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(), 0);
+    static final HistoryPart EMPTY = new HistoryPart(Collections.emptyList(), 0);
 
     final List<Item> items;
-    final Map<Long, Long> rowByLineId;
-    final Map<LineKey, Long> rowByLineKey;
     final long rowCount;
 
-    HistoryPart(
-        List<Item> items, Map<Long, Long> rowByLineId,
-        Map<LineKey, Long> rowByLineKey, long rowCount) {
+    HistoryPart(List<Item> items, long rowCount) {
       this.items = items;
-      this.rowByLineId = rowByLineId;
-      this.rowByLineKey = rowByLineKey;
       this.rowCount = rowCount;
     }
   }
