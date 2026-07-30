@@ -193,6 +193,11 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong HISTORY_AXIS_PAGES_REUSED = new AtomicLong();
   private static final AtomicLong HISTORY_AXIS_ROWS_SCANNED = new AtomicLong();
   private static final AtomicLong HISTORY_AXIS_UPDATE_NANOS = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_SEGMENT_BUILD_COUNT = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_SEGMENT_BUILD_NANOS = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_SEGMENT_PAGES_VISITED = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_SEGMENT_ITEMS_VISITED = new AtomicLong();
+  private static final AtomicLong HISTORY_AXIS_SEGMENT_ITEMS_CREATED = new AtomicLong();
 
   public static void historyAxisUpdate(
       long durationNanos, int pagesRebuilt, int pagesReused, int rowsScanned, boolean fullRebuild) {
@@ -204,6 +209,15 @@ public final class TerminalRenderMetrics {
     if (fullRebuild) HISTORY_AXIS_FULL_REBUILD_COUNT.incrementAndGet();
   }
 
+  public static void historyAxisSegmentsBuilt(
+      long durationNanos, int pagesVisited, int itemsVisited, int itemsCreated) {
+    HISTORY_AXIS_SEGMENT_BUILD_COUNT.incrementAndGet();
+    HISTORY_AXIS_SEGMENT_BUILD_NANOS.addAndGet(Math.max(0L, durationNanos));
+    HISTORY_AXIS_SEGMENT_PAGES_VISITED.addAndGet(Math.max(0, pagesVisited));
+    HISTORY_AXIS_SEGMENT_ITEMS_VISITED.addAndGet(Math.max(0, itemsVisited));
+    HISTORY_AXIS_SEGMENT_ITEMS_CREATED.addAndGet(Math.max(0, itemsCreated));
+  }
+
   public static void historyAxisFullRebuild(String reason) {
     // 原因由调用方传入供后续诊断扩展；计数由 historyAxisUpdate(fullRebuild=true) 统一累加。
   }
@@ -213,6 +227,21 @@ public final class TerminalRenderMetrics {
   public static long historyAxisPagesRebuilt() { return HISTORY_AXIS_PAGES_REBUILT.get(); }
   public static long historyAxisPagesReused() { return HISTORY_AXIS_PAGES_REUSED.get(); }
   public static long historyAxisRowsScanned() { return HISTORY_AXIS_ROWS_SCANNED.get(); }
+  public static long historyAxisSegmentBuildCount() {
+    return HISTORY_AXIS_SEGMENT_BUILD_COUNT.get();
+  }
+  public static long historyAxisSegmentBuildNanos() {
+    return HISTORY_AXIS_SEGMENT_BUILD_NANOS.get();
+  }
+  public static long historyAxisSegmentPagesVisited() {
+    return HISTORY_AXIS_SEGMENT_PAGES_VISITED.get();
+  }
+  public static long historyAxisSegmentItemsVisited() {
+    return HISTORY_AXIS_SEGMENT_ITEMS_VISITED.get();
+  }
+  public static long historyAxisSegmentItemsCreated() {
+    return HISTORY_AXIS_SEGMENT_ITEMS_CREATED.get();
+  }
   /** 每帧结束批量提交行级热路径指标，每个非零项最多一次原子 add。 */
   public static void addRowCacheStats(long rowHits, long rowMisses,
                                       long historyHits, long historyMisses,

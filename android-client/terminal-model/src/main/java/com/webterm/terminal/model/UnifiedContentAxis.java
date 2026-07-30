@@ -192,7 +192,7 @@ public final class UnifiedContentAxis {
         pages.put(pageNumber, page);
       }
     }
-    List<Item> segments = buildSegments(extent, pages);
+    List<Item> segments = buildSegments(extent, pages).publishAndGet();
     return new HistoryPart(
         extent, Collections.unmodifiableMap(pages), segments,
         extent.logicalSize(), rebuilt, Math.max(0, reused), scanned, false);
@@ -210,7 +210,7 @@ public final class UnifiedContentAxis {
       scanned += HistoryResidencyIndex.PAGE_SIZE;
       if (!page.isEmpty()) pages.put(pageNumber, page);
     }
-    List<Item> segments = buildSegments(extent, pages);
+    List<Item> segments = buildSegments(extent, pages).publishAndGet();
     TerminalRenderMetrics.historyAxisFullRebuild(reason);
     return new HistoryPart(
         extent, Collections.unmodifiableMap(pages), segments,
@@ -255,16 +255,22 @@ public final class UnifiedContentAxis {
   /**
    * 将有正文的页与中间空洞拼成 segment 目录。空洞跨多个空页合并为单个 MISSING。
    */
-  private static List<Item> buildSegments(
+  private static SegmentBuildResult buildSegments(
       HistoryExtent extent, Map<Long, HistoryAxisPage> pages) {
+    long started = System.nanoTime();
     if (pages.isEmpty()) {
-      return List.of(Item.missing(0, extent.firstSeq, extent.lastSeq));
+      List<Item> onlyMissing = List.of(Item.missing(0, extent.firstSeq, extent.lastSeq));
+      return new SegmentBuildResult(onlyMissing, 0, 0, onlyMissing.size(), started);
     }
     TreeMap<Long, HistoryAxisPage> ordered = new TreeMap<>(pages);
     List<Item> segments = new ArrayList<>();
+    int pagesVisited = 0;
+    int itemsVisited = 0;
     long nextSeq = extent.firstSeq;
     for (HistoryAxisPage page : ordered.values()) {
+      pagesVisited++;
       for (Item item : page.items) {
+        itemsVisited++;
         if (item.fromHistorySeq > nextSeq) {
           segments.add(Item.missing(
               nextSeq - extent.firstSeq, nextSeq, item.fromHistorySeq - 1));
@@ -283,7 +289,33 @@ public final class UnifiedContentAxis {
     if (nextSeq <= extent.lastSeq) {
       segments.add(Item.missing(nextSeq - extent.firstSeq, nextSeq, extent.lastSeq));
     }
-    return Collections.unmodifiableList(segments);
+    List<Item> frozen = Collections.unmodifiableList(segments);
+    return new SegmentBuildResult(frozen, pagesVisited, itemsVisited, frozen.size(), started);
+  }
+
+  private static final class SegmentBuildResult {
+    final List<Item> segments;
+    final int pagesVisited;
+    final int itemsVisited;
+    final int itemsCreated;
+    final long startedNanos;
+
+    SegmentBuildResult(
+        List<Item> segments, int pagesVisited, int itemsVisited, int itemsCreated,
+        long startedNanos) {
+      this.segments = segments;
+      this.pagesVisited = pagesVisited;
+      this.itemsVisited = itemsVisited;
+      this.itemsCreated = itemsCreated;
+      this.startedNanos = startedNanos;
+    }
+
+    List<Item> publishAndGet() {
+      TerminalRenderMetrics.historyAxisSegmentsBuilt(
+          System.nanoTime() - startedNanos,
+          pagesVisited, itemsVisited, itemsCreated);
+      return segments;
+    }
   }
 
   public List<Item> items() {
