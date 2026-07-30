@@ -1,6 +1,7 @@
 package com.webterm.terminal.model;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -30,19 +31,108 @@ public final class RenderDirtyStateMergeTest {
     assertEquals(2, dirty.screenScrollRows);
     assertEquals(rows(3, 4), dirty.exposedScreenRows);
     assertEquals(rows(3, 4), dirty.changedScreenRows);
-    assertTrue(!dirty.fullInvalidate);
+    assertFalse(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
   }
 
   @Test
-  public void oppositeScrollsDegenerateToFullInvalidate() {
+  public void writeThenScrollDoesNotFullInvalidate() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(2), 0, null, 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+    dirty.merge(false, rows(4), 1, rows(4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+
+    assertFalse(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
+    assertEquals(1, dirty.screenScrollRows);
+    assertTrue(dirty.changedScreenRows.get(1)); // 旧行 2 随内容上移到 1
+    assertTrue(dirty.changedScreenRows.get(4));
+    assertEquals(rows(4), dirty.exposedScreenRows);
+  }
+
+  @Test
+  public void scrollThenWriteDoesNotFullInvalidate() {
     RenderDirtyState dirty = state();
     dirty.merge(false, rows(4), 1, rows(4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+    dirty.merge(false, rows(2), 0, null, 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+
+    assertFalse(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
+    assertEquals(1, dirty.screenScrollRows);
+    assertEquals(rows(2, 4), dirty.changedScreenRows);
+    assertEquals(rows(4), dirty.exposedScreenRows);
+  }
+
+  @Test
+  public void twoSameDirectionScrollsCompose() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(4), 1, rows(4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+    dirty.merge(false, rows(4), 2, rows(3, 4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+
+    assertEquals(3, dirty.screenScrollRows);
+    assertFalse(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
+  }
+
+  @Test
+  public void oppositeScrollsComposeToNetScroll() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(4), 2, rows(3, 4), 5,
         false, false, false, -1, -1, false, false, false, false, false);
     dirty.merge(false, rows(0), -1, rows(0), 5,
         false, false, false, -1, -1, false, false, false, false, false);
 
-    assertTrue(dirty.fullInvalidate);
+    assertFalse(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
+    assertEquals(1, dirty.screenScrollRows);
+  }
+
+  @Test
+  public void oppositeScrollsWithZeroNetKeepDirtyRows() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(4), 2, rows(3, 4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+    dirty.merge(false, rows(0, 1), -2, rows(0, 1), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+
+    assertFalse(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
     assertEquals(0, dirty.screenScrollRows);
+    assertFalse(dirty.changedScreenRows.isEmpty() && dirty.exposedScreenRows.isEmpty());
+  }
+
+  @Test
+  public void scrollBeyondScreenFallsBackToScreenRegion() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(4), 3, rows(2, 3, 4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+    dirty.merge(false, rows(4), 3, rows(2, 3, 4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+
+    assertFalse(dirty.fullInvalidate);
+    assertTrue(dirty.screenRegionInvalidate);
+    assertEquals(0, dirty.screenScrollRows);
+    assertTrue(dirty.changedScreenRows.isEmpty());
+    assertTrue(dirty.exposedScreenRows.isEmpty());
+  }
+
+  @Test
+  public void firstPreviousCursorAndLastCurrentCursorArePreserved() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(4), 1, rows(4), 5,
+        false, false, true, 2, 3, false, false, false, false, false);
+    dirty.merge(false, rows(4), 1, rows(4), 5,
+        false, false, true, 0, 4, false, false, false, false, false);
+
+    assertEquals(2, dirty.screenScrollRows);
+    // 光标不随内容滚动平移：保留首 Commit 旧光标与末 Commit 新光标。
+    assertEquals(2, dirty.previousCursorRow);
+    assertEquals(4, dirty.currentCursorRow);
   }
 
   @Test
@@ -54,6 +144,7 @@ public final class RenderDirtyStateMergeTest {
         false, false, false, -1, -1, false, false, false, false, true);
 
     assertTrue(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
     assertEquals(0, dirty.screenScrollRows);
   }
 
@@ -66,44 +157,17 @@ public final class RenderDirtyStateMergeTest {
         false, true, false, -1, -1, false, false, false, false, false);
 
     assertTrue(dirty.fullInvalidate);
+    assertFalse(dirty.screenRegionInvalidate);
     assertEquals(0, dirty.screenScrollRows);
   }
 
   @Test
-  public void contentChangeAfterScrollForcesFullInvalidate() {
+  public void invalidRowCountFallsBackToScreenRegion() {
     RenderDirtyState dirty = state();
-    dirty.merge(false, rows(4), 1, rows(4), 5,
-        false, false, false, -1, -1, false, false, false, false, false);
-    dirty.merge(false, rows(2), 0, null, 5,
+    dirty.merge(false, rows(0), 1, rows(0), 0,
         false, false, false, -1, -1, false, false, false, false, false);
 
-    assertTrue(dirty.fullInvalidate);
-  }
-
-  @Test
-  public void consecutiveScrollsShiftCursorRows() {
-    RenderDirtyState dirty = state();
-    dirty.merge(false, rows(4), 1, rows(4), 5,
-        false, false, true, 2, 3, false, false, false, false, false);
-    dirty.merge(false, rows(4), 1, rows(4), 5,
-        false, false, false, -1, -1, false, false, false, false, false);
-
-    assertEquals(2, dirty.screenScrollRows);
-    // 光标行随第二次向上滚动平移：2 -> 1，3 -> 2，与最终 layout 保持一致。
-    assertEquals(1, dirty.previousCursorRow);
-    assertEquals(2, dirty.currentCursorRow);
-  }
-
-  @Test
-  public void cursorRowShiftClampsAtScreenEdge() {
-    RenderDirtyState dirty = state();
-    dirty.merge(false, rows(4), 1, rows(4), 5,
-        false, false, true, 0, 0, false, false, false, false, false);
-    dirty.merge(false, rows(4), 1, rows(4), 5,
-        false, false, false, -1, -1, false, false, false, false, false);
-
-    // 向上平移越界时钳制到顶行（保留一次边缘重画，绝不丢失）。
-    assertEquals(0, dirty.previousCursorRow);
-    assertEquals(0, dirty.currentCursorRow);
+    assertFalse(dirty.fullInvalidate);
+    assertTrue(dirty.screenRegionInvalidate);
   }
 }

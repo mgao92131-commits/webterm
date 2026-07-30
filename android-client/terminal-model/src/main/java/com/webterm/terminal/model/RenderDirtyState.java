@@ -9,13 +9,18 @@ import java.util.BitSet;
  * {@link RemoteTerminalModel#consumeRenderUpdate()} 交换出去后不再修改，因而可安全地
  * 由主线程读取。BitSet 采用不可变约定，避免每个 Patch 为脏行额外分配集合。</p>
  *
- * <p>新增屏幕整体滚动语义：{@link #screenScrollRows} 表示实时屏幕相对上一帧的位移
- * （正数向上滚动），{@link #exposedScreenRows} 记录滚动后新暴露、必须重新录制的行。
- * 单纯位置移动的旧行不再全部加入 {@link #changedScreenRows}，以便 View 层复用
- * RenderNode 行缓存。</p>
+ * <p>屏幕损伤三级：精确行 → Screen 区域（{@link #screenRegionInvalidate}）→ 整 View
+ * （{@link #fullInvalidate}）。滚动采用坐标变换合并：正数表示内容向上移动，已累计脏行随
+ * 内容平移，新 Commit 脏行已位于最终屏幕坐标直接合并。普通滚动与行写入混合不再升成
+ * {@link #fullInvalidate}。</p>
  */
 public final class RenderDirtyState {
   public boolean fullInvalidate;
+  /**
+   * 无法继续建立精确屏幕行映射时，只刷新实时 Screen 区域，不升到整 View。
+   * 与 {@link #fullInvalidate} 互斥：结构变化优先 full；区域退化时 full 必须为 false。
+   */
+  public boolean screenRegionInvalidate;
   public final BitSet changedScreenRows = new BitSet();
   /** 屏幕整体滚动行数；正数向上，负数向下，0 表示无整体滚动。 */
   public int screenScrollRows;
@@ -38,10 +43,10 @@ public final class RenderDirtyState {
   public boolean activeBufferChanged;
 
   public boolean isEmpty() {
-    return !fullInvalidate && changedScreenRows.isEmpty() && screenScrollRows == 0
-        && exposedScreenRows.isEmpty() && !historyChanged && !geometryChanged
-        && !cursorChanged && !paletteChanged && !stylesChanged && !linksChanged && !modesChanged
-        && !activeBufferChanged;
+    return !fullInvalidate && !screenRegionInvalidate && changedScreenRows.isEmpty()
+        && screenScrollRows == 0 && exposedScreenRows.isEmpty() && !historyChanged
+        && !geometryChanged && !cursorChanged && !paletteChanged && !stylesChanged
+        && !linksChanged && !modesChanged && !activeBufferChanged;
   }
 
   void merge(boolean fullInvalidate, BitSet changedRows, int screenScrollRows, BitSet exposedRows,
@@ -52,34 +57,18 @@ public final class RenderDirtyState {
     boolean structuralChange = this.fullInvalidate || fullInvalidate
         || this.geometryChanged || geometryChanged
         || this.activeBufferChanged || activeBufferChanged;
-    boolean oppositeScroll = !structuralChange && this.screenScrollRows != 0 && screenScrollRows != 0
-        && (this.screenScrollRows > 0) != (screenScrollRows > 0);
-    boolean contentAfterScroll = !structuralChange && this.screenScrollRows != 0 && screenScrollRows == 0
-        && (changedRows != null && !changedRows.isEmpty());
-    boolean scrollAfterContent = !structuralChange && this.screenScrollRows == 0 && screenScrollRows != 0
-        && !this.changedScreenRows.isEmpty();
 
-    if (structuralChange || oppositeScroll || contentAfterScroll || scrollAfterContent) {
-      // 无法安全合并滚动或位置缓存已失效：退化到整屏重绘，清空滚动语义。
+    if (structuralChange) {
+      // 全局结构变化：整 View 重绘，清空滚动与区域退化语义。
       this.fullInvalidate = true;
+      this.screenRegionInvalidate = false;
       this.screenScrollRows = 0;
       this.exposedScreenRows.clear();
       if (changedRows != null) this.changedScreenRows.or(changedRows);
+    } else if (this.screenRegionInvalidate) {
+      // 已处于 Screen 区域退化：继续吸收后续损伤，不再尝试精确行映射。
     } else if (screenScrollRows != 0) {
-      int newScroll = this.screenScrollRows + screenScrollRows;
-      if (newScroll == 0) {
-        // 往返滚动导致缓存位置无法对应，退化到整屏重绘。
-        this.fullInvalidate = true;
-        this.screenScrollRows = 0;
-        this.exposedScreenRows.clear();
-        if (changedRows != null) this.changedScreenRows.or(changedRows);
-      } else {
-        // 同一方向连续滚动：把已累计的脏行按新滚动平移后，再合并本次暴露行。
-        shiftRows(-screenScrollRows, rowCount);
-        this.screenScrollRows = newScroll;
-        if (exposedRows != null) this.exposedScreenRows.or(exposedRows);
-        if (changedRows != null) this.changedScreenRows.or(changedRows);
-      }
+      composeScroll(screenScrollRows, changedRows, exposedRows, rowCount);
     } else {
       if (changedRows != null) this.changedScreenRows.or(changedRows);
     }
@@ -87,7 +76,8 @@ public final class RenderDirtyState {
     this.historyChanged |= historyChanged;
     this.geometryChanged |= geometryChanged;
     this.cursorChanged |= cursorChanged;
-    // 第一处旧光标和最后一处新光标都必须被重画。
+    // 第一处旧光标和最后一处新光标都必须被重画；光标使用各 Commit 自身屏幕坐标，
+    // 不随后续内容滚动平移。
     if (this.previousCursorRow < 0 && previousCursorRow >= 0) {
       this.previousCursorRow = previousCursorRow;
     }
@@ -97,6 +87,41 @@ public final class RenderDirtyState {
     this.linksChanged |= linksChanged;
     this.modesChanged |= modesChanged;
     this.activeBufferChanged |= activeBufferChanged;
+  }
+
+  /**
+   * 将新滚动量合并进累计损伤。正数滚动表示内容向上移动：已记录脏行随内容上移，
+   * 新 Commit 脏行已位于最终坐标，直接 OR。净滚动可为零或反向，仍保留变换后的脏行。
+   */
+  private void composeScroll(
+      int delta, BitSet changedRows, BitSet exposedRows, int rowCount) {
+    if (rowCount <= 0) {
+      markScreenRegionInvalidate();
+      return;
+    }
+    long newScrollLong = (long) this.screenScrollRows + delta;
+    if (newScrollLong > Integer.MAX_VALUE || newScrollLong < Integer.MIN_VALUE) {
+      markScreenRegionInvalidate();
+      return;
+    }
+    int newScroll = (int) newScrollLong;
+    if (Math.abs((long) newScroll) >= rowCount) {
+      markScreenRegionInvalidate();
+      return;
+    }
+    shiftRows(-delta, rowCount);
+    this.screenScrollRows = newScroll;
+    if (exposedRows != null) this.exposedScreenRows.or(exposedRows);
+    if (changedRows != null) this.changedScreenRows.or(changedRows);
+  }
+
+  /** Screen 区域安全退化：不清成 fullInvalidate，只刷新实时 Screen。 */
+  private void markScreenRegionInvalidate() {
+    this.fullInvalidate = false;
+    this.screenRegionInvalidate = true;
+    this.screenScrollRows = 0;
+    this.changedScreenRows.clear();
+    this.exposedScreenRows.clear();
   }
 
   void mergeHistoryRange(long fromSeq, long toSeq, boolean structureChanged) {
@@ -119,6 +144,9 @@ public final class RenderDirtyState {
         other.cursorChanged, other.previousCursorRow, other.currentCursorRow,
         other.paletteChanged, other.stylesChanged, other.linksChanged, other.modesChanged,
         other.activeBufferChanged);
+    if (other.screenRegionInvalidate && !this.fullInvalidate) {
+      markScreenRegionInvalidate();
+    }
     if (other.historyChanged) {
       mergeHistoryRange(other.changedHistoryFromSeq, other.changedHistoryToSeq,
           other.historyStructureChanged);
@@ -128,7 +156,7 @@ public final class RenderDirtyState {
   /**
    * 将已累计的 {@link #changedScreenRows} 与 {@link #exposedScreenRows} 按 delta 平移。
    * delta 为正表示向更大行号移动（屏幕向下滚动后，旧内容落到更下方）。
-   * 光标行号随内容一起平移并钳制在有效范围内，保持与最终屏幕 layout 一致。
+   * 光标行不平移：previous/current 分别保留首帧旧光标与末帧新光标的屏幕坐标。
    */
   private void shiftRows(int delta, int rowCount) {
     if (rowCount <= 0 || delta == 0) return;
@@ -138,17 +166,6 @@ public final class RenderDirtyState {
     changedScreenRows.or(shiftedChanged);
     exposedScreenRows.clear();
     exposedScreenRows.or(shiftedExposed);
-    previousCursorRow = shiftCursorRow(previousCursorRow, delta, rowCount);
-    currentCursorRow = shiftCursorRow(currentCursorRow, delta, rowCount);
-  }
-
-  /** 平移光标行号；越界时钳制到屏幕边缘（保留一次边缘重画，绝不丢失）。 */
-  private static int shiftCursorRow(int row, int delta, int rowCount) {
-    if (row < 0) return row;
-    int shifted = row + delta;
-    if (shifted < 0) return 0;
-    if (shifted >= rowCount) return rowCount - 1;
-    return shifted;
   }
 
   private static BitSet shiftBitSet(BitSet source, int delta, int rowCount) {

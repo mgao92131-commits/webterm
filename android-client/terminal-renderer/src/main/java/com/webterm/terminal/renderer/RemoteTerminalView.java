@@ -1071,10 +1071,11 @@ public final class RemoteTerminalView extends View {
     }
 
     boolean screenChanged = dirty.screenScrollRows != 0
+        || dirty.screenRegionInvalidate
         || !dirty.changedScreenRows.isEmpty()
         || !dirty.exposedScreenRows.isEmpty();
 
-    float lineHeight = renderer.getLineHeight();
+    float lineHeight = lineHeight();
     HistoryRenderView history = snapshot.history;
     int snapshotViewportOffset = viewport.derivedScrollOffsetPixels(
         snapshot, lineHeight, maxScrollOffsetPixels(snapshot));
@@ -1124,7 +1125,8 @@ public final class RemoteTerminalView extends View {
       if (!screenVisible && !visibleHistoryChanged && !dirty.cursorChanged) {
         return plan;
       }
-      if (dirty.screenScrollRows != 0) {
+      // 区域退化或累计滚动：只刷 Screen 区域，不得升到整 View。
+      if (dirty.screenRegionInvalidate || dirty.screenScrollRows != 0) {
         buildScreenRegion(plan, screenTop, screenBottom);
         return plan;
       }

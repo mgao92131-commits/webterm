@@ -472,7 +472,8 @@ public final class RemoteTerminalModel {
     TerminalSurfaceState surface = state.activeSurface();
     RenderSnapshot previous = renderSnapshot;
     boolean screenChanged = forceSnapshotRebuild
-        || dirty.fullInvalidate || dirty.geometryChanged || dirty.activeBufferChanged
+        || dirty.fullInvalidate || dirty.screenRegionInvalidate
+        || dirty.geometryChanged || dirty.activeBufferChanged
         || dirty.screenScrollRows != 0
         || !dirty.changedScreenRows.isEmpty()
         || !dirty.exposedScreenRows.isEmpty()
@@ -480,7 +481,7 @@ public final class RemoteTerminalModel {
     ScreenRenderView screenView = screenChanged
         ? buildScreenRenderView(
             surface, previous.screenView, dirty,
-            forceSnapshotRebuild || dirty.fullInvalidate
+            forceSnapshotRebuild || dirty.fullInvalidate || dirty.screenRegionInvalidate
                 || dirty.geometryChanged || dirty.activeBufferChanged)
         : previous.screenView;
     boolean historyChanged = forceSnapshotRebuild
