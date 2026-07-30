@@ -100,6 +100,44 @@ public final class MuxInboundMailboxTest {
   }
 
   @Test
+  public void abortDrainAndClearResetsScheduledWithoutClearingOverflow() {
+    MuxInboundMailbox mailbox = new MuxInboundMailbox();
+    MuxTransport transport = new StubTransport();
+    for (int i = 0; i < MuxInboundMailbox.MAX_INBOUND_EVENTS; i++) {
+      mailbox.offer(MuxInboundMailbox.InboundEvent.Binary.of(
+          3, transport, ByteBuffer.wrap(new byte[] {(byte) i})));
+    }
+    MuxInboundMailbox.Offer overflow = mailbox.offer(MuxInboundMailbox.InboundEvent.Binary.of(
+        3, transport, ByteBuffer.wrap(new byte[] {99})));
+    assertTrue(overflow.overflowed);
+    assertEquals(3, mailbox.overflowedGeneration());
+
+    mailbox.offer(MuxInboundMailbox.InboundEvent.Text.of(4, transport, "keep-overflow-marker"));
+    MuxInboundMailbox.ClearResult cleared = mailbox.abortDrainAndClear();
+    assertTrue(cleared.events >= 1);
+    assertFalse(mailbox.isDrainScheduled());
+    assertEquals(0, mailbox.snapshot().currentEvents);
+    assertEquals(0L, mailbox.snapshot().currentBytes);
+    assertEquals(3, mailbox.overflowedGeneration());
+  }
+
+  @Test
+  public void offerAfterAbortDrainCanScheduleAgain() {
+    MuxInboundMailbox mailbox = new MuxInboundMailbox();
+    MuxTransport transport = new StubTransport();
+    mailbox.offer(MuxInboundMailbox.InboundEvent.Text.of(1, transport, "a"));
+    assertTrue(mailbox.isDrainScheduled());
+    mailbox.abortDrainAndClear();
+    assertFalse(mailbox.isDrainScheduled());
+
+    MuxInboundMailbox.Offer again = mailbox.offer(MuxInboundMailbox.InboundEvent.Text.of(
+        1, transport, "b"));
+    assertTrue(again.accepted);
+    assertTrue(again.scheduleDrain);
+    assertTrue(mailbox.isDrainScheduled());
+  }
+
+  @Test
   public void offerDuringDrainDoesNotLoseWakeup() {
     MuxInboundMailbox mailbox = new MuxInboundMailbox();
     MuxTransport transport = new StubTransport();

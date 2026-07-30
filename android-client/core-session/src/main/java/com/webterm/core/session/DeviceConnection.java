@@ -424,10 +424,7 @@ public final class DeviceConnection {
     private void offerInbound(MuxInboundMailbox.InboundEvent event) {
         MuxInboundMailbox.Offer offer = inboundMailbox.offer(event);
         if (offer.scheduleDrain) {
-            if (!stateHandler.post(inboundDrainRunnable)) {
-                // Handler 已关闭时同步清空，避免持有 ByteBuffer。
-                inboundMailbox.clear();
-            }
+            postInboundDrain();
         }
         if (offer.overflowed) {
             Diagnostics.warn("device_connection", "inbound_mailbox_overflow", physicalFields(
@@ -436,6 +433,20 @@ public final class DeviceConnection {
                 "overflowBytes", offer.overflowBytes));
             stateHandler.post(() -> handleInboundOverflow(offer.overflowGeneration));
         }
+    }
+
+    private boolean postInboundDrain() {
+        boolean posted = stateHandler.post(inboundDrainRunnable);
+        if (!posted) {
+            MuxInboundMailbox.ClearResult cleared = inboundMailbox.abortDrainAndClear();
+            Diagnostics.warn(
+                "device_connection",
+                "inbound_drain_post_rejected",
+                physicalFields(
+                    "droppedEvents", cleared.events,
+                    "droppedBytes", cleared.bytes));
+        }
+        return posted;
     }
 
     private void drainInboundEvents() {
@@ -450,7 +461,7 @@ public final class DeviceConnection {
         }
         inboundMailbox.noteDrainBatch(processed);
         if (inboundMailbox.finishDrainOrReschedule()) {
-            stateHandler.post(inboundDrainRunnable);
+            postInboundDrain();
         } else {
             publishDiagnosticsSnapshot();
         }
@@ -938,6 +949,10 @@ public final class DeviceConnection {
 
     MuxInboundMailbox.Snapshot inboundMailboxSnapshot() {
         return inboundMailbox.snapshot();
+    }
+
+    boolean isInboundDrainScheduled() {
+        return inboundMailbox.isDrainScheduled();
     }
 
     /** 诊断导出：只返回 state handler 已发布的不可变快照。 */

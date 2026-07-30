@@ -287,11 +287,31 @@ public final class MuxInboundMailbox {
         return overflowedGeneration;
     }
 
-    public synchronized void clear() {
+    public static final class ClearResult {
+        public final int events;
+        public final long bytes;
+
+        ClearResult(int events, long bytes) {
+            this.events = events;
+            this.bytes = bytes;
+        }
+    }
+
+    /**
+     * 中止 drain 并清空队列引用；不清除 overflow 标记。
+     * Handler 拒绝 post 时用于释放 ByteBuffer，避免永久卡在 drainScheduled=true。
+     */
+    public synchronized ClearResult abortDrainAndClear() {
+        ClearResult result = new ClearResult(queuedEvents, queuedBytes);
         queue.clear();
         queuedEvents = 0;
         queuedBytes = 0L;
         drainScheduled = false;
+        return result;
+    }
+
+    public synchronized void clear() {
+        abortDrainAndClear();
         overflowedGeneration = Integer.MIN_VALUE;
     }
 

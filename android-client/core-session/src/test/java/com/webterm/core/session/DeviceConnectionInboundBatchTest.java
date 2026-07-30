@@ -147,6 +147,77 @@ public final class DeviceConnectionInboundBatchTest {
     assertEquals(0, connection.inboundMailboxSnapshot().currentEvents);
   }
 
+  @Test
+  public void rejectedRescheduleClearsMailbox() {
+    CountingHandler state = new CountingHandler();
+    FakeMuxTransport transport = new FakeMuxTransport();
+    DeviceConnection connection = new DeviceConnection(
+        state.handler, "http://example.com", "", "device1",
+        new FixedFactory(transport));
+    connection.openScreenChannel("s1", new NoOpListener());
+    state.drainAll();
+    transport.simulateOpen();
+    state.drainAll();
+
+    state.remainingAccepts = 1;
+    int excess = MuxInboundMailbox.MAX_DRAIN_EVENTS + 8;
+    for (int i = 0; i < excess; i++) {
+      transport.simulateBinaryBuffer(ByteBuffer.wrap(new byte[] {(byte) i}));
+    }
+    state.drainAll();
+
+    assertEquals(0, connection.inboundMailboxSnapshot().currentEvents);
+    assertEquals(0L, connection.inboundMailboxSnapshot().currentBytes);
+    assertFalse(connection.isInboundDrainScheduled());
+  }
+
+  @Test
+  public void offerAfterRejectedDrainCanScheduleAgain() {
+    CountingHandler state = new CountingHandler();
+    FakeMuxTransport transport = new FakeMuxTransport();
+    DeviceConnection connection = new DeviceConnection(
+        state.handler, "http://example.com", "", "device1",
+        new FixedFactory(transport));
+    connection.openScreenChannel("s1", new NoOpListener());
+    state.drainAll();
+    transport.simulateOpen();
+    state.drainAll();
+
+    state.remainingAccepts = 1;
+    for (int i = 0; i < MuxInboundMailbox.MAX_DRAIN_EVENTS + 4; i++) {
+      transport.simulateBinaryBuffer(ByteBuffer.wrap(new byte[] {(byte) i}));
+    }
+    state.drainAll();
+    assertFalse(connection.isInboundDrainScheduled());
+    assertEquals(0, connection.inboundMailboxSnapshot().currentEvents);
+
+    state.remainingAccepts = Integer.MAX_VALUE;
+    transport.simulateBinaryBuffer(ByteBuffer.wrap(new byte[] {42}));
+    assertTrue(connection.isInboundDrainScheduled());
+    state.drainAll();
+    assertEquals(0, connection.inboundMailboxSnapshot().currentEvents);
+    assertFalse(connection.isInboundDrainScheduled());
+  }
+
+  @Test
+  public void rejectedInitialPostClearsQueuedBuffers() {
+    CountingHandler state = new CountingHandler();
+    FakeMuxTransport transport = new FakeMuxTransport();
+    DeviceConnection connection = new DeviceConnection(
+        state.handler, "http://example.com", "", "device1",
+        new FixedFactory(transport));
+    connection.openScreenChannel("s1", new NoOpListener());
+    state.drainAll();
+    transport.simulateOpen();
+    state.drainAll();
+
+    state.remainingAccepts = 0;
+    transport.simulateBinaryBuffer(ByteBuffer.wrap(new byte[] {7, 8, 9}));
+    assertEquals(0, connection.inboundMailboxSnapshot().currentEvents);
+    assertEquals(0L, connection.inboundMailboxSnapshot().currentBytes);
+    assertFalse(connection.isInboundDrainScheduled());
+  }
+
   private static String wsConnected(String channelId) {
     return "{\"type\":\"ws-connected\",\"tunnelConnectionId\":\"" + channelId + "\"}";
   }
@@ -155,9 +226,14 @@ public final class DeviceConnectionInboundBatchTest {
     final Handler handler = mock(Handler.class);
     final ArrayDeque<Runnable> queue = new ArrayDeque<>();
     int postCount;
+    int remainingAccepts = Integer.MAX_VALUE;
 
     CountingHandler() {
       when(handler.post(any(Runnable.class))).thenAnswer(invocation -> {
+        if (remainingAccepts <= 0) {
+          return false;
+        }
+        remainingAccepts--;
         queue.addLast(invocation.getArgument(0));
         postCount++;
         return true;
