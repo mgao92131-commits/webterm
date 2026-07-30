@@ -117,7 +117,7 @@ func TestFrameDeriver_LayoutReentryCarriesLineDataAfterHistoryPrune(t *testing.T
 	current := old
 	current.Seq = 2
 	current.Screen = []terminalengine.Line{line(30, 1, 0, "h"), line(20, 1, 1, "y")}
-	patch := frameForBaseline(&old, current)
+	patch := frameForBaseline(&old, current, nil)
 	if patch.Kind != terminalengine.FramePatch {
 		t.Fatalf("patch kind=%d, want patch", patch.Kind)
 	}

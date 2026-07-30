@@ -25,28 +25,43 @@ type paletteState struct {
 // p.mu 期间）读写，不跨 goroutine 共享。screen 中未变化的行复用旧 Line
 // 对象；Line 一旦创建即不可变，合并时只整体替换。
 type projectedState struct {
-	valid        bool
-	rows         int
-	cols         int
-	screen       []terminalengine.Line // len == rows
-	activeBuffer terminalengine.BufferKind
-	cursor       terminalengine.Cursor
-	modes        terminalengine.Modes
-	palette      paletteState
+	valid         bool
+	rows          int
+	cols          int
+	screen        []terminalengine.Line // len == rows
+	rowByLineID   map[uint64]int        // LineID → 屏幕行号；不复制 Line
+	updateScratch []projectedLineUpdate
+	activeBuffer  terminalengine.BufferKind
+	cursor        terminalengine.Cursor
+	modes         terminalengine.Modes
+	palette       paletteState
+}
+
+type projectedLineUpdate struct {
+	row  int
+	line terminalengine.Line
 }
 
 // rebuild 用完整投影（Full）重建全部行与元数据。
 func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter) {
 	previous := s.screen
-	previousByID := indexLinesByID(previous)
+	if s.rowByLineID == nil {
+		s.rowByLineID = indexRowsByLineID(previous)
+	}
 	screen := make([]terminalengine.Line, proj.Rows)
+	newIndex := make(map[uint64]int, proj.Rows)
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(screen) {
-			screen[row.Index] = reconcileExportLine(previousByID,
+			line := s.reconcileExportLine(
 				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
+			screen[row.Index] = line
+			if line.ID != 0 {
+				newIndex[line.ID] = row.Index
+			}
 		}
 	}
 	s.screen = screen
+	s.rowByLineID = newIndex
 	s.rows = proj.Rows
 	s.cols = proj.Cols
 	s.mergeMeta(proj)
@@ -57,11 +72,41 @@ func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter
 // 旧 Line 对象。渲染元数据总是采用投影中的当前值，因此纯模式、光标变化
 // 在无 dirty 行时也能反映到导出状态。
 func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) {
-	previousByID := indexLinesByID(s.screen)
+	if s.rowByLineID == nil {
+		s.rowByLineID = indexRowsByLineID(s.screen)
+	}
+	s.updateScratch = s.updateScratch[:0]
 	for _, row := range proj.DirtyRows {
-		if row.Index >= 0 && row.Index < len(s.screen) {
-			s.screen[row.Index] = reconcileExportLine(previousByID,
-				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
+		if row.Index < 0 || row.Index >= len(s.screen) {
+			continue
+		}
+		candidate := exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
+		s.updateScratch = append(s.updateScratch, projectedLineUpdate{
+			row:  row.Index,
+			line: s.reconcileExportLine(candidate),
+		})
+	}
+	// 三阶段提交：先用旧索引协调，再删旧绑定，最后写新绑定，避免滚动时
+	// 同一 LineID 短暂映射到两个行号。
+	for _, update := range s.updateScratch {
+		old := s.screen[update.row]
+		if old.ID == 0 {
+			continue
+		}
+		if mappedRow, ok := s.rowByLineID[old.ID]; ok && mappedRow == update.row {
+			delete(s.rowByLineID, old.ID)
+		}
+	}
+	for _, update := range s.updateScratch {
+		if update.line.ID != 0 {
+			if existing, ok := s.rowByLineID[update.line.ID]; ok && existing != update.row {
+				s.rebuild(proj, exp)
+				return
+			}
+		}
+		s.screen[update.row] = update.line
+		if update.line.ID != 0 {
+			s.rowByLineID[update.line.ID] = update.row
 		}
 	}
 	s.mergeMeta(proj)
@@ -73,34 +118,70 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 // cursor position, so a cursor move can alter Runs without touching a Cell.
 // Conversely, a projection-dirty cursor row whose output is unchanged must
 // retain its previous version and not create a needless LineData update.
-func reconcileExportLine(previous map[uint64]terminalengine.Line, candidate terminalengine.Line) terminalengine.Line {
-	prior, ok := previous[candidate.ID]
-	if !ok {
+func (s *projectedState) reconcileExportLine(candidate terminalengine.Line) terminalengine.Line {
+	if candidate.ID == 0 || s.rowByLineID == nil {
 		if candidate.Version == 0 {
 			candidate.Version = 1
 		}
 		return candidate
 	}
+	row, ok := s.rowByLineID[candidate.ID]
+	if !ok || row < 0 || row >= len(s.screen) {
+		if candidate.Version == 0 {
+			candidate.Version = 1
+		}
+		return candidate
+	}
+	prior := s.screen[row]
 	if linesEqual(prior, candidate) {
 		candidate.Version = prior.Version
 		return candidate
 	}
-	// Preserve physical versions where they already advance monotonically, but
-	// create an ExportVersion step when only cursor-dependent filtering changed.
 	if candidate.Version <= prior.Version {
 		candidate.Version = prior.Version + 1
 	}
 	return candidate
 }
 
-func indexLinesByID(lines []terminalengine.Line) map[uint64]terminalengine.Line {
-	index := make(map[uint64]terminalengine.Line, len(lines))
-	for _, line := range lines {
+func indexRowsByLineID(lines []terminalengine.Line) map[uint64]int {
+	index := make(map[uint64]int, len(lines))
+	for row, line := range lines {
 		if line.ID != 0 {
-			index[line.ID] = line
+			index[line.ID] = row
 		}
 	}
 	return index
+}
+
+func (s *projectedState) validateLineIndex() bool {
+	if len(s.screen) != s.rows {
+		return false
+	}
+	nonzero := 0
+	seen := make(map[uint64]struct{}, len(s.screen))
+	for row, line := range s.screen {
+		if line.ID == 0 {
+			continue
+		}
+		nonzero++
+		if _, dup := seen[line.ID]; dup {
+			return false
+		}
+		seen[line.ID] = struct{}{}
+		mapped, ok := s.rowByLineID[line.ID]
+		if !ok || mapped != row {
+			return false
+		}
+	}
+	if len(s.rowByLineID) != nonzero {
+		return false
+	}
+	for id, row := range s.rowByLineID {
+		if row < 0 || row >= len(s.screen) || s.screen[row].ID != id {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
@@ -191,23 +272,35 @@ func (p *Projector) SnapshotBarrierRevision() uint64 {
 // canonical revision），DeriveForState 返回 Kind 未设置的零值帧表示"不发送"，
 // 且不推进 baseline：下一个真实 patch 的 base 仍等于最后实际写出的 revision。
 type FrameDeriver struct {
-	baseline terminalengine.ScreenFrame
+	baseline        terminalengine.ScreenFrame
+	baselineRowByID map[uint64]int
 }
 
 func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
+	clear(d.baselineRowByID)
 }
 
 // SeedAfterSuccessfulWrite 只在物理写成功后提交该客户端的完整权威状态。
 func (d *FrameDeriver) SeedAfterSuccessfulWrite(state terminalengine.ScreenFrame) {
 	d.baseline = state
+	if d.baselineRowByID == nil {
+		d.baselineRowByID = make(map[uint64]int, len(state.Screen))
+	} else {
+		clear(d.baselineRowByID)
+	}
+	for row, line := range state.Screen {
+		if line.ID != 0 {
+			d.baselineRowByID[line.ID] = row
+		}
+	}
 }
 
 // DeriveForState 只派生、不推进 baseline；物理写成功后调用
 // SeedAfterSuccessfulWrite 提交。
 func (d *FrameDeriver) DeriveForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	baseline := d.baseline
-	return frameForBaseline(&baseline, state)
+	return frameForBaseline(&baseline, state, d.baselineRowByID)
 }
 
 // NewProjector 创建新的 screen projector。
@@ -435,7 +528,7 @@ func projectionColorRGB(c color.Color) uint32 {
 	return uint32(r>>8)<<16 | uint32(g>>8)<<8 | uint32(b>>8)
 }
 
-func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine.ScreenFrame, oldRowsByID map[uint64]int) terminalengine.ScreenFrame {
 	// 输入始终是完整状态，可直接作为 snapshot 发送；统一打上 Kind，避免
 	// 调用方漏设导致编码失败。diffToPatch 的 snapshot 回退路径也借此得到
 	// 正确的 Kind。
@@ -464,7 +557,7 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 		}
 	}
 	// 否则生成 patch（整行替换）。
-	patch := diffToPatch(*baseline, state)
+	patch := diffToPatchWithIndex(*baseline, state, oldRowsByID)
 	if patch.Kind != terminalengine.FramePatch {
 		*baseline = state
 		return patch
@@ -519,6 +612,12 @@ func isEmptyPatch(baseline, patch terminalengine.ScreenFrame) bool {
 //
 // Push 按 HistorySeq 新增位置生成，与客户端是否持有正文无关。
 func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame {
+	return diffToPatchWithIndex(old, new, nil)
+}
+
+func diffToPatchWithIndex(
+	old, new terminalengine.ScreenFrame, oldRowsByID map[uint64]int,
+) terminalengine.ScreenFrame {
 	var pushes []terminalengine.HistoryPush
 	if old.HistoryLineageVersion == 0 || new.HistoryLineageVersion == 0 ||
 		old.HistoryLineageVersion != new.HistoryLineageVersion {
@@ -534,7 +633,7 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 	if activeBufferChanged {
 		screenRows = append(screenRows, new.Screen...)
 	} else {
-		scroll = deriveFullScreenScroll(old.Screen, new.Screen)
+		scroll = deriveFullScreenScroll(old.Screen, new.Screen, oldRowsByID)
 		screenRows = commitScreenWrites(old.Screen, new.Screen, scroll)
 	}
 
@@ -646,38 +745,80 @@ func historyPushesByLineageComparison(
 }
 
 // deriveFullScreenScroll 只用稳定 LineID 唯一确认全屏连续位移。
-func deriveFullScreenScroll(oldScreen, newScreen []terminalengine.Line) *terminalengine.ScreenScroll {
+// oldRowsByID 可复用；为 nil 时本地构建一次。
+func deriveFullScreenScroll(
+	oldScreen, newScreen []terminalengine.Line, oldRowsByID map[uint64]int,
+) *terminalengine.ScreenScroll {
 	rows := len(oldScreen)
 	if rows <= 1 || len(newScreen) != rows {
 		return nil
 	}
-	oldRowsByID := make(map[uint64]int, rows)
-	for row, line := range oldScreen {
-		if line.ID == 0 {
-			return nil
-		}
-		if _, duplicate := oldRowsByID[line.ID]; duplicate {
-			return nil
-		}
-		oldRowsByID[line.ID] = row
+	ownedIndex := false
+	if oldRowsByID == nil {
+		oldRowsByID = make(map[uint64]int, rows)
+		ownedIndex = true
 	}
-	candidates := make(map[int]struct{}, 2)
+	if ownedIndex || len(oldRowsByID) == 0 {
+		clear(oldRowsByID)
+		for row, line := range oldScreen {
+			if line.ID == 0 {
+				return nil
+			}
+			if _, duplicate := oldRowsByID[line.ID]; duplicate {
+				return nil
+			}
+			oldRowsByID[line.ID] = row
+		}
+	} else {
+		for row, line := range oldScreen {
+			if line.ID == 0 {
+				return nil
+			}
+			mapped, ok := oldRowsByID[line.ID]
+			if !ok || mapped != row {
+				// 索引与 screen 不一致时回退到安全构建。
+				return deriveFullScreenScroll(oldScreen, newScreen, nil)
+			}
+		}
+	}
+	var candidateA, candidateB int
+	candidateCount := 0
+	addCandidate := func(shift int) {
+		if candidateCount == 0 {
+			candidateA = shift
+			candidateCount = 1
+			return
+		}
+		if candidateCount == 1 && candidateA != shift {
+			candidateB = shift
+			candidateCount = 2
+			return
+		}
+	}
 	if oldRow, ok := oldRowsByID[newScreen[0].ID]; ok && oldRow > 0 {
-		candidates[oldRow] = struct{}{}
+		addCandidate(oldRow)
 	}
 	if oldRow, ok := oldRowsByID[newScreen[rows-1].ID]; ok && oldRow < rows-1 {
-		candidates[oldRow-(rows-1)] = struct{}{}
+		addCandidate(oldRow - (rows - 1))
 	}
-	var matched []int
-	for shift := range candidates {
+	matchedShift := 0
+	matchedCount := 0
+	try := func(shift int) {
 		if matchesFullScreenScroll(oldScreen, newScreen, shift) {
-			matched = append(matched, shift)
+			matchedShift = shift
+			matchedCount++
 		}
 	}
-	if len(matched) != 1 {
+	if candidateCount >= 1 {
+		try(candidateA)
+	}
+	if candidateCount == 2 && candidateA != candidateB {
+		try(candidateB)
+	}
+	if matchedCount != 1 {
 		return nil
 	}
-	return &terminalengine.ScreenScroll{TopRow: 0, BottomRowExclusive: rows, DeltaRows: matched[0]}
+	return &terminalengine.ScreenScroll{TopRow: 0, BottomRowExclusive: rows, DeltaRows: matchedShift}
 }
 
 func matchesFullScreenScroll(

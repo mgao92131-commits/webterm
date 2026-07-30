@@ -50,7 +50,7 @@ func TestDeriveFullScreenScroll(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := deriveFullScreenScroll(tt.old, tt.next)
+			got := deriveFullScreenScroll(tt.old, tt.next, nil)
 			if tt.want == 0 {
 				if got != nil {
 					t.Fatalf("scroll=%+v, want nil", got)
