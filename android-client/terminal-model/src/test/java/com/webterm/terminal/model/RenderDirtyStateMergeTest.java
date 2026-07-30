@@ -107,6 +107,28 @@ public final class RenderDirtyStateMergeTest {
   }
 
   @Test
+  public void mergeFromPreservesExposedRowsWhenNetScrollIsZero() {
+    RenderDirtyState dirty = state();
+    dirty.merge(false, rows(4), 2, rows(3, 4), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+    dirty.merge(false, rows(0, 1), -2, rows(0, 1), 5,
+        false, false, false, -1, -1, false, false, false, false, false);
+
+    assertEquals(0, dirty.screenScrollRows);
+    assertFalse(dirty.exposedScreenRows.isEmpty());
+    BitSet exposedBeforeMergeFrom = (BitSet) dirty.exposedScreenRows.clone();
+
+    RenderDirtyState target = state();
+    target.mergeFrom(dirty, 5);
+
+    assertFalse(target.fullInvalidate);
+    assertFalse(target.screenRegionInvalidate);
+    assertEquals(0, target.screenScrollRows);
+    assertEquals(exposedBeforeMergeFrom, target.exposedScreenRows);
+    assertFalse(target.exposedScreenRows.isEmpty());
+  }
+
+  @Test
   public void scrollBeyondScreenFallsBackToScreenRegion() {
     RenderDirtyState dirty = state();
     dirty.merge(false, rows(4), 3, rows(2, 3, 4), 5,

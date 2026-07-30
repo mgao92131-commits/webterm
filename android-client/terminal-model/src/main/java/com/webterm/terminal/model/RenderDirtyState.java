@@ -70,7 +70,10 @@ public final class RenderDirtyState {
     } else if (screenScrollRows != 0) {
       composeScroll(screenScrollRows, changedRows, exposedRows, rowCount);
     } else {
+      // 净滚动可为 0，但上一份 Dirty 经滚动变换后留下的 exposedRows 仍有效；
+      // mergeFrom 时只要传入 exposedRows 就必须吸收。
       if (changedRows != null) this.changedScreenRows.or(changedRows);
+      if (exposedRows != null) this.exposedScreenRows.or(exposedRows);
     }
 
     this.historyChanged |= historyChanged;

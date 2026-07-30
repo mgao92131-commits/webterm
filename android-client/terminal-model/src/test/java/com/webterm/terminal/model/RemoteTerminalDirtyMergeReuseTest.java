@@ -100,6 +100,34 @@ public final class RemoteTerminalDirtyMergeReuseTest {
     assertSame(historyItem, after.contentAxis.itemAtRow(0));
   }
 
+  @Test
+  public void pendingPublicationPreservesZeroNetScrollDamage() throws Exception {
+    RemoteTerminalModel model = initializedModel();
+
+    // 向上滚动 1 行后，再向下滚动 1 行 → 净滚动为 0，但暴露行仍需保留。
+    model.applyTerminalCommit(commit(
+        1, 2,
+        new ScreenMutation(
+            new ScreenScroll(0, ROWS, 1),
+            Collections.singletonList(new ScreenRowWrite(
+                ROWS - 1, line(200, 1, "up-tail"))))));
+    model.applyTerminalCommit(commit(
+        2, 3,
+        new ScreenMutation(
+            new ScreenScroll(0, ROWS, -1),
+            Collections.singletonList(new ScreenRowWrite(
+                0, line(201, 1, "down-head"))))));
+
+    RenderUpdate update = model.consumeRenderUpdate();
+    assertNotNull(update);
+    assertFalse(update.dirty.fullInvalidate);
+    assertFalse(update.dirty.screenRegionInvalidate);
+    assertEquals(0, update.dirty.screenScrollRows);
+    assertFalse(update.dirty.exposedScreenRows.isEmpty());
+    assertTrue(update.dirty.exposedScreenRows.get(0)
+        || update.dirty.changedScreenRows.get(0));
+  }
+
   private static void forceScreenRegionViaCoalescedScrolls(RemoteTerminalModel model)
       throws Exception {
     model.applyTerminalCommit(commit(
