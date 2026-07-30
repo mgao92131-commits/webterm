@@ -143,6 +143,109 @@ func TestDiffToPatchEmitsFiveThousandRebindings(t *testing.T) {
 	}
 }
 
+func TestDiffToPatchUsesMutationJournalWithoutLineageScan(t *testing.T) {
+	old := terminalengine.ScreenFrame{
+		InstanceID: "i1", Epoch: 1, Seq: 10,
+		History: terminalengine.HistoryWindow{
+			FirstAvailableHistorySeq: 1, LastIncludedHistorySeq: 2,
+		},
+		HistoryLineageVersion: 10,
+		Screen:                []terminalengine.Line{{ID: 100, Version: 1}},
+	}
+	first := &terminalengine.HistoryMutationBatch{
+		BaseVersion: 10,
+		Version:     11,
+		Pushes: []terminalengine.HistoryPush{
+			{HistorySeq: 2, LineID: 200, LineVersion: 1},
+		},
+	}
+	second := &terminalengine.HistoryMutationBatch{
+		BaseVersion: 11,
+		Version:     12,
+		Pushes: []terminalengine.HistoryPush{
+			{HistorySeq: 2, LineID: 300, LineVersion: 1},
+			{HistorySeq: 3, LineID: 301, LineVersion: 1},
+		},
+		Previous: first,
+	}
+	next := old
+	next.Seq = 20
+	next.History.LastIncludedHistorySeq = 3
+	next.HistoryLineageVersion = 12
+	next.HistoryMutationHead = second
+	// 故意不提供 ScrollbackLineage；成功产生最终绑定证明没有走全量比较回退。
+	patch := diffToPatch(old, next)
+	if len(patch.HistoryPushes) != 2 {
+		t.Fatalf("pushes=%+v, want two journal pushes", patch.HistoryPushes)
+	}
+	if patch.HistoryPushes[0].HistorySeq != 2 ||
+		patch.HistoryPushes[0].LineID != 300 ||
+		patch.HistoryPushes[1].HistorySeq != 3 {
+		t.Fatalf("unexpected journal pushes: %+v", patch.HistoryPushes)
+	}
+}
+
+func TestHistoryMutationJournalGapIsNotClaimedAsCovered(t *testing.T) {
+	old := terminalengine.ScreenFrame{HistoryLineageVersion: 10}
+	next := terminalengine.ScreenFrame{
+		HistoryLineageVersion: 20,
+		HistoryMutationHead: &terminalengine.HistoryMutationBatch{
+			BaseVersion: 19,
+			Version:     20,
+		},
+	}
+	if pushes, covered := historyPushesFromJournal(old, next); covered || len(pushes) != 0 {
+		t.Fatalf("covered=%v pushes=%+v, want uncovered gap", covered, pushes)
+	}
+}
+
+func TestExportedHistoryLineageViewRemainsImmutableAcrossRebind(t *testing.T) {
+	sb := terminalengine.NewTrackedScrollback(10, nil)
+	engine := terminalengine.NewEngine(2, 10, sb)
+	projector := NewProjector(engine, sb, "s1", "i1")
+	sb.Push(headlessterm.ScrollbackLine{
+		LineID: 100, LineVersion: 1,
+		Cells: []headlessterm.Cell{headlessterm.NewCell()},
+	})
+	before := projector.ExportState(1, 1)
+
+	sb.Pop()
+	sb.Push(headlessterm.ScrollbackLine{
+		LineID: 200, LineVersion: 1,
+		Cells: []headlessterm.Cell{headlessterm.NewCell()},
+	})
+	after := projector.ExportState(1, 2)
+
+	beforeBindings := before.HistoryLineageView.Materialize()
+	afterBindings := after.HistoryLineageView.Materialize()
+	if len(beforeBindings) != 1 || beforeBindings[0].LineID != 100 {
+		t.Fatalf("old lineage mutated: %+v", beforeBindings)
+	}
+	if len(afterBindings) != 1 || afterBindings[0].LineID != 200 {
+		t.Fatalf("new lineage missing rebind: %+v", afterBindings)
+	}
+}
+
+func BenchmarkHistoryChangeIndexTailRebind20000(b *testing.B) {
+	sb := terminalengine.NewTrackedScrollback(20_000, nil)
+	for i := 0; i < 20_000; i++ {
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(i + 1), LineVersion: 1,
+		})
+	}
+	var index HistoryChangeIndex
+	index.sync(sb, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sb.Pop()
+		sb.Push(headlessterm.ScrollbackLine{
+			LineID: uint64(100_000 + i), LineVersion: 1,
+		})
+		index.sync(sb, uint64(i+2))
+	}
+}
+
 func TestResumeAfterTrimUsesBaseline(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(3, nil)
 	engine := terminalengine.NewEngine(2, 20, sb)

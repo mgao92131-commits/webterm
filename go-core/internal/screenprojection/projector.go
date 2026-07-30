@@ -2,6 +2,7 @@ package screenprojection
 
 import (
 	"image/color"
+	"sort"
 	"sync"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
@@ -37,10 +38,11 @@ type projectedState struct {
 // rebuild 用完整投影（Full）重建全部行与元数据。
 func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter) {
 	previous := s.screen
+	previousByID := indexLinesByID(previous)
 	screen := make([]terminalengine.Line, proj.Rows)
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(screen) {
-			screen[row.Index] = reconcileExportLine(previous,
+			screen[row.Index] = reconcileExportLine(previousByID,
 				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
 		}
 	}
@@ -55,9 +57,10 @@ func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter
 // 旧 Line 对象。渲染元数据总是采用投影中的当前值，因此纯模式、光标变化
 // 在无 dirty 行时也能反映到导出状态。
 func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) {
+	previousByID := indexLinesByID(s.screen)
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(s.screen) {
-			s.screen[row.Index] = reconcileExportLine(s.screen,
+			s.screen[row.Index] = reconcileExportLine(previousByID,
 				exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col))
 		}
 	}
@@ -70,21 +73,15 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 // cursor position, so a cursor move can alter Runs without touching a Cell.
 // Conversely, a projection-dirty cursor row whose output is unchanged must
 // retain its previous version and not create a needless LineData update.
-func reconcileExportLine(previous []terminalengine.Line, candidate terminalengine.Line) terminalengine.Line {
-	var prior *terminalengine.Line
-	for i := range previous {
-		if previous[i].ID == candidate.ID {
-			prior = &previous[i]
-			break
-		}
-	}
-	if prior == nil {
+func reconcileExportLine(previous map[uint64]terminalengine.Line, candidate terminalengine.Line) terminalengine.Line {
+	prior, ok := previous[candidate.ID]
+	if !ok {
 		if candidate.Version == 0 {
 			candidate.Version = 1
 		}
 		return candidate
 	}
-	if linesEqual(*prior, candidate) {
+	if linesEqual(prior, candidate) {
 		candidate.Version = prior.Version
 		return candidate
 	}
@@ -94,6 +91,16 @@ func reconcileExportLine(previous []terminalengine.Line, candidate terminalengin
 		candidate.Version = prior.Version + 1
 	}
 	return candidate
+}
+
+func indexLinesByID(lines []terminalengine.Line) map[uint64]terminalengine.Line {
+	index := make(map[uint64]terminalengine.Line, len(lines))
+	for _, line := range lines {
+		if line.ID != 0 {
+			index[line.ID] = line
+		}
+	}
+	return index
 }
 
 func (s *projectedState) mergeMeta(proj headlessterm.ProjectionRead) {
@@ -365,7 +372,7 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 	rowChangedRevision := make([]uint64, len(p.changeIndex.RowChangedRevision))
 	copy(rowChangedRevision, p.changeIndex.RowChangedRevision)
 	history := terminalengine.HistoryWindow{}
-	var lineage []terminalengine.HistoryPush
+	var lineageView *terminalengine.HistoryLineageView
 	// 备用屏是完整 TUI 的当前画面，绝不能混入主屏 scrollback。
 	// 切屏会触发 snapshot，客户端据此清空旧历史并只渲染该屏内容。
 	if s.activeBuffer == terminalengine.BufferMain {
@@ -379,7 +386,7 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 			FirstIncludedHistorySeq:  first,
 			LastIncludedHistorySeq:   last,
 		}
-		lineage = p.historyChangeIndex.lineage
+		lineageView = p.historyChangeIndex.lineageView
 	}
 
 	return terminalengine.ScreenFrame{
@@ -408,8 +415,9 @@ func (p *Projector) assembleFrame(epoch, seq uint64) terminalengine.ScreenFrame 
 		RowChangedRevision:    rowChangedRevision,
 		DictionaryGeneration:  p.dictGeneration,
 		HistoryGeneration:     p.historyGeneration,
-		ScrollbackLineage:     lineage,
 		HistoryLineageVersion: p.historyChangeIndex.mutationVersion,
+		HistoryMutationHead:   p.historyChangeIndex.mutationHead,
+		HistoryLineageView:    lineageView,
 	}
 }
 
@@ -432,12 +440,28 @@ func frameForBaseline(baseline *terminalengine.ScreenFrame, state terminalengine
 	// 调用方漏设导致编码失败。diffToPatch 的 snapshot 回退路径也借此得到
 	// 正确的 Kind。
 	state.Kind = terminalengine.FrameSnapshot
+	snapshot := func() terminalengine.ScreenFrame {
+		result := state
+		if len(result.ScrollbackLineage) == 0 && result.HistoryLineageView != nil {
+			result.ScrollbackLineage = result.HistoryLineageView.Materialize()
+		}
+		return result
+	}
 	// 第一帧、字典轮转、字典世代（baseline 出自已废弃的字典，即使携带
 	// ForceSnapshot 的轮转帧被 mailbox 覆盖也必须全量）、instance/layout
 	// epoch 或备用屏变化，发送完整 snapshot。
 	if state.ForceSnapshot || baseline.Seq == 0 || baseline.InstanceID != state.InstanceID || baseline.Epoch != state.Epoch || baseline.DictionaryGeneration != state.DictionaryGeneration || baseline.HistoryGeneration != state.HistoryGeneration {
 		*baseline = state
-		return state
+		return snapshot()
+	}
+	if baseline.HistoryLineageVersion != state.HistoryLineageVersion &&
+		state.HistoryLineageView != nil {
+		if _, covered := historyPushesFromJournal(*baseline, state); !covered {
+			// 有界 mutation 链已截断。不能把缺失的 rebind 静默当作 extent-only
+			// Commit；直接发送当前完整 Baseline。
+			*baseline = state
+			return snapshot()
+		}
 	}
 	// 否则生成 patch（整行替换）。
 	patch := diffToPatch(*baseline, state)
@@ -498,18 +522,10 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 	var pushes []terminalengine.HistoryPush
 	if old.HistoryLineageVersion == 0 || new.HistoryLineageVersion == 0 ||
 		old.HistoryLineageVersion != new.HistoryLineageVersion {
-		oldRefs := make(map[uint64]terminalengine.HistoryPush, len(old.ScrollbackLineage))
-		for _, entry := range old.ScrollbackLineage {
-			oldRefs[entry.HistorySeq] = entry
-		}
-		for _, entry := range new.ScrollbackLineage {
-			previous, exists := oldRefs[entry.HistorySeq]
-			if (!exists || previous.LineID != entry.LineID ||
-				previous.LineVersion != entry.LineVersion) &&
-				entry.HistorySeq >= new.History.FirstAvailableHistorySeq &&
-				entry.HistorySeq <= new.History.LastIncludedHistorySeq {
-				pushes = append(pushes, entry)
-			}
+		var covered bool
+		pushes, covered = historyPushesFromJournal(old, new)
+		if !covered {
+			pushes = historyPushesByLineageComparison(old, new)
 		}
 	}
 	activeBufferChanged := old.ActiveBuffer != new.ActiveBuffer
@@ -573,39 +589,118 @@ func diffToPatch(old, new terminalengine.ScreenFrame) terminalengine.ScreenFrame
 	}
 }
 
+func historyPushesFromJournal(
+	old, new terminalengine.ScreenFrame,
+) ([]terminalengine.HistoryPush, bool) {
+	if old.HistoryLineageVersion == 0 ||
+		new.HistoryLineageVersion <= old.HistoryLineageVersion {
+		return nil, false
+	}
+	var reverseBatches []*terminalengine.HistoryMutationBatch
+	for batch := new.HistoryMutationHead; batch != nil; batch = batch.Previous {
+		if batch.Version <= old.HistoryLineageVersion {
+			break
+		}
+		reverseBatches = append(reverseBatches, batch)
+		if batch.BaseVersion == old.HistoryLineageVersion {
+			latest := make(map[uint64]terminalengine.HistoryPush)
+			for i := len(reverseBatches) - 1; i >= 0; i-- {
+				for _, push := range reverseBatches[i].Pushes {
+					if push.HistorySeq >= new.History.FirstAvailableHistorySeq &&
+						push.HistorySeq <= new.History.LastIncludedHistorySeq {
+						latest[push.HistorySeq] = push
+					}
+				}
+			}
+			result := make([]terminalengine.HistoryPush, 0, len(latest))
+			for _, push := range latest {
+				result = append(result, push)
+			}
+			sort.Slice(result, func(i, j int) bool {
+				return result[i].HistorySeq < result[j].HistorySeq
+			})
+			return result, true
+		}
+	}
+	return nil, false
+}
+
+func historyPushesByLineageComparison(
+	old, new terminalengine.ScreenFrame,
+) []terminalengine.HistoryPush {
+	oldRefs := make(map[uint64]terminalengine.HistoryPush, len(old.ScrollbackLineage))
+	for _, entry := range old.ScrollbackLineage {
+		oldRefs[entry.HistorySeq] = entry
+	}
+	var pushes []terminalengine.HistoryPush
+	for _, entry := range new.ScrollbackLineage {
+		previous, exists := oldRefs[entry.HistorySeq]
+		if (!exists || previous.LineID != entry.LineID ||
+			previous.LineVersion != entry.LineVersion) &&
+			entry.HistorySeq >= new.History.FirstAvailableHistorySeq &&
+			entry.HistorySeq <= new.History.LastIncludedHistorySeq {
+			pushes = append(pushes, entry)
+		}
+	}
+	return pushes
+}
+
 // deriveFullScreenScroll 只用稳定 LineID 唯一确认全屏连续位移。
 func deriveFullScreenScroll(oldScreen, newScreen []terminalengine.Line) *terminalengine.ScreenScroll {
 	rows := len(oldScreen)
 	if rows <= 1 || len(newScreen) != rows {
 		return nil
 	}
+	oldRowsByID := make(map[uint64]int, rows)
+	for row, line := range oldScreen {
+		if line.ID == 0 {
+			return nil
+		}
+		if _, duplicate := oldRowsByID[line.ID]; duplicate {
+			return nil
+		}
+		oldRowsByID[line.ID] = row
+	}
+	candidates := make(map[int]struct{}, 2)
+	if oldRow, ok := oldRowsByID[newScreen[0].ID]; ok && oldRow > 0 {
+		candidates[oldRow] = struct{}{}
+	}
+	if oldRow, ok := oldRowsByID[newScreen[rows-1].ID]; ok && oldRow < rows-1 {
+		candidates[oldRow-(rows-1)] = struct{}{}
+	}
 	var matched []int
-	for shift := 1; shift < rows; shift++ {
-		up := true
-		for row := 0; row < rows-shift; row++ {
-			if oldScreen[row+shift].ID != newScreen[row].ID {
-				up = false
-				break
-			}
-		}
-		if up {
+	for shift := range candidates {
+		if matchesFullScreenScroll(oldScreen, newScreen, shift) {
 			matched = append(matched, shift)
-		}
-		down := true
-		for row := shift; row < rows; row++ {
-			if oldScreen[row-shift].ID != newScreen[row].ID {
-				down = false
-				break
-			}
-		}
-		if down {
-			matched = append(matched, -shift)
 		}
 	}
 	if len(matched) != 1 {
 		return nil
 	}
 	return &terminalengine.ScreenScroll{TopRow: 0, BottomRowExclusive: rows, DeltaRows: matched[0]}
+}
+
+func matchesFullScreenScroll(
+	oldScreen, newScreen []terminalengine.Line, shift int,
+) bool {
+	if shift > 0 {
+		for row := 0; row < len(oldScreen)-shift; row++ {
+			if oldScreen[row+shift].ID != newScreen[row].ID {
+				return false
+			}
+		}
+		return true
+	}
+	if shift < 0 {
+		amount := -shift
+		for row := amount; row < len(oldScreen); row++ {
+			if oldScreen[row-amount].ID != newScreen[row].ID {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func commitScreenWrites(oldScreen, newScreen []terminalengine.Line, scroll *terminalengine.ScreenScroll) []terminalengine.Line {

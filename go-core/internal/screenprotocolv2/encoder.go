@@ -13,6 +13,9 @@ import (
 const ProtocolVersion uint32 = 2
 
 func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint32) ([]byte, error) {
+	if len(frame.ScrollbackLineage) == 0 && frame.HistoryLineageView != nil {
+		frame.ScrollbackLineage = frame.HistoryLineageView.Materialize()
+	}
 	if err := validateBaselineFrame(frame); err != nil {
 		return nil, err
 	}

@@ -40,6 +40,25 @@ type HistoryIndexEntry struct {
 	LineVersion uint64
 }
 
+// ScrollbackIndexDelta 是 mutationVersion 之间的轻量位置变化。Complete=false
+// 表示调用方基线已早于有界 journal，必须读取一次完整 IndexWindow。
+type ScrollbackIndexDelta struct {
+	Generation      uint64
+	FirstSeq        uint64
+	LastSeq         uint64
+	NextSeq         uint64
+	MutationVersion uint64
+	Entries         []HistoryIndexEntry
+	Complete        bool
+}
+
+type scrollbackIndexMutation struct {
+	version    uint64
+	generation uint64
+	hasEntry   bool
+	entry      HistoryIndexEntry
+}
+
 // HistoryExtent 是同一 layout epoch 内可加载历史的绝对序号窗口。
 // 空窗口使用 LastSeq+1==FirstSeq，保留 Clear 后的 trim 水位。
 type HistoryExtent struct {
@@ -79,6 +98,7 @@ type TrackedScrollback struct {
 	nextSeq         uint64
 	mutationVersion uint64
 	lines           []ScrollbackEntry
+	indexJournal    []scrollbackIndexMutation
 
 	onTrim func(ScrollbackTrimEvent)
 }
@@ -133,6 +153,8 @@ func (t *TrackedScrollback) RebaseForLayoutEpoch(epoch uint64) {
 	t.firstSeq = 1
 	t.nextSeq = uint64(len(t.lines)) + 1
 	t.mutationVersion++
+	t.resetIndexJournalLocked()
+	t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
 }
 
 // ResetForReflow discards physical history after a real reflow rebuild. It is
@@ -148,6 +170,8 @@ func (t *TrackedScrollback) ResetForReflow(epoch uint64) {
 	t.lines = t.lines[:0]
 	t.bytes = 0
 	t.mutationVersion++
+	t.resetIndexJournalLocked()
+	t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
 }
 
 // LayoutEpoch 返回当前 layout epoch。
@@ -194,6 +218,11 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 		t.fireTrimLocked()
 	}
 	t.mutationVersion++
+	t.recordIndexMutationLocked(HistoryIndexEntry{
+		HistorySeq:  historyLine.HistorySeq,
+		LineID:      historyLine.LineID,
+		LineVersion: historyLine.Version,
+	}, true)
 }
 
 // Pop 移除并返回最新一行，同时回收尾部 HistorySeq。
@@ -214,6 +243,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 		t.firstSeq = t.nextSeq
 	}
 	t.mutationVersion++
+	t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
 	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID, LineVersion: line.Version}
 }
 
@@ -323,6 +353,51 @@ func (t *TrackedScrollback) IndexWindowIfChanged(previousVersion uint64) (Scroll
 	return w, true
 }
 
+// IndexDeltaIfChanged 返回 previousVersion 之后仍由有界 journal 覆盖的 Push/
+// rebind，并总是携带最终 extent。Pop、trim、Clear 不需要逐项记录，调用方按最终
+// extent 删除窗口外绑定即可。
+func (t *TrackedScrollback) IndexDeltaIfChanged(
+	previousVersion, previousGeneration uint64,
+) (ScrollbackIndexDelta, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	result := ScrollbackIndexDelta{
+		Generation:      t.generation,
+		FirstSeq:        t.firstSeq,
+		LastSeq:         t.lastSeqLocked(),
+		NextSeq:         t.nextSeq,
+		MutationVersion: t.mutationVersion,
+		Complete:        true,
+	}
+	if previousVersion == t.mutationVersion && previousGeneration == t.generation {
+		return result, false
+	}
+	if previousVersion == 0 || previousGeneration != t.generation ||
+		len(t.indexJournal) == 0 {
+		result.Complete = false
+		return result, true
+	}
+	start := sort.Search(len(t.indexJournal), func(i int) bool {
+		return t.indexJournal[i].version > previousVersion
+	})
+	if start >= len(t.indexJournal) ||
+		t.indexJournal[start].version != previousVersion+1 {
+		result.Complete = false
+		return result, true
+	}
+	for _, mutation := range t.indexJournal[start:] {
+		if mutation.generation != t.generation {
+			result.Complete = false
+			result.Entries = nil
+			return result, true
+		}
+		if mutation.hasEntry {
+			result.Entries = append(result.Entries, mutation.entry)
+		}
+	}
+	return result, true
+}
+
 // lastSeqLocked 返回当前最新 HistorySeq；历史为空时为 firstSeq-1。
 func (t *TrackedScrollback) lastSeqLocked() uint64 {
 	if len(t.lines) > 0 {
@@ -354,6 +429,7 @@ func (t *TrackedScrollback) Clear() {
 	// Clear 只是裁剪全部历史，不改变 generation，也不对齐或跳跃 nextSeq。
 	t.firstSeq = t.nextSeq
 	t.mutationVersion++
+	t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
 	t.fireTrimLocked()
 }
 
@@ -364,6 +440,7 @@ func (t *TrackedScrollback) SetMaxLines(max int) {
 	t.capacity = max
 	if t.trimToLimitsLocked() {
 		t.mutationVersion++
+		t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
 		t.fireTrimLocked()
 	}
 }
@@ -376,8 +453,34 @@ func (t *TrackedScrollback) SetMaxBytes(max int) {
 	t.maxBytes = max
 	if t.trimToLimitsLocked() {
 		t.mutationVersion++
+		t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
 		t.fireTrimLocked()
 	}
+}
+
+func (t *TrackedScrollback) resetIndexJournalLocked() {
+	t.indexJournal = nil
+}
+
+func (t *TrackedScrollback) recordIndexMutationLocked(
+	entry HistoryIndexEntry, hasEntry bool,
+) {
+	limit := t.capacity * 2
+	if limit < 1024 {
+		limit = 1024
+	}
+	if len(t.indexJournal) >= limit {
+		keep := limit / 2
+		compacted := make([]scrollbackIndexMutation, keep)
+		copy(compacted, t.indexJournal[len(t.indexJournal)-keep:])
+		t.indexJournal = compacted
+	}
+	t.indexJournal = append(t.indexJournal, scrollbackIndexMutation{
+		version:    t.mutationVersion,
+		generation: t.generation,
+		hasEntry:   hasEntry,
+		entry:      entry,
+	})
 }
 
 // Bytes returns the current approximate memory footprint of stored history.

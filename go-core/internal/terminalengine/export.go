@@ -236,12 +236,92 @@ type ScreenFrame struct {
 	// HistoryLineageVersion 是进程内 mutation 标记。相同非零版本表示 lineage
 	// 切片完全相同，派生器可跳过完整历史比较；不编码到 wire。
 	HistoryLineageVersion uint64
+	// HistoryMutationHead 是进程内持久 mutation 链。每个节点覆盖
+	// (BaseVersion, Version]，让慢客户端按最后成功写出的 lineage version
+	// 读取变化；链不编码到 wire，覆盖不足时派生器安全退回 snapshot。
+	HistoryMutationHead *HistoryMutationBatch
+	// HistoryLineageView 是不可变分页位置视图。普通实时 State 只共享该视图；
+	// 仅在真正编码 Baseline 时才物化连续 ScrollbackLineage。
+	HistoryLineageView *HistoryLineageView
 }
 
 type HistoryPush struct {
 	LineID      uint64
 	LineVersion uint64
 	HistorySeq  uint64
+}
+
+type HistoryMutationBatch struct {
+	BaseVersion uint64
+	Version     uint64
+	Pushes      []HistoryPush
+	Previous    *HistoryMutationBatch
+}
+
+const historyLineagePageSize = uint64(128)
+
+type HistoryLineageView struct {
+	firstSeq uint64
+	lastSeq  uint64
+	basePage uint64
+	pages    [][]HistoryPush
+}
+
+func NewHistoryLineageView(
+	firstSeq, lastSeq uint64, bindings []HistoryPush,
+) *HistoryLineageView {
+	view := &HistoryLineageView{firstSeq: firstSeq, lastSeq: lastSeq}
+	return view.WithChanges(firstSeq, lastSeq, bindings)
+}
+
+func (v *HistoryLineageView) WithChanges(
+	firstSeq, lastSeq uint64, changes []HistoryPush,
+) *HistoryLineageView {
+	next := &HistoryLineageView{firstSeq: firstSeq, lastSeq: lastSeq}
+	if lastSeq+1 != firstSeq {
+		next.basePage = (firstSeq - 1) / historyLineagePageSize
+		lastPage := (lastSeq - 1) / historyLineagePageSize
+		next.pages = make([][]HistoryPush, int(lastPage-next.basePage+1))
+		if v != nil {
+			for index := range next.pages {
+				page := next.basePage + uint64(index)
+				if page >= v.basePage && page-v.basePage < uint64(len(v.pages)) {
+					next.pages[index] = v.pages[page-v.basePage]
+				}
+			}
+		}
+	}
+	copiedPages := make([]bool, len(next.pages))
+	for _, change := range changes {
+		if change.HistorySeq < firstSeq || change.HistorySeq > lastSeq {
+			continue
+		}
+		page := (change.HistorySeq - 1) / historyLineagePageSize
+		pageIndex := int(page - next.basePage)
+		if !copiedPages[pageIndex] {
+			entries := make([]HistoryPush, historyLineagePageSize)
+			copy(entries, next.pages[pageIndex])
+			next.pages[pageIndex] = entries
+			copiedPages[pageIndex] = true
+		}
+		next.pages[pageIndex][(change.HistorySeq-1)%historyLineagePageSize] = change
+	}
+	return next
+}
+
+func (v *HistoryLineageView) Materialize() []HistoryPush {
+	if v == nil || v.lastSeq+1 == v.firstSeq {
+		return nil
+	}
+	result := make([]HistoryPush, 0, v.lastSeq-v.firstSeq+1)
+	for _, page := range v.pages {
+		for _, binding := range page {
+			if binding.HistorySeq >= v.firstSeq && binding.HistorySeq <= v.lastSeq {
+				result = append(result, binding)
+			}
+		}
+	}
+	return result
 }
 
 type EffectKind uint8

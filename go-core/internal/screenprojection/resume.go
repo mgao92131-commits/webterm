@@ -107,6 +107,12 @@ func (p *Projector) Resume(token *ResumeToken, epoch, revision uint64, forceBase
 			old.Links = append(old.Links, state.Links[i])
 		}
 	}
+	if len(state.ScrollbackLineage) == 0 && state.HistoryLineageView != nil {
+		// ResumeToken 只携带 screen revision，不携带进程内 mutation version；
+		// 这里是低频恢复路径，按需物化当前 lineage 后与 CreatedRevision 推导出的
+		// 旧 lineage 比较。
+		state.ScrollbackLineage = state.HistoryLineageView.Materialize()
+	}
 	frame := diffToPatch(old, state)
 	frame.CursorChanged = true
 	frame.ModesChanged = true
