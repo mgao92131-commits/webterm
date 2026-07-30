@@ -127,10 +127,18 @@ public final class RemoteTerminalRenderer {
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn,
                      @Nullable TerminalLineRenderNodeCache lineCache) {
     long renderStartedNanos = System.nanoTime();
+    long viewportCalculationNanos = 0L;
+    long historyRowLookupNanos = 0L;
+    long screenRowLookupNanos = 0L;
+    long renderNodeDrawOrRecordNanos = 0L;
+    long canvasDrawNanos = 0L;
     try {
+    long screenCopyStartedNanos = System.nanoTime();
     RenderLine[] screen = model.screenView.copyLines();
+    screenRowLookupNanos += System.nanoTime() - screenCopyStartedNanos;
     if (lineHeight <= 0 || cellWidth <= 0) return;
 
+    long viewportStartedNanos = System.nanoTime();
     UnifiedContentAxis axis = model.contentAxis;
     // The content axis is the only vertical coordinate space. History and
     // ActiveRows remain semantic item kinds, not independent layout systems.
@@ -145,17 +153,6 @@ public final class RemoteTerminalRenderer {
         getTopInset(), scrollOffset);
     float screenTopY = contentTopY + historyRows * lineHeight;
 
-    TerminalPalette palette = model.palette;
-    int canvasBackground = resolveColor(palette,
-        palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
-    canvas.drawColor(canvasBackground);
-
-    TerminalSelection selection = viewport.selection;
-    TerminalSelection normalizedSelection = selection != null ? selection.normalized() : null;
-    TerminalCursor cursor = model.cursor;
-    boolean cursorVisible = shouldDrawCursor(
-        viewport, model.activeBuffer, cursor, cursorBlinkOn);
-
     Rect clip = clipBounds;
     if (!canvas.getClipBounds(clip)) clip.set(0, 0, canvas.getWidth(), canvas.getHeight());
 
@@ -167,8 +164,28 @@ public final class RemoteTerminalRenderer {
         (long) Math.floor((clip.top - contentTopY) / lineHeight) - 1L);
     long lastAxisRow = Math.min(axisRows,
         (long) Math.ceil((clip.bottom - contentTopY) / lineHeight) + 1L);
+    viewportCalculationNanos = System.nanoTime() - viewportStartedNanos;
+
+    TerminalPalette palette = model.palette;
+    int canvasBackground = resolveColor(palette,
+        palette.reverseVideo ? palette.defaultFg : palette.defaultBg);
+    TerminalSelection selection = viewport.selection;
+    TerminalSelection normalizedSelection = selection != null ? selection.normalized() : null;
+    TerminalCursor cursor = model.cursor;
+    boolean cursorVisible = shouldDrawCursor(
+        viewport, model.activeBuffer, cursor, cursorBlinkOn);
+    long backgroundDrawStartedNanos = System.nanoTime();
+    canvas.drawColor(canvasBackground);
+    canvasDrawNanos += System.nanoTime() - backgroundDrawStartedNanos;
     for (long axisRow = firstAxisRow; axisRow < lastAxisRow; axisRow++) {
+      long rowLookupStartedNanos = System.nanoTime();
       UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
+      long rowLookupNanos = System.nanoTime() - rowLookupStartedNanos;
+      if (item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE) {
+        screenRowLookupNanos += rowLookupNanos;
+      } else {
+        historyRowLookupNanos += rowLookupNanos;
+      }
       float y = contentTopY + axisRow * lineHeight;
       boolean active = item.kind == UnifiedContentAxis.Kind.ACTIVE_LINE;
       if (!active && (y + lineHeight <= topInset + 0.001f || y >= screenTopY)) continue;
@@ -177,11 +194,13 @@ public final class RemoteTerminalRenderer {
         long historySeq = item.fromHistorySeq + (axisRow - item.startRow);
         long historyIndex = historySeq - history.firstSeq();
         if (historyIndex >= 0 && historyIndex <= Integer.MAX_VALUE) {
+          long drawStartedNanos = System.nanoTime();
           canvas.save();
           canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
           drawHistoryPlaceholder(canvas, model.columns, history, (int) historyIndex, y,
               canvasBackground);
           canvas.restore();
+          canvasDrawNanos += System.nanoTime() - drawStartedNanos;
         }
         continue;
       }
@@ -194,29 +213,41 @@ public final class RemoteTerminalRenderer {
         canvas.save();
         canvas.clipRect(0f, topInset, canvas.getWidth(), screenTopY);
       }
-      TerminalLineRenderNodeCache.LineDrawResult cacheResult = useCache
-          ? lineCache.drawOrRecord(canvas, line, y, !active)
-          : TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
+      TerminalLineRenderNodeCache.LineDrawResult cacheResult;
+      if (useCache) {
+        long nodeStartedNanos = System.nanoTime();
+        cacheResult = lineCache.drawOrRecord(canvas, line, y, !active);
+        renderNodeDrawOrRecordNanos += System.nanoTime() - nodeStartedNanos;
+      } else {
+        cacheResult = TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
+      }
       if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
+        long drawStartedNanos = System.nanoTime();
         if (useCache) {
           drawTerminalLineContent(canvas, model.columns, palette, line, y, canvasBackground);
         } else {
           drawLine(canvas, model.columns, palette, line, y, historySeq, screenRow,
               normalizedSelection, cursor, active && cursorVisible, canvasBackground);
         }
+        canvasDrawNanos += System.nanoTime() - drawStartedNanos;
       }
       if (useCache) {
+        long overlayStartedNanos = System.nanoTime();
         drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
             historySeq, screenRow, normalizedSelection, canvasBackground);
         if (active && cursorVisible && cursor.row == screenRow) {
           drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
               screenRow, cursor, canvasBackground);
         }
+        canvasDrawNanos += System.nanoTime() - overlayStartedNanos;
       }
       if (!active) canvas.restore();
     }
     TerminalRenderMetrics.visibleHistoryRowsDrawn(visibleHistoryRows);
     } finally {
+      TerminalRenderMetrics.renderFramePhases(
+          viewportCalculationNanos, historyRowLookupNanos, screenRowLookupNanos,
+          renderNodeDrawOrRecordNanos, canvasDrawNanos);
       TerminalRenderMetrics.renderDuration(System.nanoTime() - renderStartedNanos);
     }
   }

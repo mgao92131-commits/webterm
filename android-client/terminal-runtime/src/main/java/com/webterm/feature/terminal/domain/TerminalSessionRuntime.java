@@ -219,6 +219,8 @@ public final class TerminalSessionRuntime {
   /** 只服务 WS 屏幕正文解码；HTTP Range 始终使用响应自己的局部字典。 */
   @Nullable private CanonicalDictionaryState canonicalDictionaryState;
   @Nullable private volatile HistoryRangeSource historyRangeSource;
+  /** Source 因凭据更新被替换后，保留本 runtime 的累计 HTTP 诊断。 */
+  private final Map<String, Object> archivedHistoryHttpMetrics = new LinkedHashMap<>();
   private volatile ScreenConnection connection;
   private volatile boolean connectionRequiresReplacement;
   @Nullable private volatile AuthenticationListener authenticationListener;
@@ -365,7 +367,7 @@ public final class TerminalSessionRuntime {
   @NonNull
   TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot diagnosticsSnapshot() {
     return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
-        sessionId, state.name(), pipelineAndRecoverySnapshot(), historyLoader.diagnosticsSnapshot(),
+        sessionId, state.name(), pipelineAndRecoverySnapshot(), historyDiagnosticsSnapshot(),
         inputDeliverySnapshot(),
         0L, 0L, "", connectionEpoch.get(), publishedSyncGeneration,
         projectionContinuity.name(), renderConsumer.get() != null, listeners.size(),
@@ -386,7 +388,7 @@ public final class TerminalSessionRuntime {
     long finalMailboxBytes = screenMailbox.pendingBytes();
     return new TerminalPipelineDiagnosticsRegistry.SessionDiagnosticsSnapshot(
         sessionId, State.CLOSED.name(), pipelineAndRecoverySnapshot(),
-        historyLoader.diagnosticsSnapshot(),
+        historyDiagnosticsSnapshot(),
         inputDeliverySnapshot(),
         closeRequestedAtEpochMs, System.currentTimeMillis(), State.CLOSED.name(),
         connectionEpoch.get(), publishedSyncGeneration,
@@ -433,6 +435,27 @@ public final class TerminalSessionRuntime {
       result.put("transportGeneration", current.transportGeneration());
     }
     return result;
+  }
+
+  @NonNull
+  private Map<String, Object> historyDiagnosticsSnapshot() {
+    Map<String, Object> out = new LinkedHashMap<>(historyLoader.diagnosticsSnapshot());
+    Map<String, Object> http = new LinkedHashMap<>();
+    synchronized (archivedHistoryHttpMetrics) {
+      HistoryHttpMetrics.mergeInto(http, archivedHistoryHttpMetrics);
+    }
+    HistoryRangeSource source = historyRangeSource;
+    if (source != null) HistoryHttpMetrics.mergeInto(http, source.diagnosticsSnapshot());
+    out.put("historyHttp", http);
+    return out;
+  }
+
+  private void archiveHistoryHttp(@Nullable HistoryRangeSource source) {
+    if (source == null) return;
+    synchronized (archivedHistoryHttpMetrics) {
+      HistoryHttpMetrics.mergeInto(
+          archivedHistoryHttpMetrics, source.diagnosticsSnapshot());
+    }
   }
 
   /**
@@ -891,7 +914,10 @@ public final class TerminalSessionRuntime {
       HistoryRangeSource previous = historyRangeSource;
       historyRangeSource = source;
       historyLoader.resetLifecycle();
-      if (previous != null) previous.close();
+      if (previous != null) {
+        archiveHistoryHttp(previous);
+        previous.close();
+      }
       pumpHistoryRanges();
     });
   }
@@ -903,6 +929,7 @@ public final class TerminalSessionRuntime {
         visibleFromSeq, visibleToSeq, anchorSeq, direction, visibleRowCount,
         System.nanoTime());
     if (offered == HistoryDemandMailbox.OfferResult.REJECTED) return;
+    HistoryDemandMetrics.mailboxResult(offered);
     historyLoader.metrics().onDemandReceived();
     if (offered == HistoryDemandMailbox.OfferResult.CONFLATED) {
       historyLoader.metrics().onDemandConflated();
@@ -949,6 +976,7 @@ public final class TerminalSessionRuntime {
             update.visibleFromSeq, update.visibleToSeq, update.anchorSeq,
             update.direction, update.visibleRowCount, update.createdAtNanos);
     if (accepted == null) return;
+    HistoryDemandMetrics.modelApplied();
     boolean cancelled = historyLoader.shouldCancelFor(accepted)
         && historyLoader.cancelActiveForDemand();
     emitHistoryRangeInfo("history_range_demand_updated",
@@ -1331,7 +1359,10 @@ public final class TerminalSessionRuntime {
     historyLoader.close();
     HistoryRangeSource source = historyRangeSource;
     historyRangeSource = null;
-    if (source != null) source.close();
+    if (source != null) {
+      archiveHistoryHttp(source);
+      source.close();
+    }
     model.setEvictionPins(EvictionPins.NONE);
   }
 

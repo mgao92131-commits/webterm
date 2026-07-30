@@ -29,6 +29,9 @@ final class HistoryRangeMetrics {
   private final AtomicLong retryScheduledCount = new AtomicLong();
   private final AtomicLong retryExhaustedCount = new AtomicLong();
   private final AtomicLong rangeUnavailableProtocolCount = new AtomicLong();
+  private final AtomicLong fetchPlanCreatedCount = new AtomicLong();
+  private final AtomicLong fetchPlanReusedCount = new AtomicLong();
+  private final AtomicLong fetchPlanCoveredByActiveCount = new AtomicLong();
 
   void onDemandReceived() { demandReceivedCount.incrementAndGet(); }
   void onDemandConflated() { demandConflatedCount.incrementAndGet(); }
@@ -65,6 +68,9 @@ final class HistoryRangeMetrics {
   void onRetryScheduled() { retryScheduledCount.incrementAndGet(); }
   void onRetryExhausted() { retryExhaustedCount.incrementAndGet(); }
   void onRangeUnavailableProtocol() { rangeUnavailableProtocolCount.incrementAndGet(); }
+  void onFetchPlanCreated() { fetchPlanCreatedCount.incrementAndGet(); }
+  void onFetchPlanReused() { fetchPlanReusedCount.incrementAndGet(); }
+  void onFetchPlanCoveredByActive() { fetchPlanCoveredByActiveCount.incrementAndGet(); }
 
   Map<String, Object> snapshot() {
     Map<String, Object> out = new LinkedHashMap<>();
@@ -74,6 +80,7 @@ final class HistoryRangeMetrics {
     out.put("demandAppliedCount", demandAppliedCount.get());
     out.put("demandChangedWhileFetchingCount", demandChangedWhileFetchingCount.get());
     out.put("requestStartedCount", requestStartedCount.get());
+    out.put("httpRequestStartedCount", requestStartedCount.get());
     out.put("requestCompletedCount", requestCompletedCount.get());
     out.put("requestCancelledCount", requestCancelledCount.get());
     out.put("requestObsoleteAtCompletionCount", requestObsoleteAtCompletionCount.get());
@@ -92,6 +99,9 @@ final class HistoryRangeMetrics {
     out.put("retryScheduledCount", retryScheduledCount.get());
     out.put("retryExhaustedCount", retryExhaustedCount.get());
     out.put("rangeUnavailableProtocolCount", rangeUnavailableProtocolCount.get());
+    out.put("fetchPlanCreatedCount", fetchPlanCreatedCount.get());
+    out.put("fetchPlanReusedCount", fetchPlanReusedCount.get());
+    out.put("fetchPlanCoveredByActiveCount", fetchPlanCoveredByActiveCount.get());
     return out;
   }
 

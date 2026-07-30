@@ -12,8 +12,11 @@ import com.webterm.terminal.protocol.ScreenMessageV2Validator;
 import com.webterm.terminal.protocol.WireDictionary;
 import com.webterm.terminal.protocol.generated.TerminalHistoryProto;
 import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.google.protobuf.CodedOutputStream;
 
 import java.io.IOException;
+import java.io.FilterInputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -36,6 +39,7 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
   private final String localSessionId;
   private final String deviceId;
   private final AtomicBoolean closed = new AtomicBoolean();
+  private final HistoryHttpMetrics metrics = new HistoryHttpMetrics();
 
   public OkHttpHistoryRangeSource(
       @NonNull OkHttpClient http, @NonNull Executor callbackExecutor,
@@ -67,54 +71,77 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
         .header("Cache-Control", "no-store");
     if (!cookie.isEmpty()) builder.header("Cookie", cookie);
     if (!deviceId.isEmpty()) builder.header("X-Device-Id", deviceId);
+    long requestedLines = range.toSeq >= range.fromSeq
+        ? range.toSeq - range.fromSeq + 1L : 0L;
+    HistoryHttpMetrics.CallContext metricContext = metrics.start(requestedLines);
+    builder.tag(HistoryHttpMetrics.CallContext.class, metricContext);
     Call call = http.newCall(builder.build());
     call.enqueue(new okhttp3.Callback() {
       @Override public void onFailure(@NonNull Call call, @NonNull IOException error) {
-        if (call.isCanceled() || closed.get()) return;
+        if (call.isCanceled() || closed.get()) {
+          metrics.cancelled(metricContext);
+          return;
+        }
+        metrics.failure(metricContext, 0L);
         callbackExecutor.execute(() -> callback.onFailure(
             new Failure(FailureKind.NETWORK, 250, range.generation)));
       }
 
       @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
+        CountingInputStream input = null;
         try (Response ignored = response) {
-          if (call.isCanceled() || closed.get()) return;
+          metrics.responseStatus(response.code());
+          if (call.isCanceled() || closed.get()) {
+            metrics.cancelled(metricContext);
+            return;
+          }
           if (response.code() == 401 || response.code() == 403) {
+            metrics.failure(metricContext, 0L);
             emitFailure(callback, FailureKind.AUTH_REQUIRED, 0, range.generation);
             return;
           }
           ResponseBody body = response.body();
           if (body == null) {
+            metrics.failure(metricContext, 0L);
             emitFailure(callback, httpFailure(response.code()), 0, range.generation);
             return;
           }
           TerminalHistoryProto.HistoryRangeResponse pb;
           try {
-            pb = TerminalHistoryProto.HistoryRangeResponse.parseFrom(body.byteStream());
+            input = new CountingInputStream(body.byteStream());
+            pb = TerminalHistoryProto.HistoryRangeResponse.parseFrom(input);
           } catch (Exception invalid) {
+            metrics.failure(metricContext, input != null ? input.bytesRead() : 0L);
             emitFailure(callback, httpFailure(response.code()), 0, range.generation);
             return;
           }
+          long decodedBodyBytes = input.bytesRead();
           switch (pb.getStatus()) {
             case HISTORY_RANGE_STATUS_OK:
               break;
             case HISTORY_RANGE_STATUS_STALE_PROJECTION:
+              metrics.failure(metricContext, decodedBodyBytes);
               emitFailure(callback, FailureKind.STALE_PROJECTION, 0,
                   pb.getHistoryGeneration());
               return;
             case HISTORY_RANGE_STATUS_SESSION_GONE:
+              metrics.failure(metricContext, decodedBodyBytes);
               emitFailure(callback, FailureKind.SESSION_GONE, 0,
                   pb.getHistoryGeneration());
               return;
             case HISTORY_RANGE_STATUS_RETRYABLE:
+              metrics.failure(metricContext, decodedBodyBytes);
               emitFailure(callback, FailureKind.RETRYABLE, pb.getRetryAfterMs(),
                   pb.getHistoryGeneration());
               return;
             default:
+              metrics.failure(metricContext, decodedBodyBytes);
               emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
               return;
           }
           if (!pb.hasCurrentExtent() || pb.getInstanceId().isEmpty()
               || pb.getLayoutEpoch() == 0 || pb.getHistoryGeneration() == 0) {
+            metrics.failure(metricContext, decodedBodyBytes);
             emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
             return;
           }
@@ -134,17 +161,38 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
               previous = line.getHistorySeq();
               lines.add(ScreenMessageV2Mapper.mapHistoryLine(line, dictionary));
             }
+            long linePayloadBytes = 0L;
+            long lineEncodedBytes = 0L;
+            for (TerminalScreenV2Proto.LineData line : pb.getLinesList()) {
+              linePayloadBytes += line.getSerializedSize();
+              lineEncodedBytes += CodedOutputStream.computeMessageSize(6, line);
+            }
+            long dictionaryPayloadBytes = pb.getDictionary().getSerializedSize();
+            long dictionaryEncodedBytes = pb.hasDictionary()
+                ? CodedOutputStream.computeMessageSize(7, pb.getDictionary()) : 0L;
+            long protobufBytes = pb.getSerializedSize();
+            metrics.success(
+                metricContext, pb.getLinesCount(), decodedBodyBytes,
+                protobufBytes,
+                pb.getDictionary().getStylesCount() + pb.getDictionary().getLinksCount(),
+                dictionaryPayloadBytes, dictionaryEncodedBytes,
+                linePayloadBytes, lineEncodedBytes,
+                protobufBytes - dictionaryEncodedBytes - lineEncodedBytes);
             long completedAtNanos = System.nanoTime();
             callbackExecutor.execute(() -> callback.onResult(
                 new Result(pb.getInstanceId(), pb.getLayoutEpoch(),
                     pb.getHistoryGeneration(), extent, lines, completedAtNanos)));
           } catch (RuntimeException invalidRange) {
+            metrics.failure(metricContext, decodedBodyBytes);
             emitFailure(callback, FailureKind.PROTOCOL, 0, pb.getHistoryGeneration());
           }
         }
       }
     });
-    return call::cancel;
+    return () -> {
+      metrics.cancelled(metricContext);
+      call.cancel();
+    };
   }
 
   private void emitFailure(
@@ -156,6 +204,11 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
 
   @Override public void close() {
     closed.set(true);
+  }
+
+  @NonNull @Override
+  public java.util.Map<String, Object> diagnosticsSnapshot() {
+    return metrics.snapshot();
   }
 
   static FailureKind httpFailure(int code) {
@@ -170,5 +223,30 @@ public final class OkHttpHistoryRangeSource implements HistoryRangeSource {
     int end = value.length();
     while (end > 0 && value.charAt(end - 1) == '/') end--;
     return value.substring(0, end);
+  }
+
+  /** OkHttp 透明解压后的实际 protobuf 字节计数。 */
+  private static final class CountingInputStream extends FilterInputStream {
+    private long count;
+
+    CountingInputStream(InputStream input) {
+      super(input);
+    }
+
+    @Override public int read() throws IOException {
+      int value = super.read();
+      if (value >= 0) count++;
+      return value;
+    }
+
+    @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+      int read = super.read(buffer, offset, length);
+      if (read > 0) count += read;
+      return read;
+    }
+
+    long bytesRead() {
+      return count;
+    }
   }
 }

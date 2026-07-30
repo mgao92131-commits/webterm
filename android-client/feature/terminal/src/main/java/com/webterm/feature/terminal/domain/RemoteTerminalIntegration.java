@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import javax.inject.Inject;
 
 import dagger.hilt.android.scopes.ActivityScoped;
+import okhttp3.OkHttpClient;
 
 /**
  * webterm.screen.v2 终端集成 facade。
@@ -46,6 +47,7 @@ public final class RemoteTerminalIntegration {
 
   private final TerminalSessionRuntimeRegistry registry;
   private final TerminalChannel.Factory screenConnectionFactory;
+  private final OkHttpClient historyHttpClient;
 
   private TerminalClipboardPolicy clipboardPolicy;
 
@@ -84,9 +86,11 @@ public final class RemoteTerminalIntegration {
 
   @Inject
   public RemoteTerminalIntegration(TerminalSessionRuntimeRegistry registry,
-                                   TerminalChannel.Factory screenConnectionFactory) {
+                                   TerminalChannel.Factory screenConnectionFactory,
+                                   @HistoryHttp OkHttpClient historyHttpClient) {
     this.registry = registry;
     this.screenConnectionFactory = screenConnectionFactory;
+    this.historyHttpClient = historyHttpClient;
   }
 
   public void start(@NonNull Activity activity, @NonNull TerminalFragment fragment,
@@ -367,7 +371,7 @@ public final class RemoteTerminalIntegration {
       @NonNull TerminalViewModel.TerminalSessionArgs args) {
     if (runtime == null) return;
     runtime.setHistoryRangeSource(new OkHttpHistoryRangeSource(
-        new okhttp3.OkHttpClient(),
+        historyHttpClient,
         command -> new android.os.Handler(android.os.Looper.getMainLooper()).post(command),
         args.baseUrl, args.cookie, args.sessionId,
         args.directDevice ? "" : args.relayDeviceId));

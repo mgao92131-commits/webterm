@@ -188,6 +188,8 @@ public final class TerminalScreenController implements TerminalSessionRuntime.Li
   }
 
   public void onVisibleHistoryDemand(long fromSeq, long toSeq, long anchorSeq, int direction) {
+    boolean frameCoalesced = historyDemandScheduled;
+    HistoryDemandMetrics.viewportProduced(frameCoalesced);
     pendingDemandFrom = fromSeq;
     pendingDemandTo = toSeq;
     pendingDemandAnchor = anchorSeq;

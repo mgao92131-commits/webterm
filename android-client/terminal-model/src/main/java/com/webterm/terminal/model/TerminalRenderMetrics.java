@@ -19,6 +19,8 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong RENDER_REQUEST_COUNT = new AtomicLong();
   private static final AtomicLong VSYNC_RENDER_COUNT = new AtomicLong();
   private static final AtomicLong FULL_INVALIDATE_COUNT = new AtomicLong();
+  private static final AtomicLongArray FULL_INVALIDATE_BY_REASON =
+      new AtomicLongArray(FullInvalidateReason.values().length);
   private static final AtomicLong PARTIAL_INVALIDATE_COUNT = new AtomicLong();
   private static final AtomicLong DIRTY_ROW_COUNT = new AtomicLong();
   private static final AtomicLong SCREEN_REGION_INVALIDATE_COUNT = new AtomicLong();
@@ -33,7 +35,15 @@ public final class TerminalRenderMetrics {
   private static final AtomicLong ROW_NODE_REUSE_COUNT = new AtomicLong();
   private static final AtomicLong HISTORY_ONLY_NO_DRAW_COUNT = new AtomicLong();
   private static final AtomicLong RENDER_DURATION_NANOS = new AtomicLong();
+  private static final AtomicLong RENDER_DURATION_COUNT = new AtomicLong();
   private static final AtomicLong RENDER_DURATION_MAX_NANOS = new AtomicLong();
+  private static final AtomicLongArray RENDER_DURATION_LATENCY_BUCKETS =
+      new AtomicLongArray(LATENCY_BUCKET_COUNT);
+  private static final AtomicLong VIEWPORT_CALCULATION_NANOS = new AtomicLong();
+  private static final AtomicLong HISTORY_ROW_LOOKUP_NANOS = new AtomicLong();
+  private static final AtomicLong SCREEN_ROW_LOOKUP_NANOS = new AtomicLong();
+  private static final AtomicLong RENDER_NODE_DRAW_OR_RECORD_NANOS = new AtomicLong();
+  private static final AtomicLong CANVAS_DRAW_NANOS = new AtomicLong();
   private static final AtomicLong PROTOBUF_PARSE_NANOS = new AtomicLong();
   private static final AtomicLong PROTOBUF_PARSE_COUNT = new AtomicLong();
   private static final AtomicLong MODEL_APPLY_NANOS = new AtomicLong();
@@ -82,7 +92,31 @@ public final class TerminalRenderMetrics {
   public static void viewportRedrawRequested() { VIEWPORT_REDRAW_REQUEST_COUNT.incrementAndGet(); }
   public static void viewportFullRedraw() { VIEWPORT_FULL_REDRAW_COUNT.incrementAndGet(); }
   public static void vsyncRender() { VSYNC_RENDER_COUNT.incrementAndGet(); }
-  public static void fullInvalidate() { FULL_INVALIDATE_COUNT.incrementAndGet(); }
+  public enum FullInvalidateReason {
+    LEGACY_SET_MODEL,
+    GEOMETRY_CHANGED,
+    UPSTREAM_FULL_DIRTY,
+    ACTIVE_BUFFER_CHANGED,
+    PALETTE_CHANGED,
+    MODES_CHANGED,
+    STYLES_CHANGED,
+    LINKS_CHANGED,
+    HISTORY_STRUCTURE_CHANGED,
+    HISTORY_RANGE_UNKNOWN,
+    SCREEN_AND_HISTORY_COMBINED,
+    DIRTY_AREA_THRESHOLD,
+    FALLBACK,
+    UNKNOWN
+  }
+
+  public static void fullInvalidate(FullInvalidateReason reason) {
+    FULL_INVALIDATE_COUNT.incrementAndGet();
+    FullInvalidateReason safe = reason != null ? reason : FullInvalidateReason.UNKNOWN;
+    FULL_INVALIDATE_BY_REASON.incrementAndGet(safe.ordinal());
+  }
+  /** 仅兼容旧调用方；新调用必须给出原因。 */
+  @Deprecated
+  public static void fullInvalidate() { fullInvalidate(FullInvalidateReason.UNKNOWN); }
   public static void screenRegionInvalidate() { SCREEN_REGION_INVALIDATE_COUNT.incrementAndGet(); }
   public static void partialRowInvalidate(int rows) {
     PARTIAL_ROW_INVALIDATE_COUNT.incrementAndGet();
@@ -111,8 +145,20 @@ public final class TerminalRenderMetrics {
   public static void historyOnlyNoDraw() { HISTORY_ONLY_NO_DRAW_COUNT.incrementAndGet(); }
   public static void renderDuration(long nanos) {
     long safe = Math.max(0L, nanos);
+    RENDER_DURATION_COUNT.incrementAndGet();
     RENDER_DURATION_NANOS.addAndGet(safe);
     updateMax(RENDER_DURATION_MAX_NANOS, safe);
+    recordLatency(RENDER_DURATION_LATENCY_BUCKETS, safe);
+  }
+  public static void renderFramePhases(
+      long viewportCalculationNanos, long historyRowLookupNanos,
+      long screenRowLookupNanos, long renderNodeDrawOrRecordNanos, long canvasDrawNanos) {
+    VIEWPORT_CALCULATION_NANOS.addAndGet(Math.max(0L, viewportCalculationNanos));
+    HISTORY_ROW_LOOKUP_NANOS.addAndGet(Math.max(0L, historyRowLookupNanos));
+    SCREEN_ROW_LOOKUP_NANOS.addAndGet(Math.max(0L, screenRowLookupNanos));
+    RENDER_NODE_DRAW_OR_RECORD_NANOS.addAndGet(
+        Math.max(0L, renderNodeDrawOrRecordNanos));
+    CANVAS_DRAW_NANOS.addAndGet(Math.max(0L, canvasDrawNanos));
   }
   public static void protobufParseDuration(long nanos) {
     PROTOBUF_PARSE_COUNT.incrementAndGet();
@@ -211,7 +257,12 @@ public final class TerminalRenderMetrics {
         ROW_CACHE_STALE_FALLBACK_COUNT.get(), ROW_CACHE_PINNED_CONFLICT_COUNT.get(),
         ROW_NODE_RECORD_COUNT.get(), ROW_NODE_REUSE_COUNT.get(),
         HISTORY_ONLY_NO_DRAW_COUNT.get(),
-        RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(), PROTOBUF_PARSE_NANOS.get(),
+        RENDER_DURATION_COUNT.get(), RENDER_DURATION_NANOS.get(), RENDER_DURATION_MAX_NANOS.get(),
+        copyBuckets(RENDER_DURATION_LATENCY_BUCKETS),
+        VIEWPORT_CALCULATION_NANOS.get(), HISTORY_ROW_LOOKUP_NANOS.get(),
+        SCREEN_ROW_LOOKUP_NANOS.get(), RENDER_NODE_DRAW_OR_RECORD_NANOS.get(),
+        CANVAS_DRAW_NANOS.get(), copyBuckets(FULL_INVALIDATE_BY_REASON),
+        PROTOBUF_PARSE_NANOS.get(),
         PROTOBUF_PARSE_COUNT.get(), MODEL_APPLY_NANOS.get(), MAIN_CALLBACK_DELAY_NANOS.get(),
         BASELINE_FRAME_COUNT.get(), BASELINE_FRAME_BYTES.get(), COMMIT_FRAME_COUNT.get(),
         COMMIT_FRAME_BYTES.get(), HISTORY_RANGE_FRAME_COUNT.get(), HISTORY_RANGE_FRAME_BYTES.get(),
@@ -274,8 +325,16 @@ public final class TerminalRenderMetrics {
     public final long rowNodeRecordCount;
     public final long rowNodeReuseCount;
     public final long historyOnlyNoDrawCount;
+    public final long renderDurationCount;
     public final long renderDurationNanos;
     public final long renderDurationMaxNanos;
+    public final long[] renderDurationLatencyBuckets;
+    public final long viewportCalculationNanos;
+    public final long historyRowLookupNanos;
+    public final long screenRowLookupNanos;
+    public final long renderNodeDrawOrRecordNanos;
+    public final long canvasDrawNanos;
+    public final long[] fullInvalidateByReason;
     public final long protobufParseNanos;
     public final long protobufParseCount;
     public final long modelApplyNanos;
@@ -313,8 +372,13 @@ public final class TerminalRenderMetrics {
              long partialRowInvalidateCount, long screenScrollEventCount, long screenScrollRowTotal,
              long rowCacheHitCount, long rowCacheMissCount, long rowCacheStaleFallbackCount,
              long rowCachePinnedConflictCount,
-             long rowNodeRecordCount, long rowNodeReuseCount, long historyOnlyNoDrawCount, long renderDurationNanos,
-             long renderDurationMaxNanos, long protobufParseNanos, long protobufParseCount,
+             long rowNodeRecordCount, long rowNodeReuseCount, long historyOnlyNoDrawCount,
+             long renderDurationCount, long renderDurationNanos,
+             long renderDurationMaxNanos, long[] renderDurationLatencyBuckets,
+             long viewportCalculationNanos, long historyRowLookupNanos,
+             long screenRowLookupNanos, long renderNodeDrawOrRecordNanos, long canvasDrawNanos,
+             long[] fullInvalidateByReason,
+             long protobufParseNanos, long protobufParseCount,
              long modelApplyNanos, long mainThreadCallbackDelayNanos, long baselineFrameCount,
              long baselineFrameBytes, long commitFrameCount, long commitFrameBytes,
              long historyRangeFrameCount, long historyRangeFrameBytes,
@@ -350,8 +414,16 @@ public final class TerminalRenderMetrics {
       this.rowNodeRecordCount = rowNodeRecordCount;
       this.rowNodeReuseCount = rowNodeReuseCount;
       this.historyOnlyNoDrawCount = historyOnlyNoDrawCount;
+      this.renderDurationCount = renderDurationCount;
       this.renderDurationNanos = renderDurationNanos;
       this.renderDurationMaxNanos = renderDurationMaxNanos;
+      this.renderDurationLatencyBuckets = renderDurationLatencyBuckets;
+      this.viewportCalculationNanos = viewportCalculationNanos;
+      this.historyRowLookupNanos = historyRowLookupNanos;
+      this.screenRowLookupNanos = screenRowLookupNanos;
+      this.renderNodeDrawOrRecordNanos = renderNodeDrawOrRecordNanos;
+      this.canvasDrawNanos = canvasDrawNanos;
+      this.fullInvalidateByReason = fullInvalidateByReason;
       this.protobufParseNanos = protobufParseNanos;
       this.protobufParseCount = protobufParseCount;
       this.modelApplyNanos = modelApplyNanos;

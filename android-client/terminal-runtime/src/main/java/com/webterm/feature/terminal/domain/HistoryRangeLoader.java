@@ -167,11 +167,18 @@ public final class HistoryRangeLoader {
         latestDemand == null ? 0 : latestDemand.demandEpoch, createdAtNanos);
     Range missing = firstMissingRangeForDemand(
         probe, instanceId, layoutEpoch, generation, extent, history);
-    boolean fetchAlreadySatisfied = missing == null
-        || samePlannedFetch(missing)
-        || activeRequestCovers(missing)
+    boolean samePlan = missing != null && samePlannedFetch(missing);
+    boolean coveredByActive = missing != null && (activeRequestCovers(missing)
         || activeRequestCoversVisibleDemand(
-            probe, instanceId, layoutEpoch, generation);
+            probe, instanceId, layoutEpoch, generation));
+    boolean fetchAlreadySatisfied = missing == null || samePlan || coveredByActive;
+    if (coveredByActive) {
+      metrics.onFetchPlanCoveredByActive();
+    } else if (missing == null || samePlan) {
+      metrics.onFetchPlanReused();
+    } else {
+      metrics.onFetchPlanCreated();
+    }
     Demand accepted = acceptDemandInternal(
         visibleFromSeq, visibleToSeq, anchorSeq, direction,
         visibleRowCount, createdAtNanos, true, fetchAlreadySatisfied,

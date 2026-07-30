@@ -37,7 +37,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-/** DiagnosticLogExporter 的纯逻辑测试：命名并发唯一、processHash 关联、schema v3。 */
+/** DiagnosticLogExporter 的纯逻辑测试：命名并发唯一、processHash 关联、schema v4。 */
 public class DiagnosticLogExporterTest {
 
     @Before
@@ -102,8 +102,8 @@ public class DiagnosticLogExporterTest {
     }
 
     @Test
-    public void schemaVersionIsV3AndTrafficSummaryRemoved() {
-        assertEquals(3, DiagnosticLogExporter.SCHEMA_VERSION);
+    public void schemaVersionIsV4AndTrafficSummaryRemoved() {
+        assertEquals(4, DiagnosticLogExporter.SCHEMA_VERSION);
         // network-traffic-summary.txt 已删除；导出仅保留结构化 JSON。
         assertFalse(hasDeclaredMethod(DiagnosticLogExporter.class, "buildTrafficSummary"));
     }
@@ -134,6 +134,11 @@ public class DiagnosticLogExporterTest {
         assertTrue(metrics.contains("\"connectionRecovery\":{"));
         assertTrue(metrics.contains("\"screenPipelineAggregate\":{"));
         assertTrue(metrics.contains("\"historyLoaderAggregate\":{"));
+        assertTrue(metrics.contains("\"historyHttp\":{"));
+        assertTrue(metrics.contains("\"historyDemand\":{"));
+        assertTrue(metrics.contains("\"renderDurationCount\":"));
+        assertTrue(metrics.contains("\"fullInvalidateByReason\":{"));
+        assertTrue(metrics.contains("\"wsHistoryRangeFrameCount\":"));
         assertTrue(metrics.contains("\"inputDelivery\":{"));
         assertTrue(metrics.contains("\"sessionLifetime\":{"));
         assertTrue(metrics.contains("\"connectionLifetime\":{"));

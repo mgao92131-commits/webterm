@@ -11,10 +11,10 @@ package com.webterm.terminal.model;
  */
 public final class HistoryBudget {
 
-  public static final int DEFAULT_SOFT_LINES = 7500;
+  public static final int DEFAULT_SOFT_LINES = 8000;
   public static final int DEFAULT_HARD_LINES = 10000;
-  public static final long DEFAULT_SOFT_BYTES = 6L << 20;
-  public static final long DEFAULT_HARD_BYTES = 8L << 20;
+  public static final long DEFAULT_SOFT_BYTES = 48L << 20;
+  public static final long DEFAULT_HARD_BYTES = 64L << 20;
 
   public final int softLines;
   public final int hardLines;

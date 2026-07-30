@@ -51,6 +51,8 @@ import java.util.Objects;
 public final class RemoteTerminalView extends View {
   private static final class InvalidationPlan {
     InvalidationResult result = InvalidationResult.NONE;
+    TerminalRenderMetrics.FullInvalidateReason fullReason =
+        TerminalRenderMetrics.FullInvalidateReason.UNKNOWN;
     final Rect[] rects = new Rect[MAX_PARTIAL_DIRTY_RECTS];
     int rectCount;
     int dirtyRowCount;
@@ -61,6 +63,7 @@ public final class RemoteTerminalView extends View {
 
     void reset() {
       result = InvalidationResult.NONE;
+      fullReason = TerminalRenderMetrics.FullInvalidateReason.UNKNOWN;
       rectCount = 0;
       dirtyRowCount = 0;
     }
@@ -229,7 +232,8 @@ public final class RemoteTerminalView extends View {
     requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
     // 旧测试/嵌入调用的兼容入口不再参与正式脏区链路，保守全量重画。
-    TerminalRenderMetrics.fullInvalidate();
+    TerminalRenderMetrics.fullInvalidate(
+        TerminalRenderMetrics.FullInvalidateReason.LEGACY_SET_MODEL);
     invalidate();
   }
 
@@ -284,7 +288,7 @@ public final class RemoteTerminalView extends View {
         }
         break;
       case FULL:
-        TerminalRenderMetrics.fullInvalidate();
+        TerminalRenderMetrics.fullInvalidate(plan.fullReason);
         invalidate();
         break;
     }
@@ -1041,11 +1045,28 @@ public final class RemoteTerminalView extends View {
       boolean geometryChanged,
       @NonNull InvalidationPlan plan) {
     plan.reset();
-    if (getWidth() <= 0 || getHeight() <= 0
-        || snapshot.activeBuffer == null
-        || dirty.fullInvalidate || geometryChanged || dirty.geometryChanged
-        || dirty.activeBufferChanged || dirty.paletteChanged || dirty.modesChanged) {
-      plan.result = InvalidationResult.FULL;
+    if (getWidth() <= 0 || getHeight() <= 0 || snapshot.activeBuffer == null) {
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.FALLBACK);
+      return plan;
+    }
+    if (dirty.fullInvalidate) {
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.UPSTREAM_FULL_DIRTY);
+      return plan;
+    }
+    if (geometryChanged || dirty.geometryChanged) {
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.GEOMETRY_CHANGED);
+      return plan;
+    }
+    if (dirty.activeBufferChanged) {
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.ACTIVE_BUFFER_CHANGED);
+      return plan;
+    }
+    if (dirty.paletteChanged) {
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.PALETTE_CHANGED);
+      return plan;
+    }
+    if (dirty.modesChanged) {
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.MODES_CHANGED);
       return plan;
     }
 
@@ -1073,19 +1094,23 @@ public final class RemoteTerminalView extends View {
     }
 
     if (dirty.stylesChanged || dirty.linksChanged) {
-      plan.result = InvalidationResult.FULL;
+      setFull(plan, dirty.stylesChanged
+          ? TerminalRenderMetrics.FullInvalidateReason.STYLES_CHANGED
+          : TerminalRenderMetrics.FullInvalidateReason.LINKS_CHANGED);
       return plan;
     }
     // extent/geometry 变化，或旧调用方没有提供精确范围时，保留安全 FULL 退化。
     if (visibleHistoryChanged) {
       boolean hasRange = dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
       if (dirty.historyStructureChanged || !hasRange) {
-        plan.result = InvalidationResult.FULL;
+        setFull(plan, dirty.historyStructureChanged
+            ? TerminalRenderMetrics.FullInvalidateReason.HISTORY_STRUCTURE_CHANGED
+            : TerminalRenderMetrics.FullInvalidateReason.HISTORY_RANGE_UNKNOWN);
         return plan;
       }
       if (screenChanged || dirty.cursorChanged) {
         // 两套坐标损伤在同一帧合并时优先保证正确性；history-only 才走精确矩形。
-        plan.result = InvalidationResult.FULL;
+        setFull(plan, TerminalRenderMetrics.FullInvalidateReason.SCREEN_AND_HISTORY_COMBINED);
         return plan;
       }
       buildHistoryRange(plan, (HistoryRenderView) history, dirty,
@@ -1115,8 +1140,15 @@ public final class RemoteTerminalView extends View {
       return plan;
     }
 
-    plan.result = InvalidationResult.FULL;
+    setFull(plan, TerminalRenderMetrics.FullInvalidateReason.FALLBACK);
     return plan;
+  }
+
+  private static void setFull(
+      @NonNull InvalidationPlan plan,
+      @NonNull TerminalRenderMetrics.FullInvalidateReason reason) {
+    plan.result = InvalidationResult.FULL;
+    plan.fullReason = reason;
   }
 
   private void buildHistoryRange(@NonNull InvalidationPlan plan,
@@ -1165,7 +1197,7 @@ public final class RemoteTerminalView extends View {
         float rawBottom = screenTop + (previous + 1) * lineHeight;
         if (rawBottom > 0f && rawTop < getHeight()) {
           if (plan.rectCount >= MAX_PARTIAL_DIRTY_RECTS) {
-            plan.result = InvalidationResult.FULL;
+            setFull(plan, TerminalRenderMetrics.FullInvalidateReason.DIRTY_AREA_THRESHOLD);
             return;
           }
           Rect rect = plan.rects[plan.rectCount++];
@@ -1186,7 +1218,7 @@ public final class RemoteTerminalView extends View {
         <= (double) getWidth() * getHeight() * MAX_PARTIAL_DIRTY_AREA_RATIO) {
       plan.result = InvalidationResult.PARTIAL;
     } else {
-      plan.result = InvalidationResult.FULL;
+      setFull(plan, TerminalRenderMetrics.FullInvalidateReason.DIRTY_AREA_THRESHOLD);
     }
   }
 

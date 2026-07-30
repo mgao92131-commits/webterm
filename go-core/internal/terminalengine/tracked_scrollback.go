@@ -83,16 +83,16 @@ type TrackedScrollback struct {
 	onTrim func(ScrollbackTrimEvent)
 }
 
-// DefaultScrollbackLineLimit 是行数安全上限的缺省值。
-const DefaultScrollbackLineLimit = 20000
+// DefaultScrollbackLineLimit 是单个终端会话的行数安全上限缺省值。
+const DefaultScrollbackLineLimit = 10000
 
-// DefaultScrollbackByteLimit 是字节预算缺省值；0 表示不按字节驱逐，
-// 仅受行数上限约束。显式 SetMaxBytes(>0) 仍可启用字节预算。
-const DefaultScrollbackByteLimit = 0
+// DefaultScrollbackByteLimit 是单个终端会话的近似堆占用预算缺省值。
+// 行数与字节上限以先达到者为准。
+const DefaultScrollbackByteLimit = 128 << 20
 
 // NewTrackedScrollback 创建可跟踪 scrollback。
 // capacity 是行数安全上限（<=0 使用 DefaultScrollbackLineLimit）。
-// 默认不启用字节预算；仅当 SetMaxBytes(>0) 时才与行数上限取先到者驱逐。
+// 默认字节预算与行数上限取先到者驱逐；显式 SetMaxBytes(<=0) 可关闭字节预算。
 func NewTrackedScrollback(capacity int, onTrim func(ScrollbackTrimEvent)) *TrackedScrollback {
 	if capacity <= 0 {
 		capacity = DefaultScrollbackLineLimit

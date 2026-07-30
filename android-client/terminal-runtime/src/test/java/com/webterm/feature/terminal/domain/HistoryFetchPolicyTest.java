@@ -2,6 +2,7 @@ package com.webterm.feature.terminal.domain;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
 
@@ -33,6 +34,22 @@ public final class HistoryFetchPolicyTest {
   public void visibleRowsControlDynamicBatch() {
     assertTrue(policy.desiredBatchLines(demand(1, 10, 10))
         < policy.desiredBatchLines(demand(1, 80, 80)));
+  }
+
+  @Test
+  public void batchIsClampedToRevisedBounds() {
+    assertEquals(128L, policy.desiredBatchLines(demand(1, 1, 1)));
+    assertEquals(224L, policy.desiredBatchLines(demand(1, 56, 56)));
+    assertEquals(512L, policy.desiredBatchLines(demand(1, 1_000, 1_000)));
+  }
+
+  @Test
+  public void cancellationDistanceDoesNotGrowWithFourViewportBatch() {
+    HistoryRangeLoader.Demand atBoundary = demand(293, 348, 56);
+    HistoryRangeLoader.Demand beyondBoundary = demand(294, 349, 56);
+    assertEquals(112L, policy.cancelDistanceLines(atBoundary));
+    assertFalse(policy.shouldCancel(range(1, 180), atBoundary));
+    assertTrue(policy.shouldCancel(range(1, 180), beyondBoundary));
   }
 
   @Test

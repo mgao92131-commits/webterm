@@ -60,7 +60,7 @@ webterm-agent config init --mode direct --path ./my-direct.json
     "allowInsecureRemote": false
   },
   "shell": { "command": "", "cwd": "" },
-  "scrollback": { "maxLines": 10000, "maxBytes": 8388608 },
+  "scrollback": { "maxLines": 10000, "maxBytes": 134217728 },
   "upload": { "maxBytes": 104857600 }
 }
 ```

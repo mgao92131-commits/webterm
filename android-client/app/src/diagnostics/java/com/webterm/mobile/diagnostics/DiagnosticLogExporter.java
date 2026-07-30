@@ -18,6 +18,8 @@ import com.webterm.core.session.DeviceConnectionDiagnosticsRegistry;
 import com.webterm.core.session.MuxOutboundQueue;
 import com.webterm.core.session.traffic.NetworkTrafficStats;
 import com.webterm.feature.terminal.domain.TerminalPipelineDiagnosticsRegistry;
+import com.webterm.feature.terminal.domain.HistoryHttpMetrics;
+import com.webterm.feature.terminal.domain.HistoryDemandMetrics;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.mobile.BuildConfig;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -48,7 +50,7 @@ import java.util.zip.ZipOutputStream;
  */
 public final class DiagnosticLogExporter {
     private static final String ARCHIVE_PREFIX = "webterm-diagnostics-";
-    static final int SCHEMA_VERSION = 3;
+    static final int SCHEMA_VERSION = 4;
 
     private static volatile File pendingShareArchive = null;
 
@@ -204,6 +206,8 @@ public final class DiagnosticLogExporter {
             byDevice.put(device);
         }
         json.put("byDevice", byDevice);
+        json.put("historyHttp", mapToJson(HistoryHttpMetrics.processSnapshot()));
+        json.put("historyDemand", longMapJson(HistoryDemandMetrics.snapshot()));
 
         TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
         JSONObject render = new JSONObject();
@@ -213,10 +217,32 @@ public final class DiagnosticLogExporter {
         render.put("renderRequestCount", screen.renderRequestCount);
         render.put("vsyncRenderCount", screen.vsyncRenderCount);
         render.put("fullInvalidateCount", screen.fullInvalidateCount);
+        JSONObject fullInvalidateByReason = new JSONObject();
+        TerminalRenderMetrics.FullInvalidateReason[] invalidateReasons =
+            TerminalRenderMetrics.FullInvalidateReason.values();
+        for (int i = 0; i < invalidateReasons.length; i++) {
+            fullInvalidateByReason.put(
+                invalidateReasons[i].name(), screen.fullInvalidateByReason[i]);
+        }
+        render.put("fullInvalidateByReason", fullInvalidateByReason);
         render.put("partialInvalidateCount", screen.partialInvalidateCount);
         render.put("dirtyRowCount", screen.dirtyRowCount);
+        render.put("screenRegionInvalidateCount", screen.screenRegionInvalidateCount);
+        render.put("partialRowInvalidateCount", screen.partialRowInvalidateCount);
+        render.put("screenScrollEventCount", screen.screenScrollEventCount);
+        render.put("screenScrollRowTotal", screen.screenScrollRowTotal);
+        render.put("renderDurationCount", screen.renderDurationCount);
+        render.put("onDrawCount", screen.renderDurationCount);
         render.put("renderDurationNanos", screen.renderDurationNanos);
+        render.put("onDrawTotalNanos", screen.renderDurationNanos);
         render.put("renderDurationMaxNanos", screen.renderDurationMaxNanos);
+        render.put("renderDurationLatencyBuckets",
+            latencyBucketsJson(screen.renderDurationLatencyBuckets));
+        render.put("viewportCalculationNanos", screen.viewportCalculationNanos);
+        render.put("historyRowLookupNanos", screen.historyRowLookupNanos);
+        render.put("screenRowLookupNanos", screen.screenRowLookupNanos);
+        render.put("renderNodeDrawOrRecordNanos", screen.renderNodeDrawOrRecordNanos);
+        render.put("canvasDrawNanos", screen.canvasDrawNanos);
         render.put("protobufParseNanos", screen.protobufParseNanos);
         render.put("protobufParseCount", screen.protobufParseCount);
         render.put("modelApplyNanos", screen.modelApplyNanos);
@@ -225,6 +251,9 @@ public final class DiagnosticLogExporter {
         render.put("baselineFrameBytes", screen.baselineFrameBytes);
         render.put("commitFrameCount", screen.commitFrameCount);
         render.put("commitFrameBytes", screen.commitFrameBytes);
+        // schema v4: HTTP Range 独立计量；旧字段保留一个版本用于旧分析器兼容。
+        render.put("wsHistoryRangeFrameCount", screen.historyRangeFrameCount);
+        render.put("wsHistoryRangeFrameBytes", screen.historyRangeFrameBytes);
         render.put("historyRangeFrameCount", screen.historyRangeFrameCount);
         render.put("historyRangeFrameBytes", screen.historyRangeFrameBytes);
         render.put("otherFrameCount", screen.otherFrameCount);
@@ -249,7 +278,19 @@ public final class DiagnosticLogExporter {
             latencyBucketsJson(screen.mailboxResidenceLatencyBuckets));
         render.put("historyCacheHitCount", screen.historyCacheHitCount);
         render.put("historyCacheMissCount", screen.historyCacheMissCount);
+        render.put("rowCacheHitCount", screen.rowCacheHitCount);
+        render.put("rowCacheMissCount", screen.rowCacheMissCount);
+        render.put("rowCacheStaleFallbackCount", screen.rowCacheStaleFallbackCount);
+        render.put("rowCachePinnedConflictCount", screen.rowCachePinnedConflictCount);
+        render.put("rowNodeRecordCount", screen.rowNodeRecordCount);
+        render.put("rowNodeReuseCount", screen.rowNodeReuseCount);
+        render.put("historyOnlyNoDrawCount", screen.historyOnlyNoDrawCount);
+        render.put("viewportRedrawRequestCount", screen.viewportRedrawRequestCount);
+        render.put("viewportFullRedrawCount", screen.viewportFullRedrawCount);
         render.put("visibleHistoryRowsDrawn", screen.visibleHistoryRowsDrawn);
+        render.put("renderNodeVictimScanCount", screen.renderNodeVictimScanCount);
+        render.put("renderNodeVictimScannedEntries", screen.renderNodeVictimScannedEntries);
+        render.put("renderNodeAllPinnedFallbackCount", screen.renderNodeAllPinnedFallbackCount);
         json.put("render", render);
 
         TerminalResumeMetrics.Snapshot resume = TerminalResumeMetrics.snapshot();

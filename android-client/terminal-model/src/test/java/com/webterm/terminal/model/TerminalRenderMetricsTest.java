@@ -48,6 +48,7 @@ public class TerminalRenderMetricsTest {
       TerminalRenderMetrics.renderNodeRecordDuration(sample);
       TerminalRenderMetrics.vsyncDrawDuration(sample);
       TerminalRenderMetrics.mailboxResidenceDuration(sample);
+      TerminalRenderMetrics.renderDuration(sample);
     }
 
     long[] expected = {1L, 1L, 1L, 1L, 1L, 1L, 1L, 1L};
@@ -60,6 +61,21 @@ public class TerminalRenderMetricsTest {
     assertArrayEquals(expected, snapshot.renderNodeRecordLatencyBuckets);
     assertArrayEquals(expected, snapshot.vsyncDrawLatencyBuckets);
     assertArrayEquals(expected, snapshot.mailboxResidenceLatencyBuckets);
+    assertArrayEquals(expected, snapshot.renderDurationLatencyBuckets);
+    assertEquals(samples.length, snapshot.renderDurationCount);
+  }
+
+  @Test
+  public void fullInvalidateIsClassifiedWithoutUnknownFallback() {
+    TerminalRenderMetrics.fullInvalidate(
+        TerminalRenderMetrics.FullInvalidateReason.HISTORY_STRUCTURE_CHANGED);
+
+    TerminalRenderMetrics.Snapshot snapshot = TerminalRenderMetrics.snapshot();
+    assertEquals(1L, snapshot.fullInvalidateCount);
+    assertEquals(1L, snapshot.fullInvalidateByReason[
+        TerminalRenderMetrics.FullInvalidateReason.HISTORY_STRUCTURE_CHANGED.ordinal()]);
+    assertEquals(0L, snapshot.fullInvalidateByReason[
+        TerminalRenderMetrics.FullInvalidateReason.UNKNOWN.ordinal()]);
   }
 
   @Test

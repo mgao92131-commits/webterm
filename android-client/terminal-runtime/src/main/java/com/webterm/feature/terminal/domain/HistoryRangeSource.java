@@ -6,6 +6,7 @@ import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryBodyEntry;
 
 import java.util.List;
+import java.util.Map;
 
 /** Direct/Relay 共用的 HTTP History Range 抽象。 */
 public interface HistoryRangeSource {
@@ -77,6 +78,9 @@ public interface HistoryRangeSource {
 
   @NonNull RequestHandle fetch(
       @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback);
+
+  /** 当前 Source 的无敏感信息 HTTP 指标快照。 */
+  @NonNull default Map<String, Object> diagnosticsSnapshot() { return Map.of(); }
 
   void close();
 }

@@ -251,7 +251,7 @@ public final class HistoryRangeLoaderTest {
     assertEquals(first.demandEpoch, second.demandEpoch);
     assertEquals(1, loader.firstMissingRange(
         "i1", 1, 1, extent, history).fromSeq);
-    assertEquals(32, loader.firstMissingRange(
+    assertEquals(100, loader.firstMissingRange(
         "i1", 1, 1, extent, history).toSeq);
   }
 
@@ -344,7 +344,7 @@ public final class HistoryRangeLoaderTest {
     HistoryRangeLoader.Range range =
         loader.firstMissingRange("i1", 1, 1, extent, history);
 
-    assertEquals(350, range.fromSeq);
+    assertEquals(190, range.fromSeq);
     assertEquals(509, range.toSeq);
   }
 

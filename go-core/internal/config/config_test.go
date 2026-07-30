@@ -17,6 +17,9 @@ func TestLoadRelayOnlyDefaults(t *testing.T) {
 		cfg.Scrollback.MaxBytes != DefaultScrollbackMaxBytes {
 		t.Fatalf("Scrollback = %#v", cfg.Scrollback)
 	}
+	if cfg.Scrollback.MaxLines != 10000 || cfg.Scrollback.MaxBytes != 128<<20 {
+		t.Fatalf("Scrollback defaults = %#v, want 10000 lines / 128 MiB", cfg.Scrollback)
+	}
 }
 
 func TestLoadEnvOverridesDefaults(t *testing.T) {

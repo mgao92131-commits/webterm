@@ -8,6 +8,8 @@ import com.webterm.core.cache.TerminalCacheCoordinator;
 import com.webterm.core.config.ServerConfigManager;
 import com.webterm.core.config.ServerConfigStore;
 import com.webterm.core.session.DeviceConnectionRegistry;
+import com.webterm.feature.terminal.domain.HistoryHttp;
+import com.webterm.feature.terminal.domain.HistoryHttpMetrics;
 import com.webterm.transport.api.TransportFactory;
 import com.webterm.transport.websocket.WebSocketMuxTransport;
 
@@ -30,6 +32,15 @@ public class AppModule {
     @Provides
     @Singleton
     static OkHttpClient provideHttpClient() { return new OkHttpClient(); }
+
+    @Provides
+    @Singleton
+    @HistoryHttp
+    static OkHttpClient provideHistoryHttpClient() {
+        return new OkHttpClient.Builder()
+            .eventListenerFactory(HistoryHttpMetrics.eventListenerFactory())
+            .build();
+    }
 
     @Provides
     @Singleton
