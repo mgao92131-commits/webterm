@@ -22,6 +22,7 @@ import com.webterm.feature.terminal.domain.HistoryHttpMetrics;
 import com.webterm.feature.terminal.domain.HistoryDemandMetrics;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.mobile.BuildConfig;
+import com.webterm.terminal.model.HistoryPromotionMetrics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.transport.api.MuxTransport;
 
@@ -208,6 +209,7 @@ public final class DiagnosticLogExporter {
         json.put("byDevice", byDevice);
         json.put("historyHttp", mapToJson(HistoryHttpMetrics.processSnapshot()));
         json.put("historyDemand", longMapJson(HistoryDemandMetrics.snapshot()));
+        json.put("historyPromotion", mapToJson(HistoryPromotionMetrics.snapshot()));
 
         TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
         JSONObject render = new JSONObject();
@@ -565,7 +567,28 @@ public final class DiagnosticLogExporter {
         JSONObject json = new JSONObject();
         if (map == null) return json;
         for (Map.Entry<String, Object> entry : map.entrySet()) {
-            json.put(entry.getKey(), entry.getValue());
+            Object value = entry.getValue();
+            if (value instanceof Map<?, ?>) {
+                json.put(entry.getKey(), nestedMapToJson((Map<?, ?>) value));
+            } else {
+                json.put(entry.getKey(), value);
+            }
+        }
+        return json;
+    }
+
+    private static JSONObject nestedMapToJson(Map<?, ?> map) throws JSONException {
+        JSONObject json = new JSONObject();
+        if (map == null) return json;
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Map<?, ?>) {
+                json.put(String.valueOf(entry.getKey()), nestedMapToJson((Map<?, ?>) value));
+            } else if (value instanceof Number) {
+                json.put(String.valueOf(entry.getKey()), ((Number) value).longValue());
+            } else {
+                json.put(String.valueOf(entry.getKey()), value);
+            }
         }
         return json;
     }

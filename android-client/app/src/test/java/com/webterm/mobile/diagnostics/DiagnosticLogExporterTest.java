@@ -136,6 +136,7 @@ public class DiagnosticLogExporterTest {
         assertTrue(metrics.contains("\"historyLoaderAggregate\":{"));
         assertTrue(metrics.contains("\"historyHttp\":{"));
         assertTrue(metrics.contains("\"historyDemand\":{"));
+        assertTrue(metrics.contains("\"historyPromotion\":{"));
         assertTrue(metrics.contains("\"renderDurationCount\":"));
         assertTrue(metrics.contains("\"fullInvalidateByReason\":{"));
         assertTrue(metrics.contains("\"wsHistoryRangeFrameCount\":"));

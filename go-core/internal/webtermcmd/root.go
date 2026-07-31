@@ -643,6 +643,8 @@ func friendlySendStatus(status string) string {
 		return "已向目标设备提供文件，等待接收。"
 	case "receiving":
 		return "目标设备正在接收文件。"
+	case "saving":
+		return "接收完成，目标设备正在校验并保存文件。"
 	case "saved":
 		return "文件已保存到目标设备。"
 	case "completed":
@@ -662,6 +664,48 @@ func friendlyStatusError(value string) string {
 		return "未找到对应会话；请确认 Agent 正在运行，或使用 --session/--pid 指定会话"
 	case "notification_not_delivered":
 		return "通知未送达目标设备"
+	case "io_error", "UNKNOWN_IO_ERROR":
+		return "文件接收失败"
+	case "NETWORK_CONNECTION_RESET":
+		return "网络连接中断，文件未完整接收"
+	case "NETWORK_UNEXPECTED_EOF":
+		return "网络传输提前结束，文件未完整接收"
+	case "NETWORK_TIMEOUT":
+		return "网络超时，文件未完整接收"
+	case "RELAY_STREAM_CLOSED":
+		return "中转连接已断开，文件未完整接收"
+	case "RELAY_AGENT_UNAVAILABLE", "HTTP_AGENT_UNAVAILABLE":
+		return "电脑端当前不可用，请确认 Agent 在线后重试"
+	case "HTTP_UNAUTHORIZED", "HTTP_FORBIDDEN":
+		return "文件传输鉴权失败，请重新连接后重试"
+	case "HTTP_NOT_FOUND":
+		return "传输任务已失效，请重新发送文件"
+	case "HTTP_BAD_GATEWAY", "HTTP_SERVER_ERROR":
+		return "中转或电脑端服务异常，请稍后重试"
+	case "STAGING_DISK_FULL":
+		return "手机缓存空间不足，无法接收文件"
+	case "TARGET_DISK_FULL":
+		return "下载目录空间不足"
+	case "STAGING_CREATE_FAILED", "STAGING_WRITE_FAILED", "STAGING_FLUSH_FAILED", "STAGING_CLOSE_FAILED":
+		return "写入手机缓存失败"
+	case "SIZE_MISMATCH", "size_mismatch":
+		return "文件大小校验失败"
+	case "HASH_MISMATCH", "hash_mismatch":
+		return "文件完整性校验失败"
+	case "STAGING_COMMIT_FAILED", "rename_failed":
+		return "缓存文件提交失败"
+	case "STORAGE_PERMISSION_DENIED":
+		return "下载目录授权已失效，请重新选择目录"
+	case "STORAGE_UNAVAILABLE", "storage_unavailable":
+		return "下载目录不可用，请重新选择保存目录"
+	case "TARGET_CREATE_FAILED", "create_target_failed":
+		return "无法在下载目录创建文件，请重新选择保存目录"
+	case "TARGET_OPEN_FAILED", "open_target_failed":
+		return "无法打开下载目录中的目标文件，请重新选择保存目录"
+	case "TARGET_WRITE_FAILED":
+		return "文件已接收，但保存到下载目录失败"
+	case "TARGET_FINALIZE_FAILED":
+		return "文件已写入，但最终发布失败"
 	case "":
 		return "Agent 拒绝了请求"
 	default:
