@@ -145,8 +145,69 @@ public class FileReceiveControllerTest {
 
         ctl.onOffer("connA", offer("t_3", "a.bin", 10, "tok", OTHER_SHA256));
         assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_3").status());
-        assertEquals("io_error", ctl.task("t_3").error());
+        assertEquals(TransferErrorCode.UNKNOWN_IO_ERROR, ctl.task("t_3").error());
+        assertEquals(TransferPhase.OPENING_HTTP, ctl.task("t_3").phase());
         assertFalse(new File(dir, "t_3.part").exists());
+        JSONObject failed = sender.sent.get(sender.sent.size() - 1);
+        assertEquals(FileSendProtocol.TYPE_FAILED, failed.optString("type"));
+        assertEquals(TransferErrorCode.UNKNOWN_IO_ERROR, failed.optString("error"));
+        assertEquals(TransferPhase.OPENING_HTTP.name(), failed.optString("phase"));
+    }
+
+    @Test
+    public void http503ReportsStructuredCode() {
+        File dir = tmp.getRoot();
+        FakeSender sender = new FakeSender();
+        FakeDownloader dl = new FakeDownloader();
+        dl.error = new FileTransferException(
+            TransferErrorCode.HTTP_AGENT_UNAVAILABLE, "http_503", TransferPhase.OPENING_HTTP, true, 503, null);
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
+
+        ctl.onOffer("connA", offer("t_503", "a.bin", 10, "tok", OTHER_SHA256));
+        assertEquals(TransferErrorCode.HTTP_AGENT_UNAVAILABLE, ctl.task("t_503").error());
+        assertTrue(ctl.task("t_503").retryable());
+        assertEquals(Integer.valueOf(503), ctl.task("t_503").httpStatus());
+    }
+
+    @Test
+    public void publishFailurePreservesTargetError() throws Exception {
+        File dir = tmp.newFolder("recv");
+        byte[] data = "payload".getBytes(StandardCharsets.UTF_8);
+        FakeSender sender = new FakeSender();
+        FakeDownloader dl = new FakeDownloader();
+        dl.body = data;
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
+        ctl.setFilePublisher(new ReceivedFilePublisher() {
+            @Override public boolean isReady() { return true; }
+            @Override public String publish(File stagingFile) throws IOException {
+                throw FileTransferException.of(
+                    TransferErrorCode.STORAGE_UNAVAILABLE,
+                    "SAF tree unavailable",
+                    TransferPhase.CREATING_TARGET,
+                    false);
+            }
+        });
+
+        ctl.onOffer("connA", offer("t_pub", "p.bin", data.length, "tok", sha256(data)));
+        assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_pub").status());
+        assertEquals(TransferErrorCode.STORAGE_UNAVAILABLE, ctl.task("t_pub").error());
+        assertEquals(TransferPhase.CREATING_TARGET, ctl.task("t_pub").phase());
+        assertFalse(new File(dir, "p.bin").exists());
+    }
+
+    @Test
+    public void truncatedBodyReportsUnexpectedEof() throws Exception {
+        File dir = tmp.newFolder("recv");
+        byte[] data = "short".getBytes(StandardCharsets.UTF_8);
+        FakeSender sender = new FakeSender();
+        FakeDownloader dl = new FakeDownloader();
+        dl.body = data;
+        FileReceiveController ctl = new FileReceiveController(dir, lookupOf(sender), dl, SYNC);
+
+        ctl.onOffer("connA", offer("t_eof", "a.bin", 100, "tok", OTHER_SHA256));
+        assertEquals(TransferErrorCode.NETWORK_UNEXPECTED_EOF, ctl.task("t_eof").error());
+        assertEquals(TransferPhase.RECEIVING, ctl.task("t_eof").phase());
+        assertTrue(ctl.task("t_eof").retryable());
     }
 
     @Test
@@ -160,7 +221,8 @@ public class FileReceiveControllerTest {
 
         ctl.onOffer("connA", offer("t_4", "a.bin", data.length, "tok", OTHER_SHA256));
         assertEquals(FileSendProtocol.Status.FAILED, ctl.task("t_4").status());
-        assertEquals("hash_mismatch", ctl.task("t_4").error());
+        assertEquals(TransferErrorCode.HASH_MISMATCH, ctl.task("t_4").error());
+        assertEquals(TransferPhase.VERIFYING_HASH, ctl.task("t_4").phase());
     }
 
     @Test
@@ -222,6 +284,9 @@ public class FileReceiveControllerTest {
         @Override public void onProgress(String c, String t, String n, long b, long total) {
             events.add("progress:" + t + ":" + b + "/" + total);
         }
+        @Override public void onSaving(String c, String t, String n) {
+            events.add("saving:" + t);
+        }
         @Override public void onSaved(String c, String t, String n, String saved) {
             events.add("saved:" + t + ":" + saved);
         }
@@ -249,7 +314,10 @@ public class FileReceiveControllerTest {
         List<String> events;
         synchronized (sink.events) { events = new ArrayList<>(sink.events); }
         assertTrue(events.stream().anyMatch(e -> e.startsWith("progress:t_n1:")));
+        assertTrue(events.contains("saving:t_n1"));
         assertTrue(events.contains("saved:t_n1:big.bin"));
+        // 网络收满后不应再以 progress 报完成语义。
+        assertFalse(events.contains("progress:t_n1:" + data.length + "/" + data.length));
     }
 
     @Test
@@ -264,7 +332,7 @@ public class FileReceiveControllerTest {
         ctl.onOffer("connA", offer("t_n2", "a.bin", 10, "tok", OTHER_SHA256));
 
         synchronized (sink.events) {
-            assertTrue(sink.events.contains("failed:t_n2:io_error"));
+            assertTrue(sink.events.contains("failed:t_n2:" + TransferErrorCode.UNKNOWN_IO_ERROR));
         }
     }
 }

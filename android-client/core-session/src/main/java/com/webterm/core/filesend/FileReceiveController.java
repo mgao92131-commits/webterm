@@ -99,12 +99,15 @@ public final class FileReceiveController {
         boolean committed = false;
         InputStream input = null;
         try {
+            task.setPhase(TransferPhase.OPENING_HTTP);
             input = downloader.open(task.connectionKey, transferId, task.token);
             task.bindInput(input);
             try (InputStream in = input) {
                 if (task.status() == FileSendProtocol.Status.CANCELLED) return;
                 task.transition(FileSendProtocol.Status.RECEIVING);
+                task.setPhase(TransferPhase.PREPARING);
                 sink = PartFileSink.create(receiveDir, transferId, task.fileName, task.fileSize, task.sha256);
+                task.setPhase(TransferPhase.RECEIVING);
                 byte[] buf = new byte[BUFFER_SIZE];
                 long lastReport = 0;
                 int n;
@@ -115,58 +118,64 @@ public final class FileReceiveController {
                     }
                     sink.write(buf, 0, n);
                     task.markBytes(sink.bytesWritten());
+                    // 网络字节达到总量时仍上报控制面进度，但 UI 不把 100% 当作完成。
                     if (sink.bytesWritten() - lastReport >= PROGRESS_STEP_BYTES || sink.bytesWritten() == task.fileSize) {
                         lastReport = sink.bytesWritten();
                         send(task.connectionKey, progress(transferId, sink.bytesWritten()));
-                        notifyProgress(task, sink.bytesWritten());
+                        if (sink.bytesWritten() < task.fileSize) {
+                            notifyProgress(task, sink.bytesWritten());
+                        }
                     }
                 }
                 if (task.status() == FileSendProtocol.Status.CANCELLED) {
                     sink.abort();
                     return;
                 }
+                if (task.fileSize >= 0 && sink.bytesWritten() < task.fileSize) {
+                    throw new FileTransferException(
+                        TransferErrorCode.NETWORK_UNEXPECTED_EOF,
+                        "received " + sink.bytesWritten() + " of " + task.fileSize + " bytes",
+                        TransferPhase.RECEIVING,
+                        true,
+                        null,
+                        null);
+                }
                 task.transition(FileSendProtocol.Status.SAVING);
                 send(task.connectionKey, saving(transferId));
+                notifySaving(task);
+
+                task.setPhase(TransferPhase.CLOSING_STAGING);
                 File saved = sink.commit(task.fileSize, task.sha256);
                 String savedName;
+                task.setPhase(TransferPhase.PUBLISHING);
                 try {
                     savedName = publisher == null ? saved.getName() : publisher.publish(saved);
                 } catch (IOException publishError) {
                     // commit 后的 staging 文件不再由 sink.abort() 管理，失败时主动清掉。
                     //noinspection ResultOfMethodCallIgnored
                     saved.delete();
-                    throw publishError;
+                    throw TransferFailureClassifier.classify(publishError, task.phase());
                 }
                 committed = true;
+                task.setPhase(TransferPhase.SENDING_RESULT);
                 task.transition(FileSendProtocol.Status.SAVED);
                 send(task.connectionKey, saved(transferId, savedName));
                 notifySaved(task, savedName);
+                task.setPhase(TransferPhase.COMPLETED);
             }
         } catch (IOException e) {
             if (!task.status().isTerminal() && task.status() != FileSendProtocol.Status.CANCELLED) {
-                String reason = mapError(e);
-                task.fail(reason);
-                send(task.connectionKey, failed(transferId, reason));
-                notifyFailed(task, reason);
+                FileTransferException failure = TransferFailureClassifier.classify(e, task.phase());
+                task.fail(failure);
+                TransferDiagnosticEvent.emitFailed(task, failure);
+                send(task.connectionKey, failed(transferId, failure.code, failure.phase));
+                notifyFailed(task, failure.code);
             }
         } finally {
             task.clearInput(input);
             if (sink != null && !committed) {
                 sink.abort();
             }
-        }
-    }
-
-    private static String mapError(IOException e) {
-        String msg = e.getMessage();
-        if (msg == null) return "io_error";
-        switch (msg) {
-            case "size_mismatch":
-            case "hash_mismatch":
-            case "rename_failed":
-                return msg;
-            default:
-                return "io_error";
         }
     }
 
@@ -203,7 +212,7 @@ public final class FileReceiveController {
                 send(task.connectionKey, reject(task.transferId, "invalid_offer"));
                 return;
             case FAILED:
-                send(task.connectionKey, failed(task.transferId, task.error()));
+                send(task.connectionKey, failed(task.transferId, task.error(), task.phase()));
                 return;
             case CANCELLED:
                 send(task.connectionKey, cancelled(task.transferId));
@@ -224,6 +233,11 @@ public final class FileReceiveController {
     private void notifyProgress(ReceiveTask task, long bytes) {
         if (notifications == null) return;
         notifications.onProgress(task.connectionKey, task.transferId, task.fileName, bytes, task.fileSize);
+    }
+
+    private void notifySaving(ReceiveTask task) {
+        if (notifications == null) return;
+        notifications.onSaving(task.connectionKey, task.transferId, task.fileName);
     }
 
     private void notifySaved(ReceiveTask task, String savedName) {
@@ -267,9 +281,12 @@ public final class FileReceiveController {
         return m;
     }
 
-    private static JSONObject failed(String id, String error) {
+    private static JSONObject failed(String id, String error, TransferPhase phase) {
         JSONObject m = base(FileSendProtocol.TYPE_FAILED, id);
-        put(m, "error", error);
+        put(m, "error", error == null ? TransferErrorCode.UNKNOWN_IO_ERROR : error);
+        if (phase != null) {
+            put(m, "phase", phase.name());
+        }
         return m;
     }
 

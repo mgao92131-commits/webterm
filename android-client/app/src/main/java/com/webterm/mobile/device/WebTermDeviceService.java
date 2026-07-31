@@ -216,6 +216,9 @@ public final class WebTermDeviceService extends Service {
             @Override public void onProgress(String connectionKey, String transferId, String fileName, long bytes, long total) {
                 notifications.postTransferProgress(connectionKey, transferId, fileName, bytes, total);
             }
+            @Override public void onSaving(String connectionKey, String transferId, String fileName) {
+                notifications.postTransferSaving(connectionKey, transferId, fileName);
+            }
             @Override public void onSaved(String connectionKey, String transferId, String fileName, String savedName) {
                 notifications.postTransferSaved(connectionKey, transferId, fileName, savedName);
             }

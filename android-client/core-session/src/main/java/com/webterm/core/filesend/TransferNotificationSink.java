@@ -4,6 +4,8 @@ package com.webterm.core.filesend;
  * NotificationController。保持 filesend 与通知渲染解耦，便于 JVM 单测。 */
 public interface TransferNotificationSink {
     void onProgress(String connectionKey, String transferId, String fileName, long bytes, long total);
+    /** 网络接收已完成，正在校验并发布到最终目录；此时不应显示 100%/成功。 */
+    void onSaving(String connectionKey, String transferId, String fileName);
     void onSaved(String connectionKey, String transferId, String fileName, String savedName);
     void onFailed(String connectionKey, String transferId, String fileName, String error);
     void onCancelled(String connectionKey, String transferId, String fileName);

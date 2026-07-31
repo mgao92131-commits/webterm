@@ -100,7 +100,21 @@ public class OkHttpFileDownloaderTest {
     @Test
     public void httpErrorThrowsAndClosesResponse() {
         server.enqueue(new MockResponse().setResponseCode(404));
-        IOException ex = assertThrows(IOException.class, () -> downloader.open("connA", "t_404", "tok"));
+        FileTransferException ex = assertThrows(FileTransferException.class,
+            () -> downloader.open("connA", "t_404", "tok"));
+        assertEquals(TransferErrorCode.HTTP_NOT_FOUND, ex.code);
+        assertEquals(Integer.valueOf(404), ex.httpStatus);
+        assertEquals(TransferPhase.OPENING_HTTP, ex.phase);
         assertTrue(ex.getMessage().contains("http_404"));
+    }
+
+    @Test
+    public void http503MapsToAgentUnavailable() {
+        server.enqueue(new MockResponse().setResponseCode(503).setBody("agent offline"));
+        FileTransferException ex = assertThrows(FileTransferException.class,
+            () -> downloader.open("connA", "t_503", "tok"));
+        assertEquals(TransferErrorCode.HTTP_AGENT_UNAVAILABLE, ex.code);
+        assertTrue(ex.retryable);
+        assertTrue(ex.getMessage().contains("agent offline"));
     }
 }

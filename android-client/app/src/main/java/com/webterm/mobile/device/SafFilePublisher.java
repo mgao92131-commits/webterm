@@ -11,7 +11,11 @@ import android.provider.MediaStore;
 import androidx.documentfile.provider.DocumentFile;
 
 import com.webterm.core.config.ServerConfigStore;
+import com.webterm.core.filesend.FileTransferException;
 import com.webterm.core.filesend.ReceivedFilePublisher;
+import com.webterm.core.filesend.TransferErrorCode;
+import com.webterm.core.filesend.TransferFailureClassifier;
+import com.webterm.core.filesend.TransferPhase;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -58,20 +62,49 @@ final class SafFilePublisher implements ReceivedFilePublisher {
 
     private String publishToTree(File stagingFile, String treeUri) throws IOException {
         DocumentFile root = DocumentFile.fromTreeUri(context, Uri.parse(treeUri));
-        if (root == null || !root.canWrite()) throw new IOException("storage_unavailable");
+        if (root == null || !root.canWrite()) {
+            throw FileTransferException.of(
+                TransferErrorCode.STORAGE_UNAVAILABLE,
+                "SAF tree unavailable or not writable",
+                TransferPhase.CREATING_TARGET,
+                false);
+        }
         DocumentFile dir = root.findFile(SUBDIRECTORY);
         if (dir == null) dir = root.createDirectory(SUBDIRECTORY);
-        if (dir == null || !dir.canWrite()) throw new IOException("storage_unavailable");
+        if (dir == null || !dir.canWrite()) {
+            throw FileTransferException.of(
+                TransferErrorCode.STORAGE_UNAVAILABLE,
+                "cannot create or write WebTerm subdirectory",
+                TransferPhase.CREATING_TARGET,
+                false);
+        }
         String name = uniqueDocumentName(dir, stagingFile.getName());
         DocumentFile target = dir.createFile("application/octet-stream", name);
-        if (target == null) throw new IOException("create_target_failed");
+        if (target == null) {
+            throw FileTransferException.of(
+                TransferErrorCode.TARGET_CREATE_FAILED,
+                "create_target_failed",
+                TransferPhase.CREATING_TARGET,
+                false);
+        }
         try (InputStream in = new FileInputStream(stagingFile);
              OutputStream out = context.getContentResolver().openOutputStream(target.getUri(), "w")) {
-            if (out == null) throw new IOException("open_target_failed");
+            if (out == null) {
+                throw FileTransferException.of(
+                    TransferErrorCode.TARGET_OPEN_FAILED,
+                    "open_target_failed",
+                    TransferPhase.PUBLISHING,
+                    false);
+            }
             copy(in, out);
-        } catch (IOException e) {
+        } catch (FileTransferException e) {
+            //noinspection ResultOfMethodCallIgnored
             target.delete();
             throw e;
+        } catch (IOException e) {
+            //noinspection ResultOfMethodCallIgnored
+            target.delete();
+            throw TransferFailureClassifier.classifyTargetWrite(e, TransferPhase.PUBLISHING);
         }
         deleteStaging(stagingFile);
         return SUBDIRECTORY + "/" + name;
@@ -86,17 +119,41 @@ final class SafFilePublisher implements ReceivedFilePublisher {
         values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + SUBDIRECTORY);
         values.put(MediaStore.Downloads.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-        if (uri == null) throw new IOException("create_target_failed");
+        if (uri == null) {
+            throw FileTransferException.of(
+                TransferErrorCode.TARGET_CREATE_FAILED,
+                "create_target_failed",
+                TransferPhase.CREATING_TARGET,
+                false);
+        }
         try (InputStream in = new FileInputStream(stagingFile);
              OutputStream out = resolver.openOutputStream(uri, "w")) {
-            if (out == null) throw new IOException("open_target_failed");
+            if (out == null) {
+                throw FileTransferException.of(
+                    TransferErrorCode.TARGET_OPEN_FAILED,
+                    "open_target_failed",
+                    TransferPhase.PUBLISHING,
+                    false);
+            }
             copy(in, out);
             ContentValues complete = new ContentValues();
             complete.put(MediaStore.Downloads.IS_PENDING, 0);
-            resolver.update(uri, complete, null, null);
-        } catch (IOException e) {
+            try {
+                resolver.update(uri, complete, null, null);
+            } catch (Exception finalizeError) {
+                throw FileTransferException.of(
+                    TransferErrorCode.TARGET_FINALIZE_FAILED,
+                    "finalize MediaStore pending entry failed",
+                    TransferPhase.FINALIZING_TARGET,
+                    false,
+                    finalizeError);
+            }
+        } catch (FileTransferException e) {
             resolver.delete(uri, null, null);
             throw e;
+        } catch (IOException e) {
+            resolver.delete(uri, null, null);
+            throw TransferFailureClassifier.classifyTargetWrite(e, TransferPhase.PUBLISHING);
         }
         deleteStaging(stagingFile);
         return Environment.DIRECTORY_DOWNLOADS + "/" + SUBDIRECTORY + "/" + name;
@@ -105,7 +162,13 @@ final class SafFilePublisher implements ReceivedFilePublisher {
     @SuppressWarnings("deprecation")
     private String publishToLegacyDownloads(File stagingFile) throws IOException {
         File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), SUBDIRECTORY);
-        if (!dir.exists() && !dir.mkdirs()) throw new IOException("storage_unavailable");
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw FileTransferException.of(
+                TransferErrorCode.STORAGE_UNAVAILABLE,
+                "cannot create Downloads/WebTerm",
+                TransferPhase.CREATING_TARGET,
+                false);
+        }
         File target = uniqueFile(dir, stagingFile.getName());
         try (InputStream in = new FileInputStream(stagingFile);
              OutputStream out = new FileOutputStream(target)) {
@@ -113,7 +176,7 @@ final class SafFilePublisher implements ReceivedFilePublisher {
         } catch (IOException e) {
             //noinspection ResultOfMethodCallIgnored
             target.delete();
-            throw e;
+            throw TransferFailureClassifier.classifyTargetWrite(e, TransferPhase.PUBLISHING);
         }
         deleteStaging(stagingFile);
         return Environment.DIRECTORY_DOWNLOADS + "/" + SUBDIRECTORY + "/" + target.getName();
@@ -156,6 +219,7 @@ final class SafFilePublisher implements ReceivedFilePublisher {
         byte[] buffer = new byte[64 * 1024];
         int count;
         while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+        out.flush();
     }
 
     private static void deleteStaging(File file) {

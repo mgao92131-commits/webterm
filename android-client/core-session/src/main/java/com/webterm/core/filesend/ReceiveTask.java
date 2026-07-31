@@ -13,8 +13,11 @@ public final class ReceiveTask {
     public final String token;
 
     private volatile FileSendProtocol.Status status = FileSendProtocol.Status.CREATED;
+    private volatile TransferPhase phase = TransferPhase.PREPARING;
     private volatile long bytesReceived;
     private volatile String error = "";
+    private volatile boolean retryable;
+    private volatile Integer httpStatus;
     private InputStream activeInput;
 
     ReceiveTask(String transferId, String connectionKey, String fileName,
@@ -28,8 +31,15 @@ public final class ReceiveTask {
     }
 
     public synchronized FileSendProtocol.Status status() { return status; }
+    public synchronized TransferPhase phase() { return phase; }
     public synchronized long bytesReceived() { return bytesReceived; }
     public synchronized String error() { return error; }
+    public synchronized boolean retryable() { return retryable; }
+    public synchronized Integer httpStatus() { return httpStatus; }
+
+    public synchronized void setPhase(TransferPhase next) {
+        if (next != null) phase = next;
+    }
 
     /** 状态迁移；终态后拒绝任何迁移；cancel 在 SAVING 之后被忽略。 */
     public synchronized boolean transition(FileSendProtocol.Status next) {
@@ -46,9 +56,26 @@ public final class ReceiveTask {
     }
 
     public synchronized boolean fail(String reason) {
+        return fail(TransferFailureClassifier.classify(
+            new IOException(reason == null ? TransferErrorCode.UNKNOWN_IO_ERROR : reason),
+            phase));
+    }
+
+    public synchronized boolean fail(FileTransferException failure) {
         if (status.isTerminal()) return false;
         status = FileSendProtocol.Status.FAILED;
-        error = reason == null ? "" : reason;
+        if (failure == null) {
+            error = TransferErrorCode.UNKNOWN_IO_ERROR;
+            retryable = false;
+            httpStatus = null;
+            return true;
+        }
+        error = failure.code;
+        retryable = failure.retryable;
+        httpStatus = failure.httpStatus;
+        if (failure.phase != null) {
+            phase = failure.phase;
+        }
         return true;
     }
 

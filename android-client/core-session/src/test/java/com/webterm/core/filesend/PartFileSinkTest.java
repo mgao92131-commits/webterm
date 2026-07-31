@@ -10,7 +10,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
@@ -51,8 +50,9 @@ public class PartFileSinkTest {
         byte[] data = "abc".getBytes(StandardCharsets.UTF_8);
         PartFileSink sink = PartFileSink.create(dir, "t_2", "a.txt", 100, "");
         sink.write(data, 0, data.length);
-        IOException ex = assertThrows(IOException.class, () -> sink.commit(100, ""));
-        assertEquals("size_mismatch", ex.getMessage());
+        FileTransferException ex = assertThrows(FileTransferException.class, () -> sink.commit(100, ""));
+        assertEquals(TransferErrorCode.SIZE_MISMATCH, ex.code);
+        assertEquals(TransferPhase.VERIFYING_SIZE, ex.phase);
         assertFalse(sink.partFile().exists());
     }
 
@@ -62,8 +62,9 @@ public class PartFileSinkTest {
         byte[] data = "abc".getBytes(StandardCharsets.UTF_8);
         PartFileSink sink = PartFileSink.create(dir, "t_3", "a.txt", data.length, "deadbeef");
         sink.write(data, 0, data.length);
-        IOException ex = assertThrows(IOException.class, () -> sink.commit(data.length, "deadbeef"));
-        assertEquals("hash_mismatch", ex.getMessage());
+        FileTransferException ex = assertThrows(FileTransferException.class, () -> sink.commit(data.length, "deadbeef"));
+        assertEquals(TransferErrorCode.HASH_MISMATCH, ex.code);
+        assertEquals(TransferPhase.VERIFYING_HASH, ex.phase);
         assertFalse(sink.partFile().exists());
     }
 

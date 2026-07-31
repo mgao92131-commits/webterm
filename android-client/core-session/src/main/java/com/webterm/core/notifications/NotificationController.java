@@ -1,6 +1,7 @@
 package com.webterm.core.notifications;
 
 import com.webterm.core.agentnotify.AgentProtocol;
+import com.webterm.core.filesend.TransferErrorMessages;
 
 /** 通知的唯一持有者：决定告警的渠道、分组、优先级与“按 connectionKey+sessionId 替换”
  * 语义，再交给 NotificationRenderer 落到平台。Agent 告警按 importance 三档直映：
@@ -49,10 +50,15 @@ public final class NotificationController {
         renderer.cancel(agentNotificationId(connectionKey, sessionId));
     }
 
-    /** 接收中进度：ongoing、低优先级、按 connectionKey+transferId 复用同一通知 id。 */
+    /** 接收中进度：ongoing、低优先级、按 connectionKey+transferId 复用同一通知 id。
+     * 网络字节达到总量时最多显示 99%，避免用户把“接收完”误认为“保存成功”。 */
     public void postTransferProgress(String connectionKey, String transferId, String fileName, long bytes, long total) {
         if (renderer == null) return;
-        int percent = (total > 0) ? (int) Math.min(100L, bytes * 100L / total) : -1;
+        int percent = -1;
+        if (total > 0) {
+            percent = (int) Math.min(99L, bytes * 100L / total);
+            if (bytes > 0 && percent < 1) percent = 1;
+        }
         String title = "正在接收 " + safeName(fileName);
         String text = (total > 0) ? percent + "% - " + formatBytes(bytes) + " / " + formatBytes(total) : formatBytes(bytes);
         NotificationCommand cmd = new NotificationCommand(
@@ -67,6 +73,25 @@ public final class NotificationController {
             /* onlyAlertOnce */ true,
             null, null,
             percent,
+            transferId);
+        renderer.show(cmd);
+    }
+
+    /** 网络接收完成：正在校验并保存到下载目录。 */
+    public void postTransferSaving(String connectionKey, String transferId, String fileName) {
+        if (renderer == null) return;
+        NotificationCommand cmd = new NotificationCommand(
+            transferNotificationId(connectionKey, transferId),
+            NotificationChannels.TRANSFER,
+            connectionKey,
+            "正在保存 " + safeName(fileName),
+            "接收完成，正在校验并保存到下载目录…",
+            NotificationCommand.PRIORITY_LOW,
+            /* ongoing */ true,
+            /* autoCancel */ false,
+            /* onlyAlertOnce */ true,
+            null, null,
+            -1,
             transferId);
         renderer.show(cmd);
     }
@@ -88,7 +113,7 @@ public final class NotificationController {
         renderer.show(cmd);
     }
 
-    /** 接收失败：高优先级、点按可消失。 */
+    /** 接收失败：高优先级、点按可消失。error 为内部错误码，展示时转为用户文案。 */
     public void postTransferFailed(String connectionKey, String transferId, String fileName, String error) {
         if (renderer == null) return;
         NotificationCommand cmd = new NotificationCommand(
@@ -96,7 +121,7 @@ public final class NotificationController {
             NotificationChannels.TRANSFER,
             connectionKey,
             "接收失败 " + safeName(fileName),
-            error == null || error.isEmpty() ? "io_error" : error,
+            TransferErrorMessages.userMessage(error),
             NotificationCommand.PRIORITY_HIGH,
             /* ongoing */ false,
             /* autoCancel */ true,

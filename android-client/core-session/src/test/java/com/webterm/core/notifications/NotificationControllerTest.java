@@ -141,6 +141,7 @@ public class NotificationControllerTest {
         }
         assertEquals(NotificationCommand.PRIORITY_DEFAULT, r.shown.get(1).priority); // saved
         assertEquals(NotificationCommand.PRIORITY_HIGH, r.shown.get(2).priority);    // failed
+        assertEquals("文件完整性校验失败", r.shown.get(2).text); // 内部码转用户文案
         assertEquals(NotificationCommand.PRIORITY_DEFAULT, r.shown.get(3).priority); // cancelled
     }
 

@@ -28,15 +28,37 @@ public final class PartFileSink {
         this.transferId = transferId;
         this.finalName = sanitizeName(finalName);
         if (!dir.exists() && !dir.mkdirs()) {
-            throw new IOException("cannot create dir: " + dir);
+            throw FileTransferException.of(
+                TransferErrorCode.STAGING_CREATE_FAILED,
+                "cannot create staging directory",
+                TransferPhase.PREPARING,
+                false);
         }
         this.partFile = new File(dir, transferId + ".part");
         this.metaFile = new File(dir, transferId + ".part.meta.json");
-        this.out = new FileOutputStream(partFile);
+        try {
+            this.out = new FileOutputStream(partFile);
+        } catch (IOException e) {
+            throw TransferFailureClassifier.classify(
+                FileTransferException.of(
+                    TransferErrorCode.STAGING_CREATE_FAILED,
+                    "cannot create staging file",
+                    TransferPhase.PREPARING,
+                    false,
+                    e),
+                TransferPhase.PREPARING);
+        }
         try {
             this.digest = MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
-            throw new IOException("SHA-256 unavailable", e);
+            closeOutQuietly();
+            deleteQuiet(partFile);
+            throw FileTransferException.of(
+                TransferErrorCode.STAGING_CREATE_FAILED,
+                "SHA-256 unavailable",
+                TransferPhase.PREPARING,
+                false,
+                e);
         }
         writeMeta(expectedSize, expectedSha256);
     }
@@ -46,8 +68,18 @@ public final class PartFileSink {
     }
 
     public synchronized void write(byte[] buf, int off, int len) throws IOException {
-        if (closed) throw new IOException("sink closed");
-        out.write(buf, off, len);
+        if (closed) {
+            throw FileTransferException.of(
+                TransferErrorCode.STAGING_WRITE_FAILED,
+                "sink closed",
+                TransferPhase.RECEIVING,
+                false);
+        }
+        try {
+            out.write(buf, off, len);
+        } catch (IOException e) {
+            throw TransferFailureClassifier.classifyStagingWrite(e);
+        }
         digest.update(buf, off, len);
         bytesWritten += len;
     }
@@ -62,22 +94,40 @@ public final class PartFileSink {
 
     /** 校验并通过 rename 落盘到最终文件；失败时删除 .part 并抛 IOException。 */
     public synchronized File commit(long expectedSize, String expectedSha256) throws IOException {
-        closeOut();
+        try {
+            closeOut();
+        } catch (IOException e) {
+            deleteQuiet(partFile);
+            throw TransferFailureClassifier.classifyStagingClose(e);
+        }
         if (expectedSize >= 0 && bytesWritten != expectedSize) {
             deleteQuiet(partFile);
-            throw new IOException("size_mismatch");
+            throw FileTransferException.of(
+                TransferErrorCode.SIZE_MISMATCH,
+                "size_mismatch",
+                TransferPhase.VERIFYING_SIZE,
+                false);
         }
         if (expectedSha256 != null && !expectedSha256.isEmpty()
                 && !expectedSha256.equalsIgnoreCase(sha256Hex())) {
             deleteQuiet(partFile);
-            throw new IOException("hash_mismatch");
+            throw FileTransferException.of(
+                TransferErrorCode.HASH_MISMATCH,
+                "hash_mismatch",
+                TransferPhase.VERIFYING_HASH,
+                false);
         }
         File target = uniqueTarget(finalName);
         if (target.exists()) {
             deleteQuiet(target);
         }
         if (!partFile.renameTo(target)) {
-            throw new IOException("rename_failed");
+            deleteQuiet(partFile);
+            throw FileTransferException.of(
+                TransferErrorCode.STAGING_COMMIT_FAILED,
+                "rename_failed",
+                TransferPhase.COMMITTING_STAGING,
+                false);
         }
         deleteQuiet(metaFile);
         return target;
@@ -85,19 +135,42 @@ public final class PartFileSink {
 
     /** 中止：关闭并删除 .part 与 sidecar。 */
     public synchronized void abort() {
-        closeOut();
+        closeOutQuietly();
         deleteQuiet(partFile);
         deleteQuiet(metaFile);
     }
 
-    private void closeOut() {
+    private void closeOut() throws IOException {
         if (closed) return;
         closed = true;
+
+        IOException failure = null;
         try {
             out.flush();
+        } catch (IOException e) {
+            failure = e;
+        }
+
+        try {
             out.close();
+        } catch (IOException e) {
+            if (failure == null) {
+                failure = e;
+            } else {
+                failure.addSuppressed(e);
+            }
+        }
+
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private void closeOutQuietly() {
+        try {
+            closeOut();
         } catch (IOException ignored) {
-            // best-effort
+            // abort / 构造失败路径：尽力关闭
         }
     }
 
