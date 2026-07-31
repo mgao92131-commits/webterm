@@ -3,7 +3,9 @@ package com.webterm.feature.terminal.domain;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.webterm.terminal.model.HistoryBodyMissReason;
 import com.webterm.terminal.model.HistoryExtent;
+import com.webterm.terminal.model.HistoryPromotionMetrics;
 import com.webterm.terminal.model.HistoryRenderView;
 import com.webterm.terminal.model.SlotState;
 
@@ -316,13 +318,56 @@ public final class HistoryRangeLoader {
     long maxAllowed = extent.lastSeq;
     long upperBarrier = unavailable.upperBarrier(missingTo);
     if (upperBarrier != Long.MAX_VALUE) maxAllowed = Math.min(maxAllowed, upperBarrier - 1);
+    from = missingFrom;
+    to = missingTo;
     long desired = Math.max(
         missingTo - missingFrom + 1, fetchPolicy.desiredBatchLines(demand));
-    long[] expanded = expand(
-        missingFrom, missingTo, minAllowed, maxAllowed, desired, demand.direction);
+
+    // 只向 requestable missing（UNLOADED）邻接扩展，禁止为凑批次吞入已 LOADED 行。
+    while (to - from + 1 < desired) {
+      boolean extended = false;
+      if (demand.direction <= 0
+          && from > minAllowed
+          && isRequestableMissing(history, from - 1, unavailable)) {
+        from--;
+        extended = true;
+      }
+      if (to - from + 1 < desired
+          && demand.direction >= 0
+          && to < maxAllowed
+          && isRequestableMissing(history, to + 1, unavailable)) {
+        to++;
+        extended = true;
+      }
+      if (!extended && demand.direction != 0) {
+        if (demand.direction > 0
+            && from > minAllowed
+            && isRequestableMissing(history, from - 1, unavailable)) {
+          from--;
+          extended = true;
+        } else if (demand.direction < 0
+            && to < maxAllowed
+            && isRequestableMissing(history, to + 1, unavailable)) {
+          to++;
+          extended = true;
+        }
+      }
+      if (!extended) break;
+    }
     return new Range(
-        instanceId, layoutEpoch, generation, expanded[0], expanded[1], demand.demandEpoch,
+        instanceId, layoutEpoch, generation, from, to, demand.demandEpoch,
         missingTo - missingFrom + 1);
+  }
+
+  /** seq 在历史视图内、非 unavailable、且槽位尚未 LOADED（可请求正文）。 */
+  private static boolean isRequestableMissing(
+      @NonNull HistoryRenderView history,
+      long seq,
+      @NonNull UnavailableIntervalSet unavailable) {
+    if (unavailable.contains(seq)) return false;
+    int index = history.findSeqIndex(seq);
+    if (index < 0) return false;
+    return history.slotStateAt(index) != SlotState.LOADED;
   }
 
   private boolean activeRequestCovers(@NonNull Range target) {
@@ -543,6 +588,11 @@ public final class HistoryRangeLoader {
     }
     activeRequest = new ActiveRequest(nextCallId++, lifecycleEpoch, range, handle);
     metrics.onRequestStarted(range.toSeq - range.fromSeq + 1);
+    for (long seq = range.fromSeq; seq <= range.toSeq; seq++) {
+      HistoryBodyMissReason reason = HistoryPromotionMetrics.reasonFor(seq);
+      HistoryPromotionMetrics.recordHistoryRequestMissReason(
+          reason != null ? reason : HistoryBodyMissReason.UNKNOWN);
+    }
     return true;
   }
 
@@ -597,32 +647,5 @@ public final class HistoryRangeLoader {
     tailDebounceStartedAtNanos = 0L;
     tailDebounceAuthoritativeLastSeq = 0L;
     tailDebounceToken++;
-  }
-
-  private static long[] expand(
-      long from, long to, long min, long max, long desired, int direction) {
-    long targetFrom = from;
-    long targetTo = to;
-    if (direction < 0) {
-      long add = Math.min(desired - size(targetFrom, targetTo), targetFrom - min);
-      targetFrom -= Math.max(0, add);
-    } else if (direction > 0) {
-      long add = Math.min(desired - size(targetFrom, targetTo), max - targetTo);
-      targetTo += Math.max(0, add);
-    } else {
-      long remaining = desired - size(targetFrom, targetTo);
-      long older = Math.min((remaining + 1) / 2, targetFrom - min);
-      targetFrom -= Math.max(0, older);
-      remaining = desired - size(targetFrom, targetTo);
-      long newer = Math.min(remaining, max - targetTo);
-      targetTo += Math.max(0, newer);
-      remaining = desired - size(targetFrom, targetTo);
-      targetFrom -= Math.min(Math.max(0, remaining), targetFrom - min);
-    }
-    return new long[] {targetFrom, targetTo};
-  }
-
-  private static long size(long from, long to) {
-    return to - from + 1;
   }
 }

@@ -2,8 +2,10 @@ package com.webterm.terminal.model;
 
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -211,10 +213,25 @@ public final class ScreenProjectionReducer {
           }
           previousSeq = push.historySeq;
         }
+        Map<Long, LineKey> previousActiveByLineId = new HashMap<>();
+        for (int row = 0; row < source.activeRows.size(); row++) {
+          LineKey key = source.activeRows.keyAt(row);
+          if (key != null) previousActiveByLineId.put(key.lineId(), key);
+        }
         for (HistoryPush push : commit.history.pushes) {
           tx.historyCatalog().bindAuthoritative(push.historySeq, push.key);
           if (tx.bodyCache().body(push.key) != null) {
             tx.bodyCache().markHistoryResident(push.historySeq, push.key);
+            HistoryPromotionMetrics.recordExactReuse();
+          } else {
+            LineKey previousScreenKey = previousActiveByLineId.get(push.key.lineId());
+            if (previousScreenKey != null
+                && tx.bodyCache().body(previousScreenKey) != null) {
+              HistoryPromotionMetrics.recordVersionMismatch(
+                  push.historySeq, previousScreenKey.lineVersion(), push.key.lineVersion());
+            } else {
+              HistoryPromotionMetrics.recordBodyAbsent(push.historySeq);
+            }
           }
         }
         historyChanged = true;

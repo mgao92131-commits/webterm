@@ -31,8 +31,9 @@ public final class HistoryRangeLoaderTest {
     assertEquals("i1", range.instanceId);
     assertEquals(3, range.layoutEpoch);
     assertEquals(7, range.generation);
+    // direction=-1 先向更旧扩展到 extent 边界，再向更新 UNLOADED 凑满 desired。
     assertEquals(900, range.fromSeq);
-    assertEquals(1012, range.toSeq);
+    assertEquals(1203, range.toSeq);
   }
 
   @Test
@@ -123,7 +124,8 @@ public final class HistoryRangeLoaderTest {
     HistoryRangeLoader.Range next =
         loader.firstMissingRange("i1", 1, 1, extent, history);
 
-    assertEquals(15, next.fromSeq);
+    // 优选方向被 unavailable 挡住后可向另一侧 UNLOADED 扩展，但仍止于 20 之前。
+    assertEquals(1, next.fromSeq);
     assertEquals(19, next.toSeq);
   }
 
@@ -140,8 +142,9 @@ public final class HistoryRangeLoaderTest {
     HistoryRangeLoader.Range next =
         loader.firstMissingRange("i1", 1, 1, extent, history);
 
+    // 更旧侧被 unavailable barrier 挡住；向更新 UNLOADED 凑批次，且不跨过 40..50。
     assertEquals(51, next.fromSeq);
-    assertEquals(70, next.toSeq);
+    assertEquals(178, next.toSeq);
   }
 
   @Test
@@ -349,6 +352,49 @@ public final class HistoryRangeLoaderTest {
   }
 
   @Test
+  public void directionPlusOneAtTailWithLoadedNeighborsKeepsSingleLine() throws Exception {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 100);
+    HistoryRenderView history = partiallyLoadedHistory(extent, 1, 99);
+    loader.acceptDemand(100, 100, 100, 1, 80, 10);
+
+    HistoryRangeLoader.Range range =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    assertEquals(100, range.fromSeq);
+    assertEquals(100, range.toSeq);
+  }
+
+  @Test
+  public void directionZeroDoesNotRefetchLoadedOlderNeighbors() throws Exception {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 100);
+    HistoryRenderView history = partiallyLoadedHistory(extent, 1, 99);
+    loader.acceptDemand(100, 100, 100, 0, 80, 10);
+
+    HistoryRangeLoader.Range range =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    assertEquals(100, range.fromSeq);
+    assertEquals(100, range.toSeq);
+  }
+
+  @Test
+  public void coldUnloadedHoleStillBatchesTowardDesired() {
+    HistoryRangeLoader loader = new HistoryRangeLoader();
+    HistoryExtent extent = new HistoryExtent(1, 200);
+    HistoryRenderView history = emptyHistory(extent);
+    loader.acceptDemand(200, 200, 200, 0, 1, 10);
+
+    HistoryRangeLoader.Range range =
+        loader.firstMissingRange("i1", 1, 1, extent, history);
+
+    // desiredBatchLines for direction=0 / visibleRowCount=1 is MIN_BATCH_LINES=128
+    assertEquals(73, range.fromSeq);
+    assertEquals(200, range.toSeq);
+  }
+
+  @Test
   public void tailSingleLineWaitsForOneDebounceWindowOnly() {
     HistoryRangeLoader loader = new HistoryRangeLoader();
     HistoryExtent extent = new HistoryExtent(1, 100);
@@ -397,17 +443,20 @@ public final class HistoryRangeLoaderTest {
   }
 
   private static HistoryRenderView loadedHistory(HistoryExtent extent) throws Exception {
-    LineKey key = new LineKey(1, 1);
-    HistoryCatalog catalog = new HistoryCatalog().edit()
-        .setExtent(extent)
-        .bindNew(1, key)
-        .commit();
-    BodyCache cache = new BodyCache(HistoryBudget.defaults()).edit()
+    return partiallyLoadedHistory(extent, extent.firstSeq, extent.lastSeq);
+  }
+
+  private static HistoryRenderView partiallyLoadedHistory(
+      HistoryExtent extent, long loadedFrom, long loadedTo) throws Exception {
+    HistoryCatalog.Editor cat = new HistoryCatalog().edit().setExtent(extent);
+    BodyCache.Editor cache = new BodyCache(HistoryBudget.defaults()).edit()
         .setHistoryExtent(extent)
-        .setAvailableExtent(extent)
-        .putHistory(1, key, new LineBody(
-            1, false, new CellValue[] {CellValue.EMPTY}))
-        .commit();
-    return new SemanticHistoryRenderView(catalog, cache);
+        .setAvailableExtent(extent);
+    for (long seq = loadedFrom; seq <= loadedTo; seq++) {
+      LineKey key = new LineKey(seq, 1);
+      cat.bindNew(seq, key);
+      cache.putHistory(seq, key, new LineBody(1, false, new CellValue[] {CellValue.EMPTY}));
+    }
+    return new SemanticHistoryRenderView(cat.commit(), cache.commit());
   }
 }
