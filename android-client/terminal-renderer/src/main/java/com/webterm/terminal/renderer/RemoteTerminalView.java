@@ -782,6 +782,14 @@ public final class RemoteTerminalView extends View {
       return;
     }
 
+    // follow-tail 时历史区位于屏幕上方，没有可见历史正文；保护行几何会把最后一条
+    // 历史行误报成可见，进而触发无意义的尾部单行 Range 请求。
+    if (viewport.isFollowTail(snapshot.activeBuffer)) {
+      historyDemandDirection = 0;
+      clearReportedHistoryDemandIfNeeded();
+      return;
+    }
+
     int screenRows = snapshot.screenView.size();
     int historyRows = history.size();
     float scrollOffset = viewportOffset(snapshot);
