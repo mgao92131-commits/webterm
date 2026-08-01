@@ -109,7 +109,11 @@ public final class RemoteTerminalModel {
     projectionReducer = new ScreenProjectionReducer(historyBudget);
   }
 
-  /** Baseline 总是重建完整 Surface；旧 Catalog 和正文不会跨 Baseline 存活。 */
+  /**
+   * Baseline 总是重建权威位置轴。
+   * 对相同 instanceId/historyGeneration 且精确 LineKey 匹配的
+   * immutable LineBody，可迁移到新 Surface。
+   */
   public synchronized boolean applyBaseline(ScreenBaseline baseline) {
     return applyBaselineDetailed(baseline) instanceof ProjectionResult.Applied;
   }
@@ -119,7 +123,18 @@ public final class RemoteTerminalModel {
     ProjectionResult result = projectionReducer.applyBaseline(baseline);
     if (!(result instanceof ProjectionResult.Applied applied)) return result;
     ProjectionState previous = state;
-    install(applied.state());
+    ProjectionState next = applied.state();
+    BaselineBodyReuse.Outcome reuse = BaselineBodyReuse.reuse(
+        previous, next, baseline, evictionPins);
+    if (reuse instanceof BaselineBodyReuse.Outcome.Conflict) {
+      return new ProjectionResult.NeedsBaseline(ProjectionFault.BASELINE_BODY_CONFLICT);
+    }
+    if (reuse instanceof BaselineBodyReuse.Outcome.Applied migrated) {
+      next = migrated.state();
+    } else if (reuse instanceof BaselineBodyReuse.Outcome.IdentityRejected rejected) {
+      next = rejected.state();
+    }
+    install(next);
     boolean geometryChanged =
         previous == null || previous.rows != rows || previous.columns != columns;
     pendingRenderDirty.merge(
@@ -130,7 +145,7 @@ public final class RemoteTerminalModel {
         displayExtent().firstSeq, displayExtent().lastSeq, true);
     pendingTerminalState.merge(geometryChanged, true, false, false, 0, 0);
     publishPendingRenderUpdate(true);
-    return result;
+    return new ProjectionResult.Applied(next, applied.delta());
   }
 
   public boolean applyTerminalCommit(TerminalCommit commit)
@@ -608,7 +623,7 @@ public final class RemoteTerminalModel {
           HISTORY_BINDING_COUNT_MISMATCH, HISTORY_SEQ_OUT_OF_ORDER,
           HISTORY_SEQ_OUT_OF_EXTENT, DUPLICATE_HISTORY_KEY, DUPLICATE_ACTIVE_KEY,
           ACTIVE_HISTORY_KEY_CONFLICT, LINE_COLUMN_COUNT_MISMATCH, INVALID_LINE_BODY,
-          INVALID_DICTIONARY, MAPPER_FAILURE, MODEL_REJECTED_BASELINE,
+          BASELINE_BODY_CONFLICT, INVALID_DICTIONARY, MAPPER_FAILURE, MODEL_REJECTED_BASELINE,
           INVALID_SCREEN_MUTATION ->
           CommitFailure.INVALID_LINE_DATA;
     };
