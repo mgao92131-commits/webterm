@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 声明 AppCompat 主题属性，使 AAPT2 在 Release 资源链接阶段可解析 vector drawable 中的 ?attr/colorControlNormal -->
+    <attr name="colorControlNormal" format="color|reference"/>
+</resources>
