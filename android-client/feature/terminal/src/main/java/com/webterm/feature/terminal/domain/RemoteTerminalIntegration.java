@@ -370,9 +370,10 @@ public final class RemoteTerminalIntegration {
   private void installLineBodyBatchSource(
       @NonNull TerminalViewModel.TerminalSessionArgs args) {
     if (runtime == null) return;
+    // callback 直接在 OkHttp 线程执行；Runtime.onResult/onFailure 内部再切到 modelExecutor。
     runtime.setLineBodyBatchSource(new OkHttpLineBodyBatchSource(
         historyHttpClient,
-        command -> new android.os.Handler(android.os.Looper.getMainLooper()).post(command),
+        Runnable::run,
         args.baseUrl, args.cookie, args.sessionId,
         args.directDevice ? "" : args.relayDeviceId));
   }

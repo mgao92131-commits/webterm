@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicLongArray;
 import okhttp3.Call;
 import okhttp3.Connection;
 import okhttp3.EventListener;
+import okhttp3.Handshake;
+import okhttp3.Protocol;
 import okhttp3.Request;
 import okhttp3.Response;
 
@@ -36,6 +38,11 @@ public final class HistoryHttpMetrics {
     private final AtomicBoolean connectStarted = new AtomicBoolean();
     private final AtomicLong wireBodyBytes = new AtomicLong();
     private volatile boolean gzipResponse;
+    private volatile long connectStartNanos;
+    private volatile long connectEndNanos;
+    private volatile long tlsStartNanos;
+    private volatile long tlsEndNanos;
+    private volatile long responseHeadersNanos;
 
     CallContext(HistoryHttpMetrics owner, long requestedLineCount) {
       this.owner = owner;
@@ -67,8 +74,16 @@ public final class HistoryHttpMetrics {
         CallContext context = context(call);
         if (context != null) {
           context.connectStarted.set(true);
+          context.connectStartNanos = System.nanoTime();
           context.owner.add(c -> c.newConnectionCount.incrementAndGet());
         }
+      }
+
+      @Override public void connectEnd(
+          @NonNull Call call, @NonNull java.net.InetSocketAddress address,
+          @NonNull java.net.Proxy proxy, @androidx.annotation.Nullable Protocol protocol) {
+        CallContext context = context(call);
+        if (context != null) context.connectEndNanos = System.nanoTime();
       }
 
       @Override public void connectionAcquired(
@@ -84,14 +99,22 @@ public final class HistoryHttpMetrics {
       @Override public void secureConnectStart(@NonNull Call call) {
         CallContext context = context(call);
         if (context != null) {
+          context.tlsStartNanos = System.nanoTime();
           context.owner.add(c -> c.tlsHandshakeCount.incrementAndGet());
         }
+      }
+
+      @Override public void secureConnectEnd(
+          @NonNull Call call, @androidx.annotation.Nullable Handshake handshake) {
+        CallContext context = context(call);
+        if (context != null) context.tlsEndNanos = System.nanoTime();
       }
 
       @Override public void responseHeadersEnd(
           @NonNull Call call, @NonNull Response response) {
         CallContext context = context(call);
         if (context != null) {
+          context.responseHeadersNanos = System.nanoTime();
           context.gzipResponse =
               "gzip".equalsIgnoreCase(response.header("Content-Encoding", ""));
         }
@@ -157,13 +180,25 @@ public final class HistoryHttpMetrics {
 
   private void finish(CallContext context, CounterMutation terminalMutation) {
     long duration = context.durationNanos();
+    long connectNanos = elapsed(context.connectStartNanos, context.connectEndNanos);
+    long tlsNanos = elapsed(context.tlsStartNanos, context.tlsEndNanos);
+    long ttfbNanos = context.responseHeadersNanos > 0
+        ? Math.max(0L, context.responseHeadersNanos - context.startedAtNanos) : 0L;
     add(c -> {
       terminalMutation.apply(c);
       c.requestDurationCount.incrementAndGet();
       c.requestDurationTotalNanos.addAndGet(duration);
       updateMax(c.requestDurationMaxNanos, duration);
       recordLatency(c.requestDurationBuckets, duration);
+      if (connectNanos > 0) c.connectDurationTotalNanos.addAndGet(connectNanos);
+      if (tlsNanos > 0) c.tlsDurationTotalNanos.addAndGet(tlsNanos);
+      if (ttfbNanos > 0) c.ttfbDurationTotalNanos.addAndGet(ttfbNanos);
     });
+  }
+
+  private static long elapsed(long startNanos, long endNanos) {
+    if (startNanos <= 0 || endNanos < startNanos) return 0L;
+    return endNanos - startNanos;
   }
 
   private void add(CounterMutation mutation) {
@@ -239,6 +274,9 @@ public final class HistoryHttpMetrics {
     final AtomicLong connectionReusedCount = new AtomicLong();
     final AtomicLong tlsHandshakeCount = new AtomicLong();
     final AtomicLong gzipResponseCount = new AtomicLong();
+    final AtomicLong connectDurationTotalNanos = new AtomicLong();
+    final AtomicLong tlsDurationTotalNanos = new AtomicLong();
+    final AtomicLong ttfbDurationTotalNanos = new AtomicLong();
 
     Map<String, Object> snapshot() {
       Map<String, Object> out = new LinkedHashMap<>();
@@ -273,6 +311,12 @@ public final class HistoryHttpMetrics {
       out.put("connectionReusedCount", connectionReusedCount.get());
       out.put("tlsHandshakeCount", tlsHandshakeCount.get());
       out.put("gzipResponseCount", gzipResponseCount.get());
+      out.put("connectDurationTotalNanos", connectDurationTotalNanos.get());
+      out.put("tlsDurationTotalNanos", tlsDurationTotalNanos.get());
+      out.put("ttfbDurationTotalNanos", ttfbDurationTotalNanos.get());
+      out.put("connectDurationMs", connectDurationTotalNanos.get() / 1_000_000L);
+      out.put("tlsDurationMs", tlsDurationTotalNanos.get() / 1_000_000L);
+      out.put("ttfbDurationMs", ttfbDurationTotalNanos.get() / 1_000_000L);
       return out;
     }
   }

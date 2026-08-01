@@ -15,12 +15,14 @@ import com.webterm.transport.websocket.WebSocketMuxTransport;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import dagger.Module;
 import dagger.Provides;
 import dagger.hilt.InstallIn;
 import dagger.hilt.android.qualifiers.ApplicationContext;
 import dagger.hilt.components.SingletonComponent;
+import okhttp3.ConnectionPool;
 import okhttp3.OkHttpClient;
 
 import javax.inject.Singleton;
@@ -37,7 +39,9 @@ public class AppModule {
     @Singleton
     @HistoryHttp
     static OkHttpClient provideHistoryHttpClient() {
+        // 进程内共享连接池；LineBodyBatch 高频短请求依赖 Keep-Alive 复用。
         return new OkHttpClient.Builder()
+            .connectionPool(new ConnectionPool(5, 5, TimeUnit.MINUTES))
             .eventListenerFactory(HistoryHttpMetrics.eventListenerFactory())
             .build();
     }
