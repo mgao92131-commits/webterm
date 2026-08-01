@@ -112,13 +112,15 @@ public final class ScreenMessageV3Validator {
         throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
       }
     }
+    // Baseline 必须完整携带当前屏幕正文；冷历史只带 HistoryBinding，正文由
+    // VisibleBodyLoader 按需加载。最终关系：bodyKeys == activeKeys。
     for (String activeKey : activeKeys) {
       if (!bodyKeys.contains(activeKey)) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
     }
-    for (String historyKey : historyKeys) {
-      if (!bodyKeys.contains(historyKey)) {
+    for (String bodyKey : bodyKeys) {
+      if (!activeKeys.contains(bodyKey)) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
     }
