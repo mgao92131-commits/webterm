@@ -28,6 +28,9 @@ public final class RemoteTerminalModel {
   private final HistoryBodyReducer historyBodyReducer = new HistoryBodyReducer();
   private ProjectionState state;
   private long historyGeneration;
+  private long historyTopologyHash;
+  private boolean historyTopologyKnown;
+  private boolean reuseHistoryTopologyForNextPublish;
   private EvictionPins evictionPins = EvictionPins.NONE;
 
   private volatile RenderSnapshot renderSnapshot = RenderSnapshot.empty();
@@ -120,21 +123,56 @@ public final class RemoteTerminalModel {
 
   /** Runtime 使用的结构化入口；保留 reducer 的具体 Baseline fault。 */
   public synchronized ProjectionResult applyBaselineDetailed(ScreenBaseline baseline) {
+    // 每次 Baseline 都重新判定拓扑复用；失败或不兼容时不能沿用上一次标志。
+    reuseHistoryTopologyForNextPublish = false;
     ProjectionResult result = projectionReducer.applyBaseline(baseline);
     if (!(result instanceof ProjectionResult.Applied applied)) return result;
     ProjectionState previous = state;
     ProjectionState next = applied.state();
-    BaselineBodyReuse.Outcome reuse = BaselineBodyReuse.reuse(
-        previous, next, baseline, evictionPins);
+    boolean compatibleHistoryTopology = previous != null
+        && baseline.activeBuffer == TerminalBufferKind.MAIN
+        && previous.activeBuffer == TerminalBufferKind.MAIN
+        && previous.identity.instanceId().equals(baseline.instanceId)
+        && previous.identity.layoutEpoch() == baseline.layoutEpoch
+        && previous.identity.historyGeneration() == baseline.historyGeneration
+        && historyTopologyKnown
+        && historyTopologyHash == baseline.historyTopologyHash
+        && previous.mainSurface.historyCatalog.extent().equals(baseline.historyExtent);
+    boolean topologyReused = false;
+    BaselineBodyReuse.Outcome reuse = null;
+    if (compatibleHistoryTopology) {
+      reuse = BaselineBodyReuse.tryReuseCompatibleHistoryTopology(
+          previous, next, baseline, evictionPins);
+      topologyReused = reuse != null;
+    }
+    if (reuse == null) {
+      reuse = BaselineBodyReuse.reuse(previous, next, baseline, evictionPins);
+    }
     BaselineBodyReuseMetrics.record(reuse);
     if (reuse instanceof BaselineBodyReuse.Outcome.Conflict) {
       return new ProjectionResult.NeedsBaseline(ProjectionFault.BASELINE_BODY_CONFLICT);
     }
     if (reuse instanceof BaselineBodyReuse.Outcome.Applied migrated) {
       next = migrated.state();
+      if (topologyReused) {
+        // Catalog 是不可变拓扑；保留其对象身份，正文缓存仍使用新 root。
+        TerminalSurfaceState migratedMain = next.mainSurface;
+        TerminalSurfaceState reusedMain = new TerminalSurfaceState(
+            migratedMain.activeRows,
+            previous.mainSurface.historyCatalog,
+            migratedMain.bodyCache);
+        next = new ProjectionState(
+            next.identity, next.screenRevision, next.rows, next.columns,
+            next.activeBuffer, reusedMain, next.alternateSurface,
+            next.cursor, next.modes, next.palette);
+        reuseHistoryTopologyForNextPublish = true;
+        BaselineBodyReuseMetrics.topologyFastPath();
+      }
     } else if (reuse instanceof BaselineBodyReuse.Outcome.IdentityRejected rejected) {
       next = rejected.state();
     }
+    historyTopologyHash = baseline.historyTopologyHash;
+    historyTopologyKnown = true;
     install(next);
     boolean geometryChanged =
         previous == null || previous.rows != rows || previous.columns != columns;
@@ -184,6 +222,7 @@ public final class RemoteTerminalModel {
           previous.cursor.row, next.cursor.row,
           paletteChanged, false, false, modesChanged, bufferChanged);
       if (delta.historyChanged()) {
+        historyTopologyKnown = false;
         HistoryExtent newExtent = next.mainSurface.historyCatalog.extent();
         mergeExtentDirty(oldExtent, newExtent);
         if (commit.history != null) {
@@ -529,11 +568,16 @@ public final class RemoteTerminalModel {
     HistoryRenderView historyView = historyChanged
         ? new SemanticHistoryRenderView(surface.historyCatalog, surface.bodyCache)
         : previous.history;
-    UnifiedContentAxis contentAxis =
-        screenChanged || historyChanged
-            ? UnifiedContentAxis.update(
-                surface, screenView, previous.contentAxis, dirty)
-            : previous.contentAxis;
+    boolean reuseHistoryTopology = reuseHistoryTopologyForNextPublish;
+    reuseHistoryTopologyForNextPublish = false;
+    UnifiedContentAxis contentAxis;
+    if (screenChanged || historyChanged) {
+      contentAxis = reuseHistoryTopology
+          ? UnifiedContentAxis.reuseHistoryTopology(surface, screenView, previous.contentAxis)
+          : UnifiedContentAxis.update(surface, screenView, previous.contentAxis, dirty);
+    } else {
+      contentAxis = previous.contentAxis;
+    }
     renderSnapshot = new RenderSnapshot(
         instanceId,
         layoutEpoch,

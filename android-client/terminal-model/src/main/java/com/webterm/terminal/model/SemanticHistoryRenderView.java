@@ -83,14 +83,7 @@ public final class SemanticHistoryRenderView implements HistoryRenderView {
 
   @Override
   public long firstLoadedSeq() {
-    long first = Long.MAX_VALUE;
-    for (HistoryResidencyIndex.ResidentEntry entry
-        : cache.historyResidency().residentEntries()) {
-      if (extent().contains(entry.historySeq()) && entry.historySeq() < first) {
-        first = entry.historySeq();
-      }
-    }
-    return first == Long.MAX_VALUE ? -1 : first;
+    return cache.historyResidency().firstResidentSeq();
   }
 
   @Override
@@ -100,5 +93,10 @@ public final class SemanticHistoryRenderView implements HistoryRenderView {
           "logicalIndex=" + logicalIndex + " size=" + logicalSize());
     }
     return cache.historyResidency().slotState(firstSeq() + logicalIndex);
+  }
+
+  @Override
+  public long nearestUnloadedSeq(long fromSeq, long toSeq, int direction) {
+    return cache.historyResidency().nearestUnloadedSeq(fromSeq, toSeq, direction);
   }
 }

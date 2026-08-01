@@ -1,11 +1,15 @@
 package screenprojection
 
 import (
+	"container/list"
 	"image/color"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	headlessterm "github.com/danielgatis/go-headless-term"
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -291,6 +295,40 @@ type Projector struct {
 	changeIndexReady bool
 	// pendingBodyUpserts 收集本 revision 新建的正文，供 Commit body_upserts 编码。
 	pendingBodyUpserts []terminalengine.Line
+	// canonical screen ref 差分的可复用临时缓冲；只在 p.mu 下使用。
+	canonicalKeyScratch         []terminalengine.LineKey
+	canonicalChangedRowsScratch []int
+}
+
+// lineBodyBatchMetrics 只记录批量正文路径的结构化成本，不保存终端正文。
+var lineBodyBatchMetrics struct {
+	projectorLockNanos atomic.Uint64
+	exportNanos        atomic.Uint64
+	recordCount        atomic.Uint64
+	cellCount          atomic.Uint64
+	dictionaryStyles   atomic.Uint64
+	dictionaryLinks    atomic.Uint64
+}
+
+// LineBodyBatchMetricsSnapshot 是测试和诊断适配层使用的进程级快照。
+type LineBodyBatchMetricsSnapshot struct {
+	ProjectorLockNanos uint64
+	ExportNanos        uint64
+	RecordCount        uint64
+	CellCount          uint64
+	DictionaryStyles   uint64
+	DictionaryLinks    uint64
+}
+
+func SnapshotLineBodyBatchMetrics() LineBodyBatchMetricsSnapshot {
+	return LineBodyBatchMetricsSnapshot{
+		ProjectorLockNanos: lineBodyBatchMetrics.projectorLockNanos.Load(),
+		ExportNanos:        lineBodyBatchMetrics.exportNanos.Load(),
+		RecordCount:        lineBodyBatchMetrics.recordCount.Load(),
+		CellCount:          lineBodyBatchMetrics.cellCount.Load(),
+		DictionaryStyles:   lineBodyBatchMetrics.dictionaryStyles.Load(),
+		DictionaryLinks:    lineBodyBatchMetrics.dictionaryLinks.Load(),
+	}
 }
 
 // SnapshotBarrierRevision 返回当前 epoch 内最近的快照屏障。
@@ -314,16 +352,37 @@ type BodyResolver func(key terminalengine.LineKey) (terminalengine.Line, bool)
 // canonical revision），DeriveForState 返回 Kind 未设置的零值帧表示"不发送"，
 // 且不推进 baseline：下一个真实 patch 的 base 仍等于最后实际写出的 revision。
 type FrameDeriver struct {
-	baseline        terminalengine.ScreenFrame
-	baselineRowByID map[uint64]int
-	knownBodyKeys   map[terminalengine.LineKey]struct{}
-	resolveBody     BodyResolver
+	baseline                 terminalengine.ScreenFrame
+	baselineRowByID          map[uint64]int
+	currentScreenKeys        map[terminalengine.LineKey]struct{}
+	knownBodyKeys            map[terminalengine.LineKey]*list.Element
+	recentBodyOrder          *list.List
+	resolveBody              BodyResolver
+	possessionValid          bool
+	possessionID             string
+	possessionEpoch          uint64
+	possessionHistory        uint64
+	possessionDict           uint64
+	possessionFirstAvailable uint64
+	knownHighWater           int
+	evictionCount            uint64
+}
+
+const frameDeriverRecentBodyCapacity = 8192
+
+type frameDeriverBodyEntry struct {
+	key terminalengine.LineKey
 }
 
 func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
 	clear(d.baselineRowByID)
 	clear(d.knownBodyKeys)
+	clear(d.currentScreenKeys)
+	if d.recentBodyOrder != nil {
+		d.recentBodyOrder.Init()
+	}
+	d.possessionValid = false
 }
 
 // SetBodyResolver 绑定权威 LineStore 导出回调；慢客户端派生时用它补齐正文。
@@ -341,6 +400,20 @@ func (d *FrameDeriver) SeedAfterSuccessfulWrite(state terminalengine.ScreenFrame
 func (d *FrameDeriver) SeedAfterSuccessfulWriteDelivered(
 	state, delivered terminalengine.ScreenFrame,
 ) {
+	identityChanged := d.possessionID != state.InstanceID ||
+		d.possessionEpoch != state.Epoch ||
+		d.possessionHistory != state.HistoryGeneration ||
+		d.possessionDict != state.DictionaryGeneration ||
+		d.possessionFirstAvailable != state.History.FirstAvailableHistorySeq
+	if d.possessionValid && identityChanged {
+		d.clearPossessionCache()
+	}
+	d.possessionValid = true
+	d.possessionID = state.InstanceID
+	d.possessionEpoch = state.Epoch
+	d.possessionHistory = state.HistoryGeneration
+	d.possessionDict = state.DictionaryGeneration
+	d.possessionFirstAvailable = state.History.FirstAvailableHistorySeq
 	d.baseline = state
 	if d.baselineRowByID == nil {
 		d.baselineRowByID = make(map[uint64]int, len(state.Screen))
@@ -352,21 +425,37 @@ func (d *FrameDeriver) SeedAfterSuccessfulWriteDelivered(
 			d.baselineRowByID[line.ID] = row
 		}
 	}
+	if d.currentScreenKeys == nil {
+		d.currentScreenKeys = make(map[terminalengine.LineKey]struct{}, len(state.Screen))
+	} else {
+		clear(d.currentScreenKeys)
+	}
+	for _, line := range state.Screen {
+		key := screenLineKey(line)
+		if key.ID != 0 && key.Version != 0 {
+			d.currentScreenKeys[key] = struct{}{}
+		}
+	}
 	d.noteDeliveredBodies(delivered)
+	diagnostics.Default.ObserveFrameDeriverBodyCache(
+		uint64(len(d.knownBodyKeys)), uint64(d.knownHighWater))
 }
 
 func (d *FrameDeriver) noteDeliveredBodies(frame terminalengine.ScreenFrame) {
 	if d.knownBodyKeys == nil {
-		d.knownBodyKeys = make(map[terminalengine.LineKey]struct{})
+		d.knownBodyKeys = make(map[terminalengine.LineKey]*list.Element)
+	}
+	if d.recentBodyOrder == nil {
+		d.recentBodyOrder = list.New()
 	}
 	mark := func(line terminalengine.Line) {
 		if line.ID == 0 || line.Version == 0 {
 			return
 		}
-		d.knownBodyKeys[terminalengine.LineKey{
+		d.rememberBodyKey(terminalengine.LineKey{
 			ID:      terminalengine.LineID(line.ID),
 			Version: terminalengine.BodyVersion(line.Version),
-		}] = struct{}{}
+		})
 	}
 	// Baseline / Commit 的屏幕写与 body_upserts 才算客户端已持有正文；
 	// 冷历史 HistoryBinding 故意不带正文，不得记入 knownBodyKeys。
@@ -377,6 +466,48 @@ func (d *FrameDeriver) noteDeliveredBodies(frame terminalengine.ScreenFrame) {
 		mark(line)
 	}
 }
+
+func (d *FrameDeriver) rememberBodyKey(key terminalengine.LineKey) {
+	if key.ID == 0 || key.Version == 0 {
+		return
+	}
+	if element, ok := d.knownBodyKeys[key]; ok {
+		d.recentBodyOrder.MoveToFront(element)
+		return
+	}
+	element := d.recentBodyOrder.PushFront(frameDeriverBodyEntry{key: key})
+	d.knownBodyKeys[key] = element
+	if len(d.knownBodyKeys) <= frameDeriverRecentBodyCapacity {
+		if len(d.knownBodyKeys) > d.knownHighWater {
+			d.knownHighWater = len(d.knownBodyKeys)
+		}
+		return
+	}
+	oldest := d.recentBodyOrder.Back()
+	if oldest == nil {
+		return
+	}
+	d.recentBodyOrder.Remove(oldest)
+	entry := oldest.Value.(frameDeriverBodyEntry)
+	delete(d.knownBodyKeys, entry.key)
+	d.evictionCount++
+	diagnostics.Default.ObserveFrameDeriverBodyEviction()
+	if len(d.knownBodyKeys) > d.knownHighWater {
+		d.knownHighWater = len(d.knownBodyKeys)
+	}
+}
+
+func (d *FrameDeriver) clearPossessionCache() {
+	clear(d.knownBodyKeys)
+	if d.recentBodyOrder != nil {
+		d.recentBodyOrder.Init()
+	}
+}
+
+// KnownBodyKeyCount/HighWater/EvictionCount 供连接诊断读取，不暴露正文内容。
+func (d *FrameDeriver) KnownBodyKeyCount() int         { return len(d.knownBodyKeys) }
+func (d *FrameDeriver) KnownBodyKeyHighWater() int     { return d.knownHighWater }
+func (d *FrameDeriver) KnownBodyEvictionCount() uint64 { return d.evictionCount }
 
 // DeriveForState 只派生、不推进 baseline；物理写成功后调用
 // SeedAfterSuccessfulWrite / SeedAfterSuccessfulWriteDelivered 提交。
@@ -415,6 +546,9 @@ func (d *FrameDeriver) ensureClientBodyUpserts(
 			return
 		}
 		if _, ok := seen[key]; ok {
+			return
+		}
+		if _, ok := d.currentScreenKeys[key]; ok {
 			return
 		}
 		if _, ok := d.knownBodyKeys[key]; ok {
@@ -507,27 +641,54 @@ func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRa
 
 // LineBodyBatch 按 LineKey 批量导出正文与 message-local 字典。
 func (p *Projector) LineBodyBatch(keys []terminalengine.LineKey) terminalengine.LineBodyBatchData {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	store := p.LineStore()
+	lockStarted := time.Now()
+	p.mu.RLock()
+	var store *terminalengine.LineStore
+	var historyGeneration uint64
+	if p.canonical != nil {
+		store = p.canonical.LineStore
+	}
+	historyGeneration = p.historyGeneration
+	p.mu.RUnlock()
+	lockNanos := uint64(time.Since(lockStarted))
+	lineBodyBatchMetrics.projectorLockNanos.Add(lockNanos)
 	if store == nil {
 		return terminalengine.LineBodyBatchData{
 			MissingKeys:       append([]terminalengine.LineKey(nil), keys...),
-			HistoryGeneration: p.historyGeneration,
+			HistoryGeneration: historyGeneration,
 		}
 	}
 	records, missing := store.GetMany(keys)
+	exportStarted := time.Now()
+	// LineBodyBatch 使用严格的 message-local exporter。LineRecord/Body 在
+	// LineStore 中不可变，因此读取快照后可以在 projector 锁外安全导出。
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
 	lines := make([]terminalengine.Line, 0, len(records))
+	var cellCount uint64
 	for _, record := range records {
-		lines = append(lines, p.exporter.exportLineRecord(record))
+		if record != nil && record.Body != nil {
+			cellCount += uint64(len(record.Body.Cells))
+		}
+		lines = append(lines, exp.exportLineRecord(record))
 	}
+	lineBodyBatchMetrics.exportNanos.Add(uint64(time.Since(exportStarted)))
+	lineBodyBatchMetrics.recordCount.Add(uint64(len(records)))
+	lineBodyBatchMetrics.cellCount.Add(cellCount)
+	lineBodyBatchMetrics.dictionaryStyles.Add(uint64(len(exp.styleTable.Styles())))
+	lineBodyBatchMetrics.dictionaryLinks.Add(uint64(len(exp.linkTable.Links())))
+	diagnostics.Default.ObserveLineBodyBatchExport(
+		lockNanos, uint64(time.Since(exportStarted)), uint64(len(records)), cellCount,
+		uint64(len(exp.styleTable.Styles())), uint64(len(exp.linkTable.Links())))
 	return terminalengine.LineBodyBatchData{
 		Status:            terminalengine.LineBodyBatchOK,
 		Lines:             lines,
 		MissingKeys:       missing,
-		Styles:            p.exporter.styleTable.Styles(),
-		Links:             p.exporter.linkTable.Links(),
-		HistoryGeneration: p.historyGeneration,
+		Styles:            exp.styleTable.Styles(),
+		Links:             exp.linkTable.Links(),
+		HistoryGeneration: historyGeneration,
 	}
 }
 
@@ -721,20 +882,68 @@ func (p *Projector) syncCanonicalScreenLocked() {
 		return
 	}
 	s := &p.projected
+	previousBuffer := p.canonical.ActiveBuffer
 	p.canonical.ActiveBuffer = s.activeBuffer
 	p.canonical.Cursor = s.cursor
 	p.canonical.Modes = s.modes
-	keys := make([]terminalengine.LineKey, len(s.screen))
-	for i, line := range s.screen {
-		if line.ID == 0 {
-			continue
-		}
-		keys[i] = terminalengine.LineKey{
-			ID:      terminalengine.LineID(line.ID),
-			Version: terminalengine.BodyVersion(line.Version),
-		}
+	if previousBuffer != s.activeBuffer {
+		p.canonical.SetActiveScreen(p.canonicalScreenKeys(s.screen))
+		return
 	}
-	p.canonical.SetActiveScreen(keys)
+
+	previous := p.canonical.ActiveScreen()
+	if len(previous) == len(s.screen) {
+		changedCount := 0
+		for row, line := range s.screen {
+			if previous[row] != screenLineKey(line) {
+				changedCount++
+			}
+		}
+		if changedCount == 0 {
+			return
+		}
+		keys := p.canonicalScreenKeys(s.screen)
+		copy(keys, previous)
+		changedRows := p.canonicalChangedRowsScratch[:0]
+		if cap(changedRows) < changedCount {
+			changedRows = make([]int, 0, changedCount)
+			p.canonicalChangedRowsScratch = changedRows
+		}
+		for row, line := range s.screen {
+			key := screenLineKey(line)
+			if previous[row] == key {
+				continue
+			}
+			keys[row] = key
+			changedRows = append(changedRows, row)
+		}
+		p.canonical.ReplaceActiveScreenDirty(keys, changedRows)
+		return
+	}
+	p.canonical.SetActiveScreen(p.canonicalScreenKeys(s.screen))
+}
+
+func (p *Projector) canonicalScreenKeys(lines []terminalengine.Line) []terminalengine.LineKey {
+	if cap(p.canonicalKeyScratch) < len(lines) {
+		p.canonicalKeyScratch = make([]terminalengine.LineKey, len(lines))
+	} else {
+		p.canonicalKeyScratch = p.canonicalKeyScratch[:len(lines)]
+	}
+	keys := p.canonicalKeyScratch
+	for i, line := range lines {
+		keys[i] = screenLineKey(line)
+	}
+	return keys
+}
+
+func screenLineKey(line terminalengine.Line) terminalengine.LineKey {
+	if line.ID == 0 {
+		return terminalengine.LineKey{}
+	}
+	return terminalengine.LineKey{
+		ID:      terminalengine.LineID(line.ID),
+		Version: terminalengine.BodyVersion(line.Version),
+	}
 }
 
 // assembleFrame 从全屏缓存组装完整 State。历史只导出 extent 与位置谱系，

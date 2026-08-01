@@ -143,6 +143,46 @@ func (s *LineStore) ReleaseStateRef(key LineKey) {
 	s.maybeReleaseLocked(key, record)
 }
 
+// ApplyStateRefDelta 批量提交 screen/history 的引用变化，只获取一次 store 锁。
+// add/remove 中相同 key 会先合并为净变化，避免暂时归零触发错误释放。
+func (s *LineStore) ApplyStateRefDelta(add, remove []LineKey) {
+	if s == nil || (len(add) == 0 && len(remove) == 0) {
+		return
+	}
+	delta := make(map[LineKey]int, len(add)+len(remove))
+	for _, key := range remove {
+		if key.ID != 0 {
+			delta[key]--
+		}
+	}
+	for _, key := range add {
+		if key.ID != 0 {
+			delta[key]++
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, change := range delta {
+		if change == 0 {
+			continue
+		}
+		record, ok := s.bodies[key]
+		if !ok {
+			continue
+		}
+		if change > 0 {
+			record.StateRefs += change
+			continue
+		}
+		release := -change
+		if release > record.StateRefs {
+			release = record.StateRefs
+		}
+		record.StateRefs -= release
+		s.maybeReleaseLocked(key, record)
+	}
+}
+
 // AddJournalRef 增加事务 journal 对 BodyUpsert 的引用计数。
 func (s *LineStore) AddJournalRef(key LineKey) {
 	if s == nil {

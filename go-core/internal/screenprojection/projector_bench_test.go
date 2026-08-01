@@ -37,3 +37,48 @@ func BenchmarkProjectorExportOnceFanout(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkExportStatePureCursor(b *testing.B) {
+	scrollback := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(30, 100, scrollback)
+	projector := NewProjector(engine, scrollback, "benchmark", "instance")
+	projector.ExportState(0, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := engine.Write([]byte("\x1b[1C")); err != nil {
+			b.Fatal(err)
+		}
+		projector.ExportState(0, uint64(i+2))
+	}
+}
+
+func BenchmarkExportStateSingleDirtyRow(b *testing.B) {
+	scrollback := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(30, 100, scrollback)
+	projector := NewProjector(engine, scrollback, "benchmark", "instance")
+	projector.ExportState(0, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := engine.Write([]byte("x")); err != nil {
+			b.Fatal(err)
+		}
+		projector.ExportState(0, uint64(i+2))
+	}
+}
+
+func BenchmarkExportStateFullScreenDirty(b *testing.B) {
+	scrollback := terminalengine.NewTrackedScrollback(10000, nil)
+	engine := terminalengine.NewEngine(30, 100, scrollback)
+	projector := NewProjector(engine, scrollback, "benchmark", "instance")
+	projector.ExportState(0, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := engine.Write([]byte("\x1b[2J")); err != nil {
+			b.Fatal(err)
+		}
+		projector.ExportState(0, uint64(i+2))
+	}
+}

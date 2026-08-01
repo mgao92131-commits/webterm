@@ -7,9 +7,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** 屏幕和历史共享的唯一正文缓存。 */
 public final class BodyCache {
+  private static final AtomicLong EVICTION_DURATION_NANOS = new AtomicLong();
+  private static final AtomicLong EVICTION_PAGES_CONSIDERED = new AtomicLong();
+  private static final AtomicLong EVICTION_PAGES_REMOVED = new AtomicLong();
+  private static final AtomicLong EVICTION_CRITICAL_COUNT = new AtomicLong();
+
   private final HistoryBudget budget;
   private final PersistentShardedMap<LineKey, LineBody> bodies;
   private final HistoryResidencyIndex historyResidency;
@@ -42,6 +49,15 @@ public final class BodyCache {
   public HistoryResidencyIndex historyResidency() { return historyResidency; }
   public Set<EvictionPins.CriticalEvictionReason> criticalEvictionReasons() {
     return criticalEvictionReasons;
+  }
+
+  public static Map<String, Long> evictionMetricsSnapshot() {
+    Map<String, Long> out = new LinkedHashMap<>();
+    out.put("bodyCacheEvictionDurationNanos", EVICTION_DURATION_NANOS.get());
+    out.put("bodyCacheEvictionPagesConsidered", EVICTION_PAGES_CONSIDERED.get());
+    out.put("bodyCacheEvictionPagesRemoved", EVICTION_PAGES_REMOVED.get());
+    out.put("bodyCacheCriticalEvictionCount", EVICTION_CRITICAL_COUNT.get());
+    return out;
   }
 
   public RenderLine renderLine(LineKey key) {
@@ -120,10 +136,14 @@ public final class BodyCache {
     }
 
     public Editor evictIfNeeded(EvictionPins pins) {
+      long startedNanos = System.nanoTime();
       EvictionPins safePins = pins == null ? EvictionPins.NONE : pins;
       long loaded = residentCount();
       long bytes = historyBytes();
       if (!overHard(loaded, bytes)) return this;
+      int pagesConsidered = 0;
+      int pagesRemoved = 0;
+      int criticalCount = 0;
 
       long anchorSeq = safePins.anchorLineHistoryRange != null
           ? safePins.anchorLineHistoryRange.first : 1;
@@ -134,11 +154,13 @@ public final class BodyCache {
           .reversed()
           .thenComparingLong(Long::longValue));
       for (long page : candidates) {
+        pagesConsidered++;
         if (underSoft(residentCount(), historyBytes())) break;
         long first = HistoryResidencyIndex.pageFirstSeq(page);
         long last = HistoryResidencyIndex.pageLastSeq(page);
         if (safePins.intersectsAny(first, last)) continue;
         removePage(page);
+        pagesRemoved++;
       }
 
       if (overHard(residentCount(), historyBytes())) {
@@ -150,6 +172,7 @@ public final class BodyCache {
             .thenComparing(Comparator
                 .comparingLong((Long page) -> Math.abs(page - anchorPage)).reversed()));
         for (long page : candidates) {
+          pagesConsidered++;
           if (!overHard(residentCount(), historyBytes())) break;
           long first = HistoryResidencyIndex.pageFirstSeq(page);
           long last = HistoryResidencyIndex.pageLastSeq(page);
@@ -157,8 +180,14 @@ public final class BodyCache {
               safePins.criticalReason(first, last);
           if (reason != null) criticalEvictions.add(reason);
           removePage(page);
+          pagesRemoved++;
+          if (reason != null) criticalCount++;
         }
       }
+      EVICTION_DURATION_NANOS.addAndGet(System.nanoTime() - startedNanos);
+      EVICTION_PAGES_CONSIDERED.addAndGet(pagesConsidered);
+      EVICTION_PAGES_REMOVED.addAndGet(pagesRemoved);
+      EVICTION_CRITICAL_COUNT.addAndGet(criticalCount);
       return this;
     }
 

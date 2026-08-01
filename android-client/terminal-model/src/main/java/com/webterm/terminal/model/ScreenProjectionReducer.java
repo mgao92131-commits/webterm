@@ -59,6 +59,9 @@ public final class ScreenProjectionReducer {
         if (!historical.add(binding.key)) {
           return needs(ProjectionFault.DUPLICATE_HISTORY_KEY);
         }
+        // 事务尚未 commit；后续屏幕/正文校验失败时整笔 tx 会丢弃，因此可以
+        // 在同一轮校验中完成历史位置绑定，避免再次遍历全部 bindings。
+        tx.historyCatalog().bindNew(binding.historySeq, binding.key);
         previousSeq = binding.historySeq;
       }
 
@@ -87,12 +90,6 @@ public final class ScreenProjectionReducer {
           return needs(ProjectionFault.INVALID_LINE_BODY);
         }
         active[row] = key;
-      }
-
-      // 冷历史只建立位置绑定；正文由 VisibleBodyLoader 按需加载。
-      // PROMOTION_BODY_INVARIANT_FAILURE 仅适用于实时 Commit 晋升。
-      for (HistoryPush binding : baseline.historyBindings) {
-        tx.historyCatalog().bindNew(binding.historySeq, binding.key);
       }
 
       tx.activeRows(new ActiveRowLayout(active));

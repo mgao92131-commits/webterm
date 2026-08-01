@@ -1,5 +1,8 @@
 package com.webterm.terminal.model;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * 跨兼容 Baseline 迁移精确 LineKey 匹配的不可变正文。
  *
@@ -21,6 +24,71 @@ public final class BaselineBodyReuse {
   }
 
   private BaselineBodyReuse() {}
+
+  /**
+   * 在调用方已经确认 extent + HistorySeq→LineKey 拓扑相同后，直接复用旧历史
+   * BodyCache/Residency root；只处理有界的当前屏幕正文，不扫描 bindings。
+   * 返回 null 表示无法走该快速路径，调用方应回退到普通正文迁移。
+   */
+  static Outcome tryReuseCompatibleHistoryTopology(
+      ProjectionState previous,
+      ProjectionState next,
+      ScreenBaseline baseline,
+      EvictionPins pins) {
+    if (previous == null || next == null || baseline == null
+        || !previous.identity.instanceId().equals(baseline.instanceId)
+        || previous.identity.historyGeneration() != baseline.historyGeneration) {
+      return null;
+    }
+
+    for (LineBodyRecord screenBody : baseline.screenBodies) {
+      if (screenBody == null) continue;
+      LineBody cached = previous.mainSurface.bodyCache.body(screenBody.key());
+      if (cached == null) cached = previous.alternateSurface.bodyCache.body(screenBody.key());
+      if (cached != null && !cached.equals(screenBody.body())) {
+        return new Outcome.Conflict(screenBody.key());
+      }
+    }
+
+    BodyCache cache = previous.mainSurface.bodyCache;
+    Set<LineKey> previousActive = previous.mainSurface.activeRows.keys();
+    Set<LineKey> nextActive = next.mainSurface.activeRows.keys();
+    boolean cacheNeedsEdit = !previousActive.equals(nextActive);
+    if (!cacheNeedsEdit) {
+      for (LineBodyRecord screenBody : baseline.screenBodies) {
+        if (screenBody != null && !cache.contains(screenBody.key())) {
+          cacheNeedsEdit = true;
+          break;
+        }
+      }
+    }
+    if (cacheNeedsEdit) {
+      try {
+        BodyCache.Editor editor = cache.edit();
+        for (LineBodyRecord screenBody : baseline.screenBodies) {
+          if (screenBody != null) editor.putBody(screenBody.key(), screenBody.body());
+        }
+        Set<LineKey> removedActive = new HashSet<>(previousActive);
+        removedActive.removeAll(nextActive);
+        editor.removeUnreferenced(nextActive, previous.mainSurface.historyCatalog, removedActive);
+        editor.evictIfNeeded(pins == null ? EvictionPins.NONE : pins);
+        cache = editor.commit();
+      } catch (CommitValidationException invalid) {
+        return new Outcome.Conflict(null);
+      }
+    }
+
+    int candidates = previous.mainSurface.historyCatalog.bindingCount();
+    int reused = (int) Math.min(Integer.MAX_VALUE, cache.loadedHistoryCount());
+    int missing = Math.max(0, candidates - reused);
+    TerminalSurfaceState main = new TerminalSurfaceState(
+        next.mainSurface.activeRows, previous.mainSurface.historyCatalog, cache);
+    ProjectionState migrated = new ProjectionState(
+        next.identity, next.screenRevision, next.rows, next.columns,
+        next.activeBuffer, main, next.alternateSurface,
+        next.cursor, next.modes, next.palette);
+    return new Outcome.Applied(migrated, candidates, reused, missing);
+  }
 
   public static Outcome reuse(
       ProjectionState previous,

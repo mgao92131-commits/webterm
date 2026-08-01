@@ -11,6 +11,7 @@ public final class BaselineBodyReuseMetrics {
   private static final AtomicLong MISSING = new AtomicLong();
   private static final AtomicLong CONFLICT = new AtomicLong();
   private static final AtomicLong IDENTITY_REJECTED = new AtomicLong();
+  private static final AtomicLong TOPOLOGY_FAST_PATH = new AtomicLong();
 
   private BaselineBodyReuseMetrics() {}
 
@@ -26,6 +27,8 @@ public final class BaselineBodyReuseMetrics {
     }
   }
 
+  static void topologyFastPath() { TOPOLOGY_FAST_PATH.incrementAndGet(); }
+
   public static Map<String, Long> snapshot() {
     Map<String, Long> out = new LinkedHashMap<>();
     out.put("baselineBodyReuseCandidateCount", CANDIDATE.get());
@@ -33,6 +36,7 @@ public final class BaselineBodyReuseMetrics {
     out.put("baselineBodyMissingCount", MISSING.get());
     out.put("baselineBodyConflictCount", CONFLICT.get());
     out.put("baselineBodyReuseIdentityRejectedCount", IDENTITY_REJECTED.get());
+    out.put("baselineHistoryTopologyFastPathCount", TOPOLOGY_FAST_PATH.get());
     return out;
   }
 }

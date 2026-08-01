@@ -81,6 +81,14 @@ public final class VisibleBodyLoader {
     }
   }
 
+  static final class PendingPlan {
+    @Nullable final Batch batch;
+
+    PendingPlan(@Nullable Batch batch) {
+      this.batch = batch;
+    }
+  }
+
   public static final class ActiveRequest {
     public final long callId;
     public final Batch batch;
@@ -96,6 +104,8 @@ public final class VisibleBodyLoader {
     }
 
     State state() { return state.get(); }
+
+    boolean isCancelled() { return state.get() == State.CANCELLED; }
 
     boolean beginApplying() {
       return state.compareAndSet(State.FETCHING, State.APPLYING);
@@ -114,13 +124,17 @@ public final class VisibleBodyLoader {
 
   @Nullable private Demand latestDemand;
   @Nullable private ActiveRequest activeRequest;
+  @Nullable private PendingPlan pendingPlan;
   private long nextCallId = 1;
   private long nextDemandEpoch = 1;
+  private long lastPlannedDemandEpoch = Long.MIN_VALUE;
   private boolean closed;
 
   public synchronized void setDemand(@Nullable Demand demand) {
     if (closed) return;
     latestDemand = demand;
+    // setDemand 只用于投影尚未完整时的占位需求；它没有对应的已规划批次。
+    pendingPlan = null;
     if (demand != null) {
       nextDemandEpoch = Math.max(nextDemandEpoch, demand.demandEpoch + 1);
     }
@@ -137,27 +151,35 @@ public final class VisibleBodyLoader {
     int rows = visibleRowCount > 0
         ? visibleRowCount
         : (int) Math.min(Integer.MAX_VALUE, visibleToSeq - visibleFromSeq + 1);
-    Demand probe = new Demand(
-        visibleFromSeq, visibleToSeq, anchorSeq, direction, rows, 0, createdAtNanos);
-    Batch missing = planMissingBatch(
-        probe, instanceId, layoutEpoch, generation,
-        extent, history, bodyCache, catalog);
-    if (missing == null) {
-      latestDemand = new Demand(
-          visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
-          nextDemandEpoch++, createdAtNanos);
-      HistoryDemandMetrics.fetchPlanReused();
-      return latestDemand;
-    }
+    Demand candidate = new Demand(
+        visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
+        nextDemandEpoch++, createdAtNanos);
+
+    // 活动请求已经覆盖新视口时，不需要重新规划；新 Demand 复用活动请求的
+    // epoch，响应仍归属于同一个在途批次。
     if (activeRequest != null
         && activeRequest.state() == ActiveRequest.State.FETCHING
         && activeCoversVisibleMissing(
             activeRequest.batch, visibleFromSeq, visibleToSeq,
             extent, history, bodyCache, catalog)) {
+      // 在途请求已经覆盖当前可见缺口；请求完成后允许 pump 继续检查
+      // 最新 demand，不留下一个会吞掉后续规划的空决定。
+      pendingPlan = null;
       latestDemand = new Demand(
           visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
           activeRequest.batch.demandEpoch, createdAtNanos);
       HistoryDemandMetrics.fetchCoveredByActive();
+      return latestDemand;
+    }
+
+    // 一个 Demand 只在这里规划一次。pumpVisibleBodies() 只消费 pendingPlan。
+    Batch missing = planMissingBatch(
+        candidate, instanceId, layoutEpoch, generation,
+        extent, history, bodyCache, catalog);
+    if (missing == null) {
+      latestDemand = candidate;
+      pendingPlan = new PendingPlan(null);
+      HistoryDemandMetrics.fetchPlanReused();
       return latestDemand;
     }
     if (activeRequest != null
@@ -165,16 +187,15 @@ public final class VisibleBodyLoader {
         && fetchPolicy.shouldCancel(
             activeRequest.batch.plannedFromSeq,
             activeRequest.batch.plannedToSeq,
-            probe)) {
+            candidate)) {
       ActiveRequest previous = activeRequest;
       previous.cancel();
       previous.handle.cancel();
       activeRequest = null;
       HistoryDemandMetrics.fetchCancelledForDistance();
     }
-    latestDemand = new Demand(
-        visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
-        nextDemandEpoch++, createdAtNanos);
+    latestDemand = candidate;
+    pendingPlan = new PendingPlan(missing);
     HistoryDemandMetrics.fetchPlanCreated();
     return latestDemand;
   }
@@ -207,49 +228,82 @@ public final class VisibleBodyLoader {
       @NonNull String instanceId, long layoutEpoch, long generation,
       @NonNull HistoryExtent extent, @NonNull HistoryRenderView history,
       @NonNull BodyCache bodyCache, @NonNull HistoryCatalog catalog) {
-    if (closed || extent.isEmpty()
-        || !extent.contains(demand.visibleFromSeq)
-        || !extent.contains(demand.visibleToSeq)) {
+    long startedNanos = System.nanoTime();
+    boolean duplicateInvocation = demand.demandEpoch > 0
+        && demand.demandEpoch == lastPlannedDemandEpoch;
+    if (demand.demandEpoch > 0) lastPlannedDemandEpoch = demand.demandEpoch;
+    PlanState state = new PlanState();
+    try {
+      if (closed || extent.isEmpty()
+          || !extent.contains(demand.visibleFromSeq)
+          || !extent.contains(demand.visibleToSeq)) {
+        return null;
+      }
+      int desired = fetchPolicy.desiredBatchKeys(demand);
+
+      long visFrom = Math.max(demand.visibleFromSeq, extent.firstSeq);
+      long visTo = Math.min(demand.visibleToSeq, extent.lastSeq);
+      for (long seq = visFrom; seq <= visTo; seq++) {
+        if (!tryAddMissing(state, seq, extent, history, bodyCache, catalog)) continue;
+        state.visibleKeyCount = state.keys.size();
+        if (state.keys.size() >= LineBodyFetchPolicy.MAX_BATCH_KEYS) {
+          return toBatch(
+              instanceId, layoutEpoch, generation, state.keys, demand.demandEpoch,
+              state.plannedFromSeq, state.plannedToSeq, state.visibleKeyCount);
+        }
+      }
+
+      long cursorLeft = visFrom;
+      long cursorRight = visTo;
+      boolean preferOlder = demand.direction <= 0;
+      expandUntilDesired(
+          state, cursorLeft, cursorRight, preferOlder, desired,
+          extent, history, bodyCache, catalog);
+      if (state.keys.size() < desired && demand.direction != 0) {
+        expandUntilDesired(
+            state, cursorLeft, cursorRight, !preferOlder, desired,
+            extent, history, bodyCache, catalog);
+      }
+
+      if (state.keys.isEmpty()) return null;
+
+      return toBatch(
+          instanceId, layoutEpoch, generation, state.keys, demand.demandEpoch,
+          state.plannedFromSeq == Long.MAX_VALUE ? visFrom : state.plannedFromSeq,
+          state.plannedToSeq == 0 ? visTo : state.plannedToSeq,
+          state.visibleKeyCount);
+    } finally {
+      HistoryDemandMetrics.planCompleted(
+          demand.demandEpoch, state.seqScanned, System.nanoTime() - startedNanos,
+          duplicateInvocation);
+    }
+  }
+
+  /** 取出 acceptDemand 已经生成的规划决定；不会再次扫描历史。 */
+  @Nullable
+  synchronized PendingPlan takePendingPlan(
+      @NonNull Demand demand, @NonNull String instanceId,
+      long layoutEpoch, long generation) {
+    PendingPlan plan = pendingPlan;
+    if (plan == null) return null;
+    if (plan.batch != null && (plan.batch.demandEpoch != demand.demandEpoch
+        || !plan.batch.instanceId.equals(instanceId)
+        || plan.batch.layoutEpoch != layoutEpoch
+        || plan.batch.historyGeneration != generation)) {
+      pendingPlan = null;
       return null;
     }
-    int desired = fetchPolicy.desiredBatchKeys(demand);
-    LinkedHashSet<LineKey> keys = new LinkedHashSet<>();
-    long plannedFrom = Long.MAX_VALUE;
-    long plannedTo = 0;
-    int visibleKeyCount = 0;
+    pendingPlan = null;
+    return plan;
+  }
 
-    long visFrom = Math.max(demand.visibleFromSeq, extent.firstSeq);
-    long visTo = Math.min(demand.visibleToSeq, extent.lastSeq);
-    for (long seq = visFrom; seq <= visTo; seq++) {
-      if (!tryAddMissing(keys, seq, extent, history, bodyCache, catalog)) continue;
-      plannedFrom = Math.min(plannedFrom, seq);
-      plannedTo = Math.max(plannedTo, seq);
-      visibleKeyCount = keys.size();
-      if (keys.size() >= LineBodyFetchPolicy.MAX_BATCH_KEYS) {
-        return toBatch(
-            instanceId, layoutEpoch, generation, keys, demand.demandEpoch,
-            plannedFrom, plannedTo, visibleKeyCount);
-      }
-    }
-
-    long cursorLeft = visFrom;
-    long cursorRight = visTo;
-    boolean preferOlder = demand.direction <= 0;
-    expandUntilDesired(
-        keys, cursorLeft, cursorRight, preferOlder, desired,
-        extent, history, bodyCache, catalog);
-    if (keys.size() < desired && demand.direction != 0) {
-      expandUntilDesired(
-          keys, cursorLeft, cursorRight, !preferOlder, desired,
-          extent, history, bodyCache, catalog);
-    }
-
-    if (keys.isEmpty()) return null;
-
-    long[] bounds = plannedBounds(keys, catalog, extent, visFrom, visTo);
-    return toBatch(
-        instanceId, layoutEpoch, generation, keys, demand.demandEpoch,
-        bounds[0], bounds[1], visibleKeyCount);
+  /** 兼容测试/旧调用方的 batch 读取接口；空规划决定返回 null。 */
+  @Nullable
+  public synchronized Batch takePendingBatch(
+      @NonNull Demand demand, @NonNull String instanceId,
+      long layoutEpoch, long generation) {
+    PendingPlan plan = takePendingPlan(demand, instanceId, layoutEpoch, generation);
+    return plan == null ? null : plan.batch;
   }
 
   public synchronized boolean begin(@NonNull Batch batch, @NonNull Runnable onCancel) {
@@ -268,6 +322,7 @@ public final class VisibleBodyLoader {
 
   public synchronized void clearDemand() {
     latestDemand = null;
+    pendingPlan = null;
   }
 
   public synchronized void close() {
@@ -278,65 +333,55 @@ public final class VisibleBodyLoader {
       activeRequest = null;
     }
     latestDemand = null;
+    pendingPlan = null;
   }
 
   public synchronized boolean closed() { return closed; }
 
   private static void expandUntilDesired(
-      LinkedHashSet<LineKey> keys,
+      PlanState state,
       long startLeft, long startRight,
       boolean preferOlderFirst, int desired,
       HistoryExtent extent, HistoryRenderView history,
       BodyCache bodyCache, HistoryCatalog catalog) {
     long left = startLeft;
     long right = startRight;
-    while (keys.size() < desired
-        && keys.size() < LineBodyFetchPolicy.MAX_BATCH_KEYS) {
-      boolean extended = false;
+    while (state.keys.size() < desired
+        && state.keys.size() < LineBodyFetchPolicy.MAX_BATCH_KEYS) {
+      long candidate = -1;
       if (preferOlderFirst) {
-        if (left > extent.firstSeq
-            && tryAddMissing(keys, left - 1, extent, history, bodyCache, catalog)) {
-          left--;
-          extended = true;
-        } else if (right < extent.lastSeq
-            && tryAddMissing(keys, right + 1, extent, history, bodyCache, catalog)) {
-          right++;
-          extended = true;
+        if (left > extent.firstSeq) {
+          candidate = history.nearestUnloadedSeq(extent.firstSeq, left - 1, -1);
         }
-      } else if (right < extent.lastSeq
-          && tryAddMissing(keys, right + 1, extent, history, bodyCache, catalog)) {
-        right++;
-        extended = true;
-      } else if (left > extent.firstSeq
-          && tryAddMissing(keys, left - 1, extent, history, bodyCache, catalog)) {
-        left--;
-        extended = true;
+        if (candidate < 0 && right < extent.lastSeq) {
+          candidate = history.nearestUnloadedSeq(right + 1, extent.lastSeq, 1);
+        }
+      } else {
+        if (right < extent.lastSeq) {
+          candidate = history.nearestUnloadedSeq(right + 1, extent.lastSeq, 1);
+        }
+        if (candidate < 0 && left > extent.firstSeq) {
+          candidate = history.nearestUnloadedSeq(extent.firstSeq, left - 1, -1);
+        }
       }
-      if (extended) continue;
-
-      // 跳过已加载/无绑定位置，继续向外寻找缺口。
-      boolean advanced = false;
-      if (preferOlderFirst && left > extent.firstSeq) {
-        left--;
-        advanced = true;
-      } else if (!preferOlderFirst && right < extent.lastSeq) {
-        right++;
-        advanced = true;
-      } else if (preferOlderFirst && right < extent.lastSeq) {
-        right++;
-        advanced = true;
-      } else if (!preferOlderFirst && left > extent.firstSeq) {
-        left--;
-        advanced = true;
+      if (candidate < 0) break;
+      if (candidate < left) {
+        left = candidate;
+      } else {
+        right = candidate;
       }
-      if (!advanced) break;
+      // candidate 已是页索引定位出的 UNLOADED 槽位；无绑定或正文已在缓存
+      // 时仍推进边界，下一轮不会再次检查同一段热页。
+      tryAddMissing(state, candidate, extent, history, bodyCache, catalog);
     }
   }
 
   private static boolean tryAddMissing(
-      LinkedHashSet<LineKey> keys, long seq,
+      PlanState state, long seq,
       HistoryExtent extent, HistoryRenderView history,
       BodyCache bodyCache, HistoryCatalog catalog) {
+    state.seqScanned++;
+    LinkedHashSet<LineKey> keys = state.keys;
     if (!extent.contains(seq) || keys.size() >= LineBodyFetchPolicy.MAX_BATCH_KEYS) {
       return false;
     }
@@ -344,7 +389,10 @@ public final class VisibleBodyLoader {
     if (index < 0 || history.slotStateAt(index) == SlotState.LOADED) return false;
     LineKey key = catalog.key(seq);
     if (key == null || bodyCache.body(key) != null) return false;
-    return keys.add(key);
+    if (!keys.add(key)) return false;
+    state.plannedFromSeq = Math.min(state.plannedFromSeq, seq);
+    state.plannedToSeq = Math.max(state.plannedToSeq, seq);
+    return true;
   }
 
   private boolean activeCoversVisibleMissing(
@@ -364,19 +412,12 @@ public final class VisibleBodyLoader {
     return true;
   }
 
-  private static long[] plannedBounds(
-      LinkedHashSet<LineKey> keys, HistoryCatalog catalog, HistoryExtent extent,
-      long fallbackFrom, long fallbackTo) {
-    long from = 0;
-    long to = 0;
-    for (long seq = extent.firstSeq; seq <= extent.lastSeq; seq++) {
-      LineKey key = catalog.key(seq);
-      if (key == null || !keys.contains(key)) continue;
-      if (from == 0) from = seq;
-      to = seq;
-    }
-    if (from == 0) return new long[] {fallbackFrom, fallbackTo};
-    return new long[] {from, to};
+  private static final class PlanState {
+    final LinkedHashSet<LineKey> keys = new LinkedHashSet<>();
+    long plannedFromSeq = Long.MAX_VALUE;
+    long plannedToSeq;
+    int visibleKeyCount;
+    int seqScanned;
   }
 
   private static Batch toBatch(

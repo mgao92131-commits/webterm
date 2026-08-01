@@ -3,6 +3,7 @@ package com.webterm.terminal.model;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -11,6 +12,26 @@ import java.util.List;
 import org.junit.Test;
 
 public final class BaselineBodyReuseTest {
+  @Test
+  public void compatibleBaselineReusesHistoryAxisTopology() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(baselineWithHistory(300, 1)));
+    for (int seq = 1; seq <= 10; seq++) {
+      LineKey key = new LineKey(10_000L + seq, 1);
+      assertTrue(model.applyHistoryBody(
+          range(seq, key, "h"), request(seq, seq)) instanceof HistoryBodyResult.Applied);
+    }
+    UnifiedContentAxis.Item before = model.renderSnapshot().contentAxis.itemAtRow(0);
+
+    assertTrue(model.applyBaseline(baselineWithHistory(300, 2)));
+
+    UnifiedContentAxis.Item after = model.renderSnapshot().contentAxis.itemAtRow(0);
+    assertSame(before, after);
+    assertEquals(
+        UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE,
+        model.renderSnapshot().contentAxis.itemAtRow(100).kind);
+  }
+
   @Test
   public void reusesExactLineKeysAcrossCompatibleBaseline() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();

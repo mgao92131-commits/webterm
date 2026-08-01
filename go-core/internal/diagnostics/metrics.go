@@ -38,6 +38,22 @@ type AgentMetrics struct {
 	ScreenFramesWrittenCount    atomic.Uint64
 	EmptyCommitSuppressedCount  atomic.Uint64
 
+	// LineBodyBatch 冷历史导出成本。
+	LineBodyBatchProjectorLockNanos atomic.Uint64
+	LineBodyBatchExportNanos        atomic.Uint64
+	LineBodyBatchRecordCount        atomic.Uint64
+	LineBodyBatchCellCount          atomic.Uint64
+	LineBodyBatchDictionaryStyles   atomic.Uint64
+	LineBodyBatchDictionaryLinks    atomic.Uint64
+	LineBodyBatchEncodedBytes       atomic.Uint64
+	LineBodyBatchEncodedCount       atomic.Uint64
+
+	// 每客户端最近正文 possession cache 的聚合观测；count 是最近一次上报值，
+	// high-water/eviction 是进程级高水位与累计值，不保存 LineKey。
+	FrameDeriverKnownBodyKeyCount      atomic.Uint64
+	FrameDeriverKnownBodyKeyHighWater  atomic.Uint64
+	FrameDeriverKnownBodyEvictionCount atomic.Uint64
+
 	// writer 队列与写入。
 	WriterSubmitCount        atomic.Uint64
 	WriterSuccessCount       atomic.Uint64
@@ -97,6 +113,34 @@ func NewAgentMetrics() *AgentMetrics {
 	return &AgentMetrics{}
 }
 
+func (m *AgentMetrics) ObserveLineBodyBatchExport(
+	lockNanos, exportNanos, records, cells, styles, links uint64) {
+	m.LineBodyBatchProjectorLockNanos.Add(lockNanos)
+	m.LineBodyBatchExportNanos.Add(exportNanos)
+	m.LineBodyBatchRecordCount.Add(records)
+	m.LineBodyBatchCellCount.Add(cells)
+	m.LineBodyBatchDictionaryStyles.Add(styles)
+	m.LineBodyBatchDictionaryLinks.Add(links)
+}
+
+func (m *AgentMetrics) ObserveLineBodyBatchEncoded(bytes, _ uint64, _ uint64) {
+	m.LineBodyBatchEncodedBytes.Add(bytes)
+	m.LineBodyBatchEncodedCount.Add(1)
+}
+
+func (m *AgentMetrics) ObserveFrameDeriverBodyCache(count, highWater uint64) {
+	m.FrameDeriverKnownBodyKeyCount.Store(count)
+	current := m.FrameDeriverKnownBodyKeyHighWater.Load()
+	for highWater > current &&
+		!m.FrameDeriverKnownBodyKeyHighWater.CompareAndSwap(current, highWater) {
+		current = m.FrameDeriverKnownBodyKeyHighWater.Load()
+	}
+}
+
+func (m *AgentMetrics) ObserveFrameDeriverBodyEviction() {
+	m.FrameDeriverKnownBodyEvictionCount.Add(1)
+}
+
 // Default 是进程级默认指标实例。
 var Default = NewAgentMetrics()
 
@@ -138,6 +182,17 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		"screenFramesDerivedCount":           m.ScreenFramesDerivedCount.Load(),
 		"screenFramesWrittenCount":           m.ScreenFramesWrittenCount.Load(),
 		"emptyCommitSuppressedCount":         m.EmptyCommitSuppressedCount.Load(),
+		"lineBodyBatchProjectorLockNanos":    m.LineBodyBatchProjectorLockNanos.Load(),
+		"lineBodyBatchExportNanos":           m.LineBodyBatchExportNanos.Load(),
+		"lineBodyBatchRecordCount":           m.LineBodyBatchRecordCount.Load(),
+		"lineBodyBatchCellCount":             m.LineBodyBatchCellCount.Load(),
+		"lineBodyBatchDictionaryStyleCount":  m.LineBodyBatchDictionaryStyles.Load(),
+		"lineBodyBatchDictionaryLinkCount":   m.LineBodyBatchDictionaryLinks.Load(),
+		"lineBodyBatchEncodedBytes":          m.LineBodyBatchEncodedBytes.Load(),
+		"lineBodyBatchEncodedCount":          m.LineBodyBatchEncodedCount.Load(),
+		"frameDeriverKnownBodyKeyCount":      m.FrameDeriverKnownBodyKeyCount.Load(),
+		"frameDeriverKnownBodyKeyHighWater":  m.FrameDeriverKnownBodyKeyHighWater.Load(),
+		"frameDeriverKnownBodyEvictionCount": m.FrameDeriverKnownBodyEvictionCount.Load(),
 		"writerSubmitCount":                  m.WriterSubmitCount.Load(),
 		"writerSuccessCount":                 m.WriterSuccessCount.Load(),
 		"writerFailureCount":                 m.WriterFailureCount.Load(),

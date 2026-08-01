@@ -14,7 +14,7 @@ func TestHistoryRangeDoesNotWaitForProjectorProjectionLock(t *testing.T) {
 	_, sb, projector := newHistoryRig(t, 1, 8)
 	sb.Push(headlessterm.ScrollbackLine{
 		LineID: 1,
-		Cells: []headlessterm.Cell{headlessterm.NewCell()},
+		Cells:  []headlessterm.Cell{headlessterm.NewCell()},
 	})
 
 	projector.mu.Lock()
@@ -32,6 +32,40 @@ func TestHistoryRangeDoesNotWaitForProjectorProjectionLock(t *testing.T) {
 		projector.mu.Unlock()
 		t.Fatal("HistoryRange blocked on projector projection lock")
 	}
+}
+
+func TestLineBodyBatchUsesMessageLocalDictionary(t *testing.T) {
+	engine, scrollback, projector := newHistoryRig(t, 2, 8)
+	record, _ := projector.canonical.LineStore.Commit(900, terminalengine.CanonicalLineBody{
+		PhysicalColumns: 1,
+		Cells: []terminalengine.CanonicalCell{{
+			Text: "cold", Width: 1,
+			Style: terminalengine.CanonicalStyle{
+				FG: terminalengine.Color{Kind: terminalengine.ColorRGB, RGB: 0x123456},
+			},
+			Link: "https://example.invalid/cold",
+		}},
+	})
+	if record == nil {
+		t.Fatal("LineStore did not create test body")
+	}
+	globalStyles := len(projector.exporter.styleTable.Styles())
+	globalLinks := len(projector.exporter.linkTable.Links())
+	result := projector.LineBodyBatch([]terminalengine.LineKey{record.Key})
+	if result.Status != terminalengine.LineBodyBatchOK || len(result.Lines) != 1 {
+		t.Fatalf("batch result=%+v, want one line", result)
+	}
+	if len(result.Styles) == 0 || len(result.Links) == 0 {
+		t.Fatalf("local dictionary missing: styles=%d links=%d", len(result.Styles), len(result.Links))
+	}
+	if len(projector.exporter.styleTable.Styles()) != globalStyles ||
+		len(projector.exporter.linkTable.Links()) != globalLinks {
+		t.Fatalf("cold batch polluted realtime dictionary: styles %d->%d links %d->%d",
+			globalStyles, len(projector.exporter.styleTable.Styles()),
+			globalLinks, len(projector.exporter.linkTable.Links()))
+	}
+	_ = engine
+	_ = scrollback
 }
 
 func newHistoryRig(t *testing.T, rows, cols int) (*terminalengine.Engine, *terminalengine.TrackedScrollback, *Projector) {
@@ -142,7 +176,7 @@ func TestProjector_HistoryRangeExportsExactArbitraryBounds(t *testing.T) {
 	for seq := 1; seq <= 1100; seq++ {
 		scrollback.Push(headlessterm.ScrollbackLine{
 			LineID: uint64(10_000 + seq),
-			Cells: []headlessterm.Cell{headlessterm.NewCell()},
+			Cells:  []headlessterm.Cell{headlessterm.NewCell()},
 		})
 	}
 

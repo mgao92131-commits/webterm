@@ -23,6 +23,7 @@ import com.webterm.feature.terminal.domain.HistoryDemandMetrics;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.mobile.BuildConfig;
 import com.webterm.terminal.model.BaselineBodyReuseMetrics;
+import com.webterm.terminal.model.BodyCache;
 import com.webterm.terminal.model.HistoryPromotionMetrics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.transport.api.MuxTransport;
@@ -212,6 +213,22 @@ public final class DiagnosticLogExporter {
         json.put("historyDemand", longMapJson(HistoryDemandMetrics.snapshot()));
         json.put("historyPromotion", mapToJson(HistoryPromotionMetrics.snapshot()));
         json.put("baselineBodyReuse", longMapJson(BaselineBodyReuseMetrics.snapshot()));
+        json.put("bodyCacheEviction", longMapJson(BodyCache.evictionMetricsSnapshot()));
+        Map<String, Long> historyAxis = new java.util.LinkedHashMap<>();
+        historyAxis.put("historyAxisUpdateDurationNanos",
+            TerminalRenderMetrics.historyAxisUpdateNanos());
+        historyAxis.put("historyAxisSegmentsBuildDurationNanos",
+            TerminalRenderMetrics.historyAxisSegmentBuildNanos());
+        historyAxis.put("historyAxisPagesRebuilt", TerminalRenderMetrics.historyAxisPagesRebuilt());
+        historyAxis.put("historyAxisPagesVisited",
+            TerminalRenderMetrics.historyAxisSegmentPagesVisited());
+        historyAxis.put("historyAxisItemsVisited",
+            TerminalRenderMetrics.historyAxisSegmentItemsVisited());
+        historyAxis.put("historyAxisItemsCreated",
+            TerminalRenderMetrics.historyAxisSegmentItemsCreated());
+        historyAxis.put("historyAxisFullRebuildCount",
+            TerminalRenderMetrics.historyAxisFullRebuildCount());
+        json.put("historyAxis", longMapJson(historyAxis));
 
         TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
         JSONObject render = new JSONObject();

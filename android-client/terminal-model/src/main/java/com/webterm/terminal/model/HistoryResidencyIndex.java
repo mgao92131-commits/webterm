@@ -30,25 +30,69 @@ public final class HistoryResidencyIndex {
   private final HistoryExtent extent;
   private final HistoryExtent availableExtent;
   private final Map<Long, HistoryPage> pages;
+  private final Map<Long, Integer> unloadedCounts;
   private final long residentCount;
+  private final long firstResidentSeq;
 
   public HistoryResidencyIndex() {
     this(HistoryExtent.INITIAL_EMPTY, HistoryExtent.INITIAL_EMPTY,
-        Collections.emptyMap(), 0);
+        Collections.emptyMap(), Collections.emptyMap(), 0, -1);
   }
 
   private HistoryResidencyIndex(
       HistoryExtent extent, HistoryExtent availableExtent,
-      Map<Long, HistoryPage> pages, long residentCount) {
+      Map<Long, HistoryPage> pages, Map<Long, Integer> unloadedCounts,
+      long residentCount, long firstResidentSeq) {
     this.extent = extent;
     this.availableExtent = availableExtent;
-    this.pages = Collections.unmodifiableMap(pages);
+    this.pages = Collections.unmodifiableMap(new HashMap<>(pages));
+    this.unloadedCounts = Collections.unmodifiableMap(new HashMap<>(unloadedCounts));
     this.residentCount = residentCount;
+    this.firstResidentSeq = firstResidentSeq;
   }
 
   public HistoryExtent extent() { return extent; }
   public HistoryExtent availableExtent() { return availableExtent; }
   public long residentCount() { return residentCount; }
+
+  public int unloadedCount(long pageNumber) {
+    return unloadedCounts.getOrDefault(pageNumber, 0);
+  }
+
+  /** 在页索引中定位最近的 UNLOADED 槽位；已满载页可 O(1) 跳过。 */
+  public long nearestUnloadedSeq(long fromSeq, long toSeq, int direction) {
+    if (extent.isEmpty() || fromSeq > toSeq) return -1;
+    long from = Math.max(extent.firstSeq, fromSeq);
+    long to = Math.min(extent.lastSeq, toSeq);
+    if (from > to) return -1;
+    long firstPage = pageNumber(from);
+    long lastPage = pageNumber(to);
+    if (direction <= 0) {
+      for (long page = lastPage; page >= firstPage; page--) {
+        if (unloadedCounts.getOrDefault(page, 0) == 0) continue;
+        long high = Math.min(to, pageLastSeq(page));
+        long low = Math.max(from, pageFirstSeq(page));
+        for (long seq = high; seq >= low; seq--) {
+          if (availableExtent.contains(seq) && key(seq) == null) return seq;
+        }
+      }
+    } else {
+      for (long page = firstPage; page <= lastPage; page++) {
+        if (unloadedCounts.getOrDefault(page, 0) == 0) continue;
+        long low = Math.max(from, pageFirstSeq(page));
+        long high = Math.min(to, pageLastSeq(page));
+        for (long seq = low; seq <= high; seq++) {
+          if (availableExtent.contains(seq) && key(seq) == null) return seq;
+        }
+      }
+    }
+    return -1;
+  }
+
+  /** 返回最小驻留 HistorySeq，不创建 ResidentEntry 列表或排序。 */
+  public long firstResidentSeq() {
+    return firstResidentSeq;
+  }
 
   public LineKey key(long historySeq) {
     if (!extent.contains(historySeq)) return null;
@@ -115,15 +159,19 @@ public final class HistoryResidencyIndex {
     private HistoryExtent extent;
     private HistoryExtent availableExtent;
     private final Map<Long, HistoryPage> pages;
+    private final Map<Long, Integer> unloadedCounts;
     private final Set<Long> copiedPages = new HashSet<>();
     private final Set<LineKey> removedKeys = new HashSet<>();
     private long residentCount;
+    private long firstResidentSeq;
 
     private Editor(HistoryResidencyIndex source) {
       extent = source.extent;
       availableExtent = source.availableExtent;
       pages = new HashMap<>(source.pages);
+      unloadedCounts = new HashMap<>(source.unloadedCounts);
       residentCount = source.residentCount;
+      firstResidentSeq = source.firstResidentSeq;
     }
 
     public Editor setExtent(HistoryExtent next) {
@@ -131,10 +179,15 @@ public final class HistoryResidencyIndex {
       HistoryExtent previous = extent;
       extent = next;
       availableExtent = next;
+      if (previous.equals(next)) return this;
       if (previous.isEmpty()
           || (!next.isEmpty()
               && next.firstSeq <= previous.firstSeq
               && next.lastSeq >= previous.lastSeq)) {
+        rebuildUnloadedCounts();
+        if (firstResidentSeq >= 0 && !next.contains(firstResidentSeq)) {
+          recomputeFirstResidentSeq();
+        }
         return this;
       }
       List<Long> outside = new ArrayList<>();
@@ -146,12 +199,15 @@ public final class HistoryResidencyIndex {
       }
       for (long page : outside) removePage(page);
       if (!next.isEmpty()) clearOutside(next.firstSeq, next.lastSeq);
+      rebuildUnloadedCounts();
+      recomputeFirstResidentSeq();
       return this;
     }
 
     public Editor setAvailableExtent(HistoryExtent next) {
       if (next == null) throw new IllegalArgumentException("available extent missing");
       availableExtent = next;
+      rebuildUnloadedCounts();
       return this;
     }
 
@@ -165,15 +221,25 @@ public final class HistoryResidencyIndex {
       if (!extent.contains(historySeq) || key == null) {
         throw new IllegalArgumentException("resident key outside extent");
       }
-      HistoryPage page = mutablePage(pageNumber(historySeq));
+      long pageNumber = pageNumber(historySeq);
+      boolean newPage = !pages.containsKey(pageNumber);
+      HistoryPage page = mutablePage(pageNumber);
       int offset = pageOffset(historySeq);
       LineKey previous = page.slots[offset];
       if (previous != null && !previous.equals(key)) {
         throw new IllegalStateException("history resident key conflict");
       }
       if (previous == null) {
+        if (newPage) {
+          int available = availableSlotCount(pageNumber);
+          if (available > 0) unloadedCounts.put(pageNumber, available);
+        }
         page.slots[offset] = key;
         residentCount++;
+        if (firstResidentSeq < 0 || historySeq < firstResidentSeq) {
+          firstResidentSeq = historySeq;
+        }
+        adjustUnloadedCount(pageNumber, -1);
       }
       return this;
     }
@@ -188,8 +254,18 @@ public final class HistoryResidencyIndex {
         removedKeys.add(page.slots[offset]);
         page.slots[offset] = null;
         residentCount--;
+        boolean removedFirst = historySeq == firstResidentSeq;
+        if (availableExtent.contains(historySeq)) {
+          adjustUnloadedCount(pageNumber(historySeq), 1);
+        }
+        if (removedFirst) recomputeFirstResidentSeq();
       }
-      if (page.empty()) pages.remove(pageNumber(historySeq));
+      if (page.empty()) {
+        pages.remove(pageNumber(historySeq));
+        int available = availableSlotCount(pageNumber(historySeq));
+        if (available > 0) unloadedCounts.put(pageNumber(historySeq), available);
+        else unloadedCounts.remove(pageNumber(historySeq));
+      }
       return this;
     }
 
@@ -228,6 +304,9 @@ public final class HistoryResidencyIndex {
     }
 
     public Editor removePage(long pageNumber) {
+      long pageFirst = pageFirstSeq(pageNumber);
+      long pageLast = pageLastSeq(pageNumber);
+      boolean removedFirst = firstResidentSeq >= pageFirst && firstResidentSeq <= pageLast;
       HistoryPage page = pages.remove(pageNumber);
       if (page != null) {
         for (LineKey key : page.slots) {
@@ -237,12 +316,17 @@ public final class HistoryResidencyIndex {
           }
         }
       }
+      int available = availableSlotCount(pageNumber);
+      if (available > 0) unloadedCounts.put(pageNumber, available);
+      else unloadedCounts.remove(pageNumber);
+      if (removedFirst) recomputeFirstResidentSeq();
       return this;
     }
 
     public HistoryResidencyIndex commit() {
       return new HistoryResidencyIndex(
-          extent, availableExtent, new HashMap<>(pages), residentCount);
+          extent, availableExtent, new HashMap<>(pages),
+          new HashMap<>(unloadedCounts), residentCount, firstResidentSeq);
     }
 
     private HistoryPage mutablePage(long pageNumber) {
@@ -256,6 +340,58 @@ public final class HistoryResidencyIndex {
         pages.put(pageNumber, page);
       }
       return page;
+    }
+
+    private void adjustUnloadedCount(long pageNumber, int delta) {
+      int next = unloadedCounts.getOrDefault(pageNumber, 0) + delta;
+      if (next <= 0) unloadedCounts.remove(pageNumber);
+      else unloadedCounts.put(pageNumber, next);
+    }
+
+    private int availableSlotCount(long pageNumber) {
+      long first = Math.max(extent.firstSeq, pageFirstSeq(pageNumber));
+      long last = Math.min(extent.lastSeq, pageLastSeq(pageNumber));
+      if (first > last) return 0;
+      int count = 0;
+      for (long seq = first; seq <= last; seq++) {
+        if (availableExtent.contains(seq)) count++;
+      }
+      return count;
+    }
+
+    private void rebuildUnloadedCounts() {
+      unloadedCounts.clear();
+      if (extent.isEmpty()) return;
+      long firstPage = pageNumber(extent.firstSeq);
+      long lastPage = pageNumber(extent.lastSeq);
+      for (long page = firstPage; page <= lastPage; page++) {
+        int count = availableSlotCount(page);
+        HistoryPage current = pages.get(page);
+        if (current != null) {
+          long first = Math.max(extent.firstSeq, pageFirstSeq(page));
+          long last = Math.min(extent.lastSeq, pageLastSeq(page));
+          for (long seq = first; seq <= last; seq++) {
+            if (availableExtent.contains(seq)
+                && current.slots[pageOffset(seq)] != null) count--;
+          }
+        }
+        if (count > 0) unloadedCounts.put(page, count);
+      }
+    }
+
+    private void recomputeFirstResidentSeq() {
+      long first = Long.MAX_VALUE;
+      for (Map.Entry<Long, HistoryPage> entry : pages.entrySet()) {
+        long pageFirst = Math.max(extent.firstSeq, pageFirstSeq(entry.getKey()));
+        long pageLast = Math.min(extent.lastSeq, pageLastSeq(entry.getKey()));
+        for (long seq = pageFirst; seq <= pageLast; seq++) {
+          if (entry.getValue().slots[pageOffset(seq)] != null) {
+            first = Math.min(first, seq);
+            break;
+          }
+        }
+      }
+      firstResidentSeq = first == Long.MAX_VALUE ? -1 : first;
     }
 
     private void clearOutside(long firstSeq, long lastSeq) {

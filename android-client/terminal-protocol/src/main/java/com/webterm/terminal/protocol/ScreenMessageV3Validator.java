@@ -2,6 +2,7 @@ package com.webterm.terminal.protocol;
 
 import com.webterm.terminal.model.CommitFailure;
 import com.webterm.terminal.model.CommitValidationException;
+import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 
 /** screen.v3 结构与资源边界校验；Mapper 只负责 wire -> immutable domain 转换。 */
@@ -37,7 +38,7 @@ public final class ScreenMessageV3Validator {
       throw baselineFault(BaselineFaultCode.HISTORY_BINDING_COUNT_MISMATCH);
     }
     long previousHistorySeq = 0;
-    java.util.HashSet<String> historyKeys = new java.util.HashSet<>();
+    java.util.HashSet<LineKey> historyKeys = new java.util.HashSet<>();
     for (TerminalScreenV3Proto.HistoryBinding binding :
         baseline.getHistoryBindingsList()) {
       if (binding.getHistorySeq() <= previousHistorySeq) {
@@ -50,7 +51,8 @@ public final class ScreenMessageV3Validator {
       if (binding.getKey().getLineId() <= 0 || binding.getKey().getBodyVersion() <= 0) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
-      String key = binding.getKey().getLineId() + ":" + binding.getKey().getBodyVersion();
+      LineKey key = new LineKey(
+          binding.getKey().getLineId(), binding.getKey().getBodyVersion());
       if (!historyKeys.add(key)) {
         throw baselineFault(BaselineFaultCode.DUPLICATE_HISTORY_KEY);
       }
@@ -76,13 +78,13 @@ public final class ScreenMessageV3Validator {
       throw new BaselineValidationException(
           BaselineFaultCode.INVALID_DICTIONARY, invalidDictionary);
     }
-    java.util.HashSet<String> activeKeys = new java.util.HashSet<>();
+    java.util.HashSet<LineKey> activeKeys = new java.util.HashSet<>();
     java.util.HashSet<Long> activeLineIds = new java.util.HashSet<>();
     for (TerminalScreenV3Proto.LineKey rowKey : baseline.getScreenRowsList()) {
       if (rowKey.getLineId() <= 0 || rowKey.getBodyVersion() <= 0) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
-      String key = rowKey.getLineId() + ":" + rowKey.getBodyVersion();
+      LineKey key = new LineKey(rowKey.getLineId(), rowKey.getBodyVersion());
       if (!activeKeys.add(key) || !activeLineIds.add(rowKey.getLineId())) {
         throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
       }
@@ -90,7 +92,7 @@ public final class ScreenMessageV3Validator {
         throw baselineFault(BaselineFaultCode.ACTIVE_HISTORY_KEY_CONFLICT);
       }
     }
-    java.util.HashSet<String> bodyKeys = new java.util.HashSet<>();
+    java.util.HashSet<LineKey> bodyKeys = new java.util.HashSet<>();
     for (TerminalScreenV3Proto.LineBodyRecord line : baseline.getScreenBodiesList()) {
       if (line.getPhysicalColumns() != cols) {
         throw baselineFault(BaselineFaultCode.LINE_COLUMN_COUNT_MISMATCH);
@@ -107,19 +109,20 @@ public final class ScreenMessageV3Validator {
           throw baselineFault(BaselineFaultCode.INVALID_DICTIONARY);
         }
       }
-      String key = line.getKey().getLineId() + ":" + line.getKey().getBodyVersion();
+      LineKey key = new LineKey(
+          line.getKey().getLineId(), line.getKey().getBodyVersion());
       if (!bodyKeys.add(key)) {
         throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
       }
     }
     // Baseline 必须完整携带当前屏幕正文；冷历史只带 HistoryBinding，正文由
     // VisibleBodyLoader 按需加载。最终关系：bodyKeys == activeKeys。
-    for (String activeKey : activeKeys) {
+    for (LineKey activeKey : activeKeys) {
       if (!bodyKeys.contains(activeKey)) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
     }
-    for (String bodyKey : bodyKeys) {
+    for (LineKey bodyKey : bodyKeys) {
       if (!activeKeys.contains(bodyKey)) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }

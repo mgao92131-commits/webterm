@@ -998,11 +998,22 @@ public final class TerminalSessionRuntime {
     if (snap == null) return;
     VisibleBodyLoader.Demand demand = visibleBodyLoader.latestDemand();
     refreshEvictionPins();
-    VisibleBodyLoader.Batch target = visibleBodyLoader.planMissingBatch(
-        demand,
-        projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
-        projection.mainHistoryExtent, snap.history,
-        model.bodyCache(), model.historyCatalog());
+    VisibleBodyLoader.PendingPlan pending = visibleBodyLoader.takePendingPlan(
+        demand, projection.instanceId, projection.layoutEpoch, projection.historyGeneration);
+    VisibleBodyLoader.Batch target;
+    if (pending != null) {
+      // acceptDemand 已经完成过一次规划；即使结果为空，也不能在同一 Demand
+      // 内立即重复进入规划器。
+      target = pending.batch;
+    } else {
+      // setDemand() 产生的占位 Demand 没有预先规划批次；投影完整后只在这里
+      // 规划一次，后续回调/泵送都不会再次调用规划器。
+      target = visibleBodyLoader.planMissingBatch(
+          demand,
+          projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
+          projection.mainHistoryExtent, snap.history,
+          model.bodyCache(), model.historyCatalog());
+    }
     if (target == null) return;
     final LineBodyBatchSource.RequestHandle[] handleSlot =
         new LineBodyBatchSource.RequestHandle[1];
@@ -1033,6 +1044,18 @@ public final class TerminalSessionRuntime {
               if (visibleBodyLoader.closed()) return;
               boolean owned = active.beginApplying();
               try {
+                if (!owned) {
+                  if (active.isCancelled()) {
+                    HistoryDemandMetrics.cancelledBatchResponseDropped(result.bodies.size());
+                  } else {
+                    HistoryDemandMetrics.obsoleteBatchDropped(result.bodies.size());
+                  }
+                  return;
+                }
+                if (!activeBatchStillRelevant(active)) {
+                  HistoryDemandMetrics.obsoleteBatchDropped(result.bodies.size());
+                  return;
+                }
                 applyDecodedLineBodyBatch(active, result);
               } finally {
                 if (owned) visibleBodyLoader.complete(active);
@@ -1074,6 +1097,7 @@ public final class TerminalSessionRuntime {
     if (!decoded.instanceId.equals(projection.instanceId)
         || decoded.layoutEpoch != projection.layoutEpoch
         || decoded.historyGeneration != projection.historyGeneration) {
+      HistoryDemandMetrics.obsoleteBatchDropped(decoded.bodies.size());
       return;
     }
     java.util.LinkedHashSet<com.webterm.terminal.model.LineKey> requested =
@@ -1106,6 +1130,14 @@ public final class TerminalSessionRuntime {
       recordPublicationAdvance(publicationBefore);
       dispatchRenderNeeded();
     }
+  }
+
+  private boolean activeBatchStillRelevant(
+      @NonNull VisibleBodyLoader.ActiveRequest active) {
+    VisibleBodyLoader.Demand demand = visibleBodyLoader.latestDemand();
+    if (demand == null) return false;
+    return active.batch.plannedFromSeq <= demand.visibleToSeq
+        && demand.visibleFromSeq <= active.batch.plannedToSeq;
   }
 
   private boolean handleBatchFailure(@NonNull LineBodyBatchSource.Failure failure) {

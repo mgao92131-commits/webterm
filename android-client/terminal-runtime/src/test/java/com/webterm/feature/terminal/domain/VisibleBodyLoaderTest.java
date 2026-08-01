@@ -19,6 +19,22 @@ import org.junit.Test;
 
 public final class VisibleBodyLoaderTest {
   @Test
+  public void acceptedDemandPlansOnceAndPumpConsumesPendingBatch() throws Exception {
+    VisibleBodyLoader loader = new VisibleBodyLoader();
+    Fixture fixture = fixture(10_000);
+    VisibleBodyLoader.Demand demand = loader.acceptDemand(
+        5_000, 5_019, 5_000, -1, 20, 0L,
+        "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(demand);
+
+    VisibleBodyLoader.Batch pending = loader.takePendingBatch(demand, "i1", 1, 1);
+    assertNotNull(pending);
+    assertEquals("keys=" + pending.keys.size() + " from=" + pending.plannedFromSeq
+        + " to=" + pending.plannedToSeq, 128, pending.keys.size());
+    assertNull(loader.takePendingBatch(demand, "i1", 1, 1));
+  }
+
+  @Test
   public void visibleGapPrefetchesToMinimumBatchTowardOlderHistory() throws Exception {
     VisibleBodyLoader loader = new VisibleBodyLoader();
     Fixture fixture = fixture(1000);
@@ -27,7 +43,8 @@ public final class VisibleBodyLoaderTest {
     VisibleBodyLoader.Batch batch = loader.planMissingBatch(
         demand, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
     assertNotNull(batch);
-    assertEquals(128, batch.keys.size());
+    assertEquals("keys=" + batch.keys.size() + " from=" + batch.plannedFromSeq
+        + " to=" + batch.plannedToSeq, 128, batch.keys.size());
     assertEquals(20, batch.visibleKeyCount);
     assertEquals(108, batch.prefetchKeyCount);
     assertEquals(new LineKey(900, 1), batch.keys.get(0));
@@ -76,8 +93,7 @@ public final class VisibleBodyLoaderTest {
         100, 119, 100, -1, 20, 0L,
         "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
     assertNotNull(accepted);
-    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
-        accepted, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    VisibleBodyLoader.Batch batch = loader.takePendingBatch(accepted, "i1", 1, 1);
     assertNotNull(batch);
     AtomicBoolean cancelled = new AtomicBoolean();
     assertTrue(loader.begin(batch, () -> cancelled.set(true)));
@@ -98,10 +114,13 @@ public final class VisibleBodyLoaderTest {
     VisibleBodyLoader.Demand accepted = loader.acceptDemand(
         100, 119, 100, -1, 20, 0L,
         "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
-    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
-        accepted, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    VisibleBodyLoader.Batch batch = loader.takePendingBatch(
+        accepted, "i1", 1, 1);
+    assertNotNull(batch);
     AtomicBoolean cancelled = new AtomicBoolean();
     assertTrue(loader.begin(batch, () -> cancelled.set(true)));
+    VisibleBodyLoader.ActiveRequest active = loader.activeRequest();
+    assertNotNull(active);
 
     VisibleBodyLoader.Demand jumped = loader.acceptDemand(
         800, 819, 800, -1, 20, 0L,
@@ -109,6 +128,7 @@ public final class VisibleBodyLoaderTest {
     assertNotNull(jumped);
     assertTrue(cancelled.get());
     assertNull(loader.activeRequest());
+    assertFalse(active.beginApplying());
   }
 
   @Test

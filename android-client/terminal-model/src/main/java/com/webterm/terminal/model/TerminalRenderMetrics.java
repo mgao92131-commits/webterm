@@ -227,6 +227,7 @@ public final class TerminalRenderMetrics {
   public static long historyAxisPagesRebuilt() { return HISTORY_AXIS_PAGES_REBUILT.get(); }
   public static long historyAxisPagesReused() { return HISTORY_AXIS_PAGES_REUSED.get(); }
   public static long historyAxisRowsScanned() { return HISTORY_AXIS_ROWS_SCANNED.get(); }
+  public static long historyAxisUpdateNanos() { return HISTORY_AXIS_UPDATE_NANOS.get(); }
   public static long historyAxisSegmentBuildCount() {
     return HISTORY_AXIS_SEGMENT_BUILD_COUNT.get();
   }

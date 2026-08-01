@@ -469,6 +469,32 @@ func TestSlowClientReceivesBodiesCreatedInSkippedRevisions(t *testing.T) {
 	}
 }
 
+func TestFrameDeriverRecentBodyPossessionIsBounded(t *testing.T) {
+	var deriver FrameDeriver
+	state := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, InstanceID: "i1", Epoch: 1,
+		HistoryGeneration: 1, DictionaryGeneration: 1,
+		Rows: 1, Cols: 1,
+	}
+	deriver.SeedAfterSuccessfulWrite(state)
+	for id := uint64(1); id <= frameDeriverRecentBodyCapacity+1000; id++ {
+		deriver.SeedAfterSuccessfulWriteDelivered(state, terminalengine.ScreenFrame{
+			Kind:        terminalengine.FramePatch,
+			BodyUpserts: []terminalengine.Line{{ID: id, Version: 1}},
+		})
+	}
+	if got := deriver.KnownBodyKeyCount(); got > frameDeriverRecentBodyCapacity {
+		t.Fatalf("known body keys=%d, capacity=%d", got, frameDeriverRecentBodyCapacity)
+	}
+	if deriver.KnownBodyKeyHighWater() > frameDeriverRecentBodyCapacity {
+		t.Fatalf("known body high-water=%d, capacity=%d",
+			deriver.KnownBodyKeyHighWater(), frameDeriverRecentBodyCapacity)
+	}
+	if deriver.KnownBodyEvictionCount() == 0 {
+		t.Fatal("bounded possession cache did not evict old keys")
+	}
+}
+
 func TestProjector_ClearLineIsExportedAsScreenPatch(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10000, nil)
 	engine := terminalengine.NewEngine(3, 12, sb)

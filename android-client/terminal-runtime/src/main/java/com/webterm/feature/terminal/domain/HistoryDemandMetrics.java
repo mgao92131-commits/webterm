@@ -18,6 +18,16 @@ public final class HistoryDemandMetrics {
   private static final AtomicLong FETCH_PLAN_REUSED = new AtomicLong();
   private static final AtomicLong FETCH_COVERED_BY_ACTIVE = new AtomicLong();
   private static final AtomicLong FETCH_CANCELLED_FOR_DISTANCE = new AtomicLong();
+  private static final AtomicLong PLAN_INVOCATION_COUNT = new AtomicLong();
+  private static final AtomicLong PLAN_DUPLICATE_INVOCATION_COUNT = new AtomicLong();
+  private static final AtomicLong PLAN_SEQ_SCANNED_COUNT = new AtomicLong();
+  private static final AtomicLong PLAN_DURATION_NANOS = new AtomicLong();
+  private static final AtomicLong PLAN_MAX_SEQ_SCANNED = new AtomicLong();
+  private static final AtomicLong CANCELLED_BATCH_RESPONSE_COUNT = new AtomicLong();
+  private static final AtomicLong CANCELLED_BATCH_RESPONSE_DROPPED_COUNT = new AtomicLong();
+  private static final AtomicLong OBSOLETE_BATCH_BODY_COUNT = new AtomicLong();
+  private static final AtomicLong OBSOLETE_BATCH_BODY_APPLIED_COUNT = new AtomicLong();
+  private static final AtomicLong OBSOLETE_BATCH_APPLY_DURATION_NANOS = new AtomicLong();
   private static final AtomicLong BATCH_REQUESTED_KEY_COUNT = new AtomicLong();
   private static final AtomicLong BATCH_VISIBLE_KEY_COUNT = new AtomicLong();
   private static final AtomicLong BATCH_PREFETCH_KEY_COUNT = new AtomicLong();
@@ -61,6 +71,34 @@ public final class HistoryDemandMetrics {
     FETCH_CANCELLED_FOR_DISTANCE.incrementAndGet();
   }
 
+  static void planCompleted(
+      long demandEpoch, int seqScanned, long durationNanos, boolean duplicateInvocation) {
+    PLAN_INVOCATION_COUNT.incrementAndGet();
+    if (duplicateInvocation) PLAN_DUPLICATE_INVOCATION_COUNT.incrementAndGet();
+    PLAN_SEQ_SCANNED_COUNT.addAndGet(Math.max(0, seqScanned));
+    PLAN_DURATION_NANOS.addAndGet(Math.max(0L, durationNanos));
+    long current = PLAN_MAX_SEQ_SCANNED.get();
+    while (seqScanned > current
+        && !PLAN_MAX_SEQ_SCANNED.compareAndSet(current, seqScanned)) {
+      current = PLAN_MAX_SEQ_SCANNED.get();
+    }
+  }
+
+  static void cancelledBatchResponseDropped(int bodyCount) {
+    CANCELLED_BATCH_RESPONSE_COUNT.incrementAndGet();
+    CANCELLED_BATCH_RESPONSE_DROPPED_COUNT.incrementAndGet();
+    OBSOLETE_BATCH_BODY_COUNT.addAndGet(Math.max(0, bodyCount));
+  }
+
+  static void obsoleteBatchDropped(int bodyCount) {
+    OBSOLETE_BATCH_BODY_COUNT.addAndGet(Math.max(0, bodyCount));
+  }
+
+  static void obsoleteBatchApplied(int bodyCount, long durationNanos) {
+    OBSOLETE_BATCH_BODY_APPLIED_COUNT.addAndGet(Math.max(0, bodyCount));
+    OBSOLETE_BATCH_APPLY_DURATION_NANOS.addAndGet(Math.max(0L, durationNanos));
+  }
+
   static void batchRequested(int keyCount, int visibleKeyCount, int prefetchKeyCount) {
     BATCH_REQUEST_COUNT.incrementAndGet();
     BATCH_REQUESTED_KEY_COUNT.addAndGet(Math.max(0, keyCount));
@@ -87,6 +125,16 @@ public final class HistoryDemandMetrics {
     out.put("historyFetchPlanReusedCount", FETCH_PLAN_REUSED.get());
     out.put("historyFetchCoveredByActiveCount", FETCH_COVERED_BY_ACTIVE.get());
     out.put("historyFetchCancelledForDistanceCount", FETCH_CANCELLED_FOR_DISTANCE.get());
+    out.put("historyPlanInvocationCount", PLAN_INVOCATION_COUNT.get());
+    out.put("historyPlanDuplicateInvocationCount", PLAN_DUPLICATE_INVOCATION_COUNT.get());
+    out.put("historyPlanSeqScannedCount", PLAN_SEQ_SCANNED_COUNT.get());
+    out.put("historyPlanDurationNanos", PLAN_DURATION_NANOS.get());
+    out.put("historyPlanMaxSeqScanned", PLAN_MAX_SEQ_SCANNED.get());
+    out.put("cancelledBatchResponseCount", CANCELLED_BATCH_RESPONSE_COUNT.get());
+    out.put("cancelledBatchResponseDroppedCount", CANCELLED_BATCH_RESPONSE_DROPPED_COUNT.get());
+    out.put("obsoleteBatchBodyCount", OBSOLETE_BATCH_BODY_COUNT.get());
+    out.put("obsoleteBatchBodyAppliedCount", OBSOLETE_BATCH_BODY_APPLIED_COUNT.get());
+    out.put("obsoleteBatchApplyDurationNanos", OBSOLETE_BATCH_APPLY_DURATION_NANOS.get());
     out.put("historyBatchRequestedKeyCount", BATCH_REQUESTED_KEY_COUNT.get());
     out.put("historyBatchVisibleKeyCount", BATCH_VISIBLE_KEY_COUNT.get());
     out.put("historyBatchPrefetchKeyCount", BATCH_PREFETCH_KEY_COUNT.get());

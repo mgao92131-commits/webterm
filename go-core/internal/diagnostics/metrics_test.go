@@ -51,6 +51,24 @@ func TestAgentMetricsCounters(t *testing.T) {
 	}
 }
 
+func TestFrameDeriverBodyCacheMetrics(t *testing.T) {
+	m := NewAgentMetrics()
+	m.ObserveFrameDeriverBodyCache(12, 12)
+	m.ObserveFrameDeriverBodyCache(8, 20)
+	m.ObserveFrameDeriverBodyEviction()
+
+	snapshot := m.Snapshot()
+	if got := snapshot["frameDeriverKnownBodyKeyCount"]; got != uint64(8) {
+		t.Fatalf("known body count = %v, want 8", got)
+	}
+	if got := snapshot["frameDeriverKnownBodyKeyHighWater"]; got != uint64(20) {
+		t.Fatalf("known body high water = %v, want 20", got)
+	}
+	if got := snapshot["frameDeriverKnownBodyEvictionCount"]; got != uint64(1) {
+		t.Fatalf("known body evictions = %v, want 1", got)
+	}
+}
+
 func TestDurationBucketsObserve(t *testing.T) {
 	var buckets DurationBuckets
 	buckets.Observe(100_000)

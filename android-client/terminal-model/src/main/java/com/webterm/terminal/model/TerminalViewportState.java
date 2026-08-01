@@ -67,22 +67,9 @@ public final class TerminalViewportState {
     long topRow = (long) Math.floor(
         snapshot.contentAxis.historyRowCount() - next / (double) lineHeight);
     topRow = Math.max(0, Math.min(snapshot.contentAxis.rowCount() - 1, topRow));
-    UnifiedContentAxis.Item anchorItem = null;
-    for (UnifiedContentAxis.Item item : snapshot.contentAxis.items()) {
-      if (item.line != null && item.startRow >= topRow) {
-        anchorItem = item;
-        break;
-      }
-    }
-    if (anchorItem == null) {
-      for (int i = snapshot.contentAxis.items().size() - 1; i >= 0; i--) {
-        UnifiedContentAxis.Item item = snapshot.contentAxis.items().get(i);
-        if (item.line != null) {
-          anchorItem = item;
-          break;
-        }
-      }
-    }
+    UnifiedContentAxis.Item anchorItem =
+        snapshot.contentAxis.firstLoadedItemAtOrAfter(topRow);
+    if (anchorItem == null) anchorItem = snapshot.contentAxis.lastLoadedItem();
     if (anchorItem == null) {
       followTail(snapshot.activeBuffer);
       return;

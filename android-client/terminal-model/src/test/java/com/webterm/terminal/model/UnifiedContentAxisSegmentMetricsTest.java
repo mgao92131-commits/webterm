@@ -22,10 +22,9 @@ public final class UnifiedContentAxisSegmentMetricsTest {
     long pagesDelta = TerminalRenderMetrics.historyAxisSegmentPagesVisited() - beforePages;
     long visitedDelta = TerminalRenderMetrics.historyAxisSegmentItemsVisited() - beforeVisited;
     long createdDelta = TerminalRenderMetrics.historyAxisSegmentItemsCreated() - beforeCreated;
-    // 增量更新仍会遍历当前 HistoryPart 中的全部 page。
-    assertTrue("pagesVisited=" + pagesDelta, pagesDelta >= 1);
-    assertTrue("itemsVisited=" + visitedDelta, visitedDelta >= 10);
-    assertTrue("itemsCreated=" + createdDelta, createdDelta >= visitedDelta);
+    assertTrue("pagesVisited=" + pagesDelta, pagesDelta >= 1 && pagesDelta <= 2);
+    assertTrue("itemsVisited=" + visitedDelta, visitedDelta > 0 && visitedDelta <= 256);
+    assertTrue("itemsCreated=" + createdDelta, createdDelta > 0 && createdDelta <= 256);
   }
 
   @Test
@@ -50,9 +49,9 @@ public final class UnifiedContentAxisSegmentMetricsTest {
       long visited = TerminalRenderMetrics.historyAxisSegmentItemsVisited() - beforeVisited;
 
       assertEquals(1, builds);
-      assertTrue("pages for " + historyRows, pages > 0);
-      assertTrue("visited for " + historyRows, visited >= 100);
-      assertTrue("created for " + historyRows, created >= visited);
+      assertTrue("pages for " + historyRows, pages > 0 && pages <= 2);
+      assertTrue("visited for " + historyRows, visited > 0 && visited <= 256);
+      assertTrue("created for " + historyRows, created > 0 && created <= 256);
       // 观测用途：打印到 stdout 供本地对比，不设硬超时。
       System.out.println(
           "historyAxisSegments historyRows=" + historyRows
