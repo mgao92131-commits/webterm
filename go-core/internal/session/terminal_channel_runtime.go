@@ -113,6 +113,7 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 			// 与所属 Runtime 使用同一捕获实现；同时缓存权威实例 ID 供派生/wire 捕获点关联。
 			client.captureSink = rt.CaptureSink()
 			client.terminalInstanceID = rt.Info().InstanceID
+			client.screenDeriver.SetBodyResolver(rt.LookupBodyLine)
 		}
 	}
 	if client.captureSink == nil {
@@ -348,7 +349,7 @@ func (client *terminalChannelRuntime) writeInitialScreenSync(ctx context.Context
 		return false
 	}
 	client.screenMu.Lock()
-	client.screenDeriver.SeedAfterSuccessfulWrite(initial.sync.State)
+	client.screenDeriver.SeedAfterSuccessfulWriteDelivered(initial.sync.State, initial.sync.State)
 	client.screenMu.Unlock()
 	initial.done(true)
 	return true
@@ -392,7 +393,7 @@ func (client *terminalChannelRuntime) writeLatestScreenState(ctx context.Context
 	}
 	diagnostics.Default.ScreenFramesWrittenCount.Add(1)
 	client.screenMu.Lock()
-	client.screenDeriver.SeedAfterSuccessfulWrite(state)
+	client.screenDeriver.SeedAfterSuccessfulWriteDelivered(state, frame)
 	client.screenMu.Unlock()
 	return true
 }

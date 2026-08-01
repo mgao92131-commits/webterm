@@ -245,6 +245,14 @@ func (r *Runtime) ID() string {
 	return r.id
 }
 
+// LookupBodyLine 供 FrameDeriver 按客户端补齐 body_upserts；走 Projector 当前字典编码。
+func (r *Runtime) LookupBodyLine(key terminalengine.LineKey) (terminalengine.Line, bool) {
+	if r == nil || r.projector == nil {
+		return terminalengine.Line{}, false
+	}
+	return r.projector.LookupBodyLine(key)
+}
+
 // LineBodyBatch 并发按 LineKey 拉取正文，不进入 actor。
 func (r *Runtime) LineBodyBatch(
 	instanceID string, keys []terminalengine.LineKey,

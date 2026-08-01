@@ -301,6 +301,10 @@ func (p *Projector) SnapshotBarrierRevision() uint64 {
 	return p.changeIndex.SnapshotBarrierRevision
 }
 
+// BodyResolver 按 LineKey 取出可编码的正文 Line（含 Runs）。
+// 用于慢客户端跳过中间 revision 时补齐 HistoryBinding 所需的 body_upserts。
+type BodyResolver func(key terminalengine.LineKey) (terminalengine.Line, bool)
+
 // FrameDeriver owns one transport client's last successfully scheduled
 // authoritative state. It derives a frame only when that client is actually
 // about to write, so a slow client can collapse many intermediate states
@@ -312,15 +316,31 @@ func (p *Projector) SnapshotBarrierRevision() uint64 {
 type FrameDeriver struct {
 	baseline        terminalengine.ScreenFrame
 	baselineRowByID map[uint64]int
+	knownBodyKeys   map[terminalengine.LineKey]struct{}
+	resolveBody     BodyResolver
 }
 
 func (d *FrameDeriver) Reset() {
 	d.baseline = terminalengine.ScreenFrame{}
 	clear(d.baselineRowByID)
+	clear(d.knownBodyKeys)
+}
+
+// SetBodyResolver 绑定权威 LineStore 导出回调；慢客户端派生时用它补齐正文。
+func (d *FrameDeriver) SetBodyResolver(resolve BodyResolver) {
+	d.resolveBody = resolve
 }
 
 // SeedAfterSuccessfulWrite 只在物理写成功后提交该客户端的完整权威状态。
+// delivered 是实际写出的帧（Baseline 或 Commit）；用于更新 knownBodyKeys。
 func (d *FrameDeriver) SeedAfterSuccessfulWrite(state terminalengine.ScreenFrame) {
+	d.SeedAfterSuccessfulWriteDelivered(state, state)
+}
+
+// SeedAfterSuccessfulWriteDelivered 提交 diff baseline，并按实际交付帧记录正文身份。
+func (d *FrameDeriver) SeedAfterSuccessfulWriteDelivered(
+	state, delivered terminalengine.ScreenFrame,
+) {
 	d.baseline = state
 	if d.baselineRowByID == nil {
 		d.baselineRowByID = make(map[uint64]int, len(state.Screen))
@@ -332,13 +352,98 @@ func (d *FrameDeriver) SeedAfterSuccessfulWrite(state terminalengine.ScreenFrame
 			d.baselineRowByID[line.ID] = row
 		}
 	}
+	d.noteDeliveredBodies(delivered)
+}
+
+func (d *FrameDeriver) noteDeliveredBodies(frame terminalengine.ScreenFrame) {
+	if d.knownBodyKeys == nil {
+		d.knownBodyKeys = make(map[terminalengine.LineKey]struct{})
+	}
+	mark := func(line terminalengine.Line) {
+		if line.ID == 0 || line.Version == 0 {
+			return
+		}
+		d.knownBodyKeys[terminalengine.LineKey{
+			ID:      terminalengine.LineID(line.ID),
+			Version: terminalengine.BodyVersion(line.Version),
+		}] = struct{}{}
+	}
+	// Baseline / Commit 的屏幕写与 body_upserts 才算客户端已持有正文；
+	// 冷历史 HistoryBinding 故意不带正文，不得记入 knownBodyKeys。
+	for _, line := range frame.Screen {
+		mark(line)
+	}
+	for _, line := range frame.BodyUpserts {
+		mark(line)
+	}
 }
 
 // DeriveForState 只派生、不推进 baseline；物理写成功后调用
-// SeedAfterSuccessfulWrite 提交。
+// SeedAfterSuccessfulWrite / SeedAfterSuccessfulWriteDelivered 提交。
 func (d *FrameDeriver) DeriveForState(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	baseline := d.baseline
-	return frameForBaseline(&baseline, state, d.baselineRowByID)
+	frame := frameForBaseline(&baseline, state, d.baselineRowByID)
+	if frame.Kind == terminalengine.FramePatch {
+		frame = d.ensureClientBodyUpserts(frame)
+	}
+	return frame
+}
+
+// ensureClientBodyUpserts 按该客户端 knownBodyKeys 从 LineStore 补齐正文。
+// mailbox 合并会跳过中间 revision 的瞬时 BodyUpserts；最终 Commit 仍可能引用
+// 那些 key（HistoryPush / Screen write），必须在派生时按客户端补发。
+func (d *FrameDeriver) ensureClientBodyUpserts(
+	frame terminalengine.ScreenFrame,
+) terminalengine.ScreenFrame {
+	if len(frame.HistoryPushes) == 0 && len(frame.BodyUpserts) == 0 &&
+		len(frame.Screen) == 0 {
+		return frame
+	}
+	seen := make(map[terminalengine.LineKey]struct{}, len(frame.BodyUpserts)+len(frame.Screen))
+	for _, line := range frame.BodyUpserts {
+		if line.ID == 0 {
+			continue
+		}
+		seen[terminalengine.LineKey{
+			ID:      terminalengine.LineID(line.ID),
+			Version: terminalengine.BodyVersion(line.Version),
+		}] = struct{}{}
+	}
+	upserts := append([]terminalengine.Line(nil), frame.BodyUpserts...)
+	add := func(key terminalengine.LineKey) {
+		if key.ID == 0 || key.Version == 0 {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		if _, ok := d.knownBodyKeys[key]; ok {
+			return
+		}
+		if d.resolveBody == nil {
+			return
+		}
+		line, ok := d.resolveBody(key)
+		if !ok || line.ID == 0 {
+			return
+		}
+		seen[key] = struct{}{}
+		upserts = append(upserts, line)
+	}
+	for _, line := range frame.Screen {
+		add(terminalengine.LineKey{
+			ID:      terminalengine.LineID(line.ID),
+			Version: terminalengine.BodyVersion(line.Version),
+		})
+	}
+	for _, push := range frame.HistoryPushes {
+		add(terminalengine.LineKey{
+			ID:      terminalengine.LineID(push.LineID),
+			Version: terminalengine.BodyVersion(push.LineVersion),
+		})
+	}
+	frame.BodyUpserts = upserts
+	return frame
 }
 
 // NewProjector 创建新的 screen projector。
@@ -361,6 +466,20 @@ func (p *Projector) LineStore() *terminalengine.LineStore {
 		return nil
 	}
 	return p.canonical.LineStore
+}
+
+// LookupBodyLine 按精确 LineKey 导出可编码正文；供 FrameDeriver 补齐慢客户端 upsert。
+func (p *Projector) LookupBodyLine(key terminalengine.LineKey) (terminalengine.Line, bool) {
+	if p == nil || p.canonical == nil || p.canonical.LineStore == nil || key.ID == 0 {
+		return terminalengine.Line{}, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record, ok := p.canonical.LineStore.Get(key)
+	if !ok || record == nil {
+		return terminalengine.Line{}, false
+	}
+	return p.exporter.exportLineRecord(record), true
 }
 
 // HistoryRange 导出同一权威快照中的闭区间历史与 message-local 字典。

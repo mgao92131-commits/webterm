@@ -15,8 +15,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.LifecycleOwner;
 
-import com.webterm.feature.terminal.domain.OkHttpLineBodyBatchSource;
-import com.webterm.feature.terminal.domain.TerminalSessionRuntime;
+import com.webterm.feature.terminal.TerminalFragment;
 import com.webterm.feature.terminal.TerminalScreenBuilder;
 import com.webterm.feature.terminal.TerminalConnectionStatusView;
 import com.webterm.feature.terminal.TerminalViewModel;

@@ -93,6 +93,16 @@ func (s *LineStore) GetMany(keys []LineKey) (records []*LineRecord, missing []Li
 	return records, missing
 }
 
+// Len 返回当前仍驻留的正文记录数（含被 screen/history/journal 引用的全部版本）。
+func (s *LineStore) Len() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.bodies)
+}
+
 // Latest 返回某 LineID 当前最新 LineKey。
 func (s *LineStore) Latest(id LineID) (LineKey, bool) {
 	if s == nil {

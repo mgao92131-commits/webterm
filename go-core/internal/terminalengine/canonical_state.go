@@ -41,16 +41,53 @@ func (s *CanonicalTerminalState) ActiveScreen() []LineKey {
 	return s.MainScreen
 }
 
-// SetActiveScreen 替换当前活动 buffer 的行键布局。
+// SetActiveScreen 替换当前活动 buffer 的行键布局，并维护 LineStore StateRefs。
 func (s *CanonicalTerminalState) SetActiveScreen(rows []LineKey) {
 	if s == nil {
 		return
 	}
-	if s.ActiveBuffer == BufferAlternate {
-		s.AlternateScreen = rows
+	s.ReplaceActiveScreen(rows)
+}
+
+// ReplaceActiveScreen 原子替换活动屏布局，并对新旧 key 做引用计数差分。
+func (s *CanonicalTerminalState) ReplaceActiveScreen(next []LineKey) {
+	if s == nil {
 		return
 	}
-	s.MainScreen = rows
+	previous := s.ActiveScreen()
+	oldCounts := countLineKeys(previous)
+	newCounts := countLineKeys(next)
+	if s.LineStore != nil {
+		for key, oldCount := range oldCounts {
+			release := oldCount - newCounts[key]
+			for i := 0; i < release; i++ {
+				s.LineStore.ReleaseStateRef(key)
+			}
+		}
+		for key, newCount := range newCounts {
+			add := newCount - oldCounts[key]
+			for i := 0; i < add; i++ {
+				s.LineStore.AddStateRef(key)
+			}
+		}
+	}
+	copied := append([]LineKey(nil), next...)
+	if s.ActiveBuffer == BufferAlternate {
+		s.AlternateScreen = copied
+		return
+	}
+	s.MainScreen = copied
+}
+
+func countLineKeys(keys []LineKey) map[LineKey]int {
+	counts := make(map[LineKey]int, len(keys))
+	for _, key := range keys {
+		if key.ID == 0 {
+			continue
+		}
+		counts[key]++
+	}
+	return counts
 }
 
 // BindHistory 将 HistorySeq 绑定到 LineKey，并维护 StateRefs。

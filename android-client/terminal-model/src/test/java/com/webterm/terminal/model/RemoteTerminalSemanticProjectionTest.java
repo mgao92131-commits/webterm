@@ -16,7 +16,11 @@ public final class RemoteTerminalSemanticProjectionTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));
     assertTrue(model.renderSnapshot().history instanceof SemanticHistoryRenderView);
-    assertEquals(3, model.bodyCache().bodyCount());
+    // Baseline 仅携带屏幕正文；冷历史绑定无正文。
+    assertEquals(1, model.bodyCache().bodyCount());
+    assertNull(model.bodyCache().body(new LineKey(101, 1)));
+    assertEquals(SlotState.UNLOADED,
+        model.renderSnapshot().history.slotStateAt(0));
 
     HistoryBodyResult result = model.applyHistoryBody(
         range(1, 101, "history"),
@@ -27,7 +31,7 @@ public final class RemoteTerminalSemanticProjectionTest {
     assertEquals(
         "history",
         model.renderSnapshot().history.renderLineAt(index).at(0).text());
-    assertEquals(3, model.bodyCache().bodyCount());
+    assertEquals(2, model.bodyCache().bodyCount());
     assertEquals(new LineKey(101, 1), model.historyCatalog().key(1));
     assertEquals(new HistoryExtent(1, 2), model.projectionReadView().mainHistoryExtent);
   }

@@ -89,13 +89,10 @@ public final class ScreenProjectionReducer {
         active[row] = key;
       }
 
-      previousSeq = 0;
+      // 冷历史只建立位置绑定；正文由 VisibleBodyLoader 按需加载。
+      // PROMOTION_BODY_INVARIANT_FAILURE 仅适用于实时 Commit 晋升。
       for (HistoryPush binding : baseline.historyBindings) {
         tx.historyCatalog().bindNew(binding.historySeq, binding.key);
-        if (tx.bodyCache().body(binding.key) == null) {
-          return needs(ProjectionFault.PROMOTION_BODY_INVARIANT_FAILURE);
-        }
-        previousSeq = binding.historySeq;
       }
 
       tx.activeRows(new ActiveRowLayout(active));

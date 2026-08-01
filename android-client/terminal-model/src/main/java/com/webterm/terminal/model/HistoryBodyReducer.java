@@ -87,11 +87,7 @@ public final class HistoryBodyReducer {
         }
         LineBody previous = tx.bodyCache().body(entry.key());
         if (previous != null && !previous.equals(entry.body())) {
-          Long boundSeq = historySeqForKey(surface, entry.key());
-          if (boundSeq == null
-              || surface.bodyCache.historyResidency().key(boundSeq) != null) {
-            return new HistoryBodyResult.Rejected(HistoryBodyFault.BODY_CONFLICT);
-          }
+          return new HistoryBodyResult.Rejected(HistoryBodyFault.BODY_CONFLICT);
         }
         Long historySeq = historySeqForKey(surface, entry.key());
         if (historySeq != null) {
@@ -136,20 +132,11 @@ public final class HistoryBodyReducer {
   }
 
   private static boolean stillReferenced(TerminalSurfaceState surface, LineKey key) {
-    if (surface.activeRows.contains(key)) return true;
-    HistoryExtent extent = surface.historyCatalog.extent();
-    for (long seq = extent.firstSeq; seq <= extent.lastSeq; seq++) {
-      LineKey bound = surface.historyCatalog.key(seq);
-      if (key.equals(bound)) return true;
-    }
-    return false;
+    return surface.activeRows.contains(key)
+        || surface.historyCatalog.historySeq(key) != null;
   }
 
   private static Long historySeqForKey(TerminalSurfaceState surface, LineKey key) {
-    HistoryExtent extent = surface.historyCatalog.extent();
-    for (long seq = extent.firstSeq; seq <= extent.lastSeq; seq++) {
-      if (key.equals(surface.historyCatalog.key(seq))) return seq;
-    }
-    return null;
+    return surface.historyCatalog.historySeq(key);
   }
 }

@@ -109,7 +109,9 @@ public final class UnifiedProjectionContractTest {
     assertEquals(new LineKey(50, 1), state.mainSurface.historyCatalog.key(5));
     assertEquals(new LineKey(60, 2), state.mainSurface.historyCatalog.key(6));
     assertEquals(new LineKey(70, 1), state.mainSurface.activeRows.keyAt(0));
-    assertNotNull(state.mainSurface.bodyCache.body(new LineKey(50, 1)));
+    // Baseline 不携带冷历史正文；catalog 已绑定，slot 仍为 UNLOADED。
+    assertNull(state.mainSurface.bodyCache.body(new LineKey(50, 1)));
+    assertNull(state.mainSurface.bodyCache.body(new LineKey(60, 2)));
     assertEquals(
         SlotState.UNLOADED,
         state.mainSurface.bodyCache.historyResidency().slotState(5));

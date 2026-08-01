@@ -17,7 +17,7 @@ import (
 func (d *FrameDeriver) deriveAndSeedForTest(state terminalengine.ScreenFrame) terminalengine.ScreenFrame {
 	frame := d.DeriveForState(state)
 	if frame.Kind != 0 {
-		d.SeedAfterSuccessfulWrite(state)
+		d.SeedAfterSuccessfulWriteDelivered(state, frame)
 	}
 	return frame
 }
@@ -399,6 +399,73 @@ func TestFrameDeriver_CanSkipIntermediateStatesWithoutRevisionGap(t *testing.T) 
 	}
 	if len(latest.Screen) == 0 {
 		t.Fatal("coalesced frame omitted the latest screen change")
+	}
+}
+
+func TestSlowClientReceivesBodiesCreatedInSkippedRevisions(t *testing.T) {
+	store := terminalengine.NewLineStore()
+	bodyA := terminalengine.CanonicalLineBody{
+		PhysicalColumns: 1, Cells: []terminalengine.CanonicalCell{{Text: "A", Width: 1}},
+	}
+	bodyB := terminalengine.CanonicalLineBody{
+		PhysicalColumns: 1, Cells: []terminalengine.CanonicalCell{{Text: "B", Width: 1}},
+	}
+	recA, _ := store.Commit(500, bodyA)
+	recB, _ := store.Commit(501, bodyB)
+
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	var deriver FrameDeriver
+	deriver.SetBodyResolver(func(key terminalengine.LineKey) (terminalengine.Line, bool) {
+		record, ok := store.Get(key)
+		if !ok {
+			return terminalengine.Line{}, false
+		}
+		return exp.exportLineRecord(record), true
+	})
+
+	baseline := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, InstanceID: "i1", Epoch: 1, Seq: 1,
+		Rows: 1, Cols: 1,
+		Screen: []terminalengine.Line{{
+			ID: 1, Version: 1, Row: 0, PhysicalColumns: 1,
+			Runs: []terminalengine.CellRun{{Col: 0, Cells: []terminalengine.Cell{{Text: ".", Width: 1}}}},
+		}},
+	}
+	deriver.SeedAfterSuccessfulWriteDelivered(baseline, baseline)
+
+	// 模拟：revision 2/3 创建 A/B 并进入历史，但 mailbox 合并后客户端只看到最终 patch。
+	patch := terminalengine.ScreenFrame{
+		Kind: terminalengine.FramePatch, InstanceID: "i1", Epoch: 1,
+		Seq: 4, BaseRevision: 1, Rows: 1, Cols: 1,
+		HistoryPushes: []terminalengine.HistoryPush{
+			{HistorySeq: 1, LineID: uint64(recA.Key.ID), LineVersion: uint64(recA.Key.Version)},
+			{HistorySeq: 2, LineID: uint64(recB.Key.ID), LineVersion: uint64(recB.Key.Version)},
+		},
+		FirstAvailableHistorySeqChanged: true,
+	}
+	filled := deriver.ensureClientBodyUpserts(patch)
+	upsertKeys := make(map[terminalengine.LineKey]struct{}, len(filled.BodyUpserts))
+	for _, line := range filled.BodyUpserts {
+		upsertKeys[terminalengine.LineKey{
+			ID:      terminalengine.LineID(line.ID),
+			Version: terminalengine.BodyVersion(line.Version),
+		}] = struct{}{}
+	}
+	for _, key := range []terminalengine.LineKey{recA.Key, recB.Key} {
+		if _, ok := upsertKeys[key]; !ok {
+			t.Fatalf("missing body upsert for skipped-revision key %+v; upserts=%+v",
+				key, filled.BodyUpserts)
+		}
+	}
+
+	// 写成功后记入 known；再次派生不得重复补发。
+	deriver.SeedAfterSuccessfulWriteDelivered(baseline, filled)
+	again := deriver.ensureClientBodyUpserts(patch)
+	if len(again.BodyUpserts) != 0 {
+		t.Fatalf("known keys were re-upserted: %+v", again.BodyUpserts)
 	}
 }
 

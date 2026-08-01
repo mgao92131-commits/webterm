@@ -2,9 +2,7 @@ package com.webterm.terminal.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 final class SemanticTestData {
   private SemanticTestData() {}
@@ -58,26 +56,12 @@ final class SemanticTestData {
       HistoryExtent historyExtent, List<HistoryPush> historyBindings,
       List<ScreenLineContent> screen,
       TerminalCursor cursor, TerminalModes modes, TerminalPalette palette) {
-    List<LineBodyRecord> bodies = new ArrayList<>(bodiesFromScreen(screen));
-    Set<LineKey> indexed = new HashSet<>();
-    for (LineBodyRecord record : bodies) indexed.add(record.key());
-    if (historyBindings != null) {
-      for (HistoryPush push : historyBindings) {
-        if (push == null || push.key == null || !indexed.add(push.key)) continue;
-        bodies.add(new LineBodyRecord(push.key, emptyBody(cols)));
-      }
-    }
+    // 与 Go EncodeBaseline 一致：Baseline 只携带屏幕正文，历史绑定无正文。
     return new ScreenBaseline(
         sessionId, instanceId, layoutEpoch, screenRevision, historyGeneration,
         rows, cols, activeBuffer, historyExtent, historyBindings,
-        rowsFromScreen(screen), bodies,
+        rowsFromScreen(screen), bodiesFromScreen(screen),
         cursor, modes, palette);
-  }
-
-  private static LineBody emptyBody(int cols) {
-    CellValue[] cells = new CellValue[cols];
-    java.util.Arrays.fill(cells, CellValue.EMPTY);
-    return new LineBody(cols, false, cells);
   }
 
   static List<LineBodyRecord> upserts(ScreenLineContent... lines) {

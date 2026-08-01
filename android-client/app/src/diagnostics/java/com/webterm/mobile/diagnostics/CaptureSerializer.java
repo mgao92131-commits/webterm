@@ -6,7 +6,7 @@ import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.LineBody;
 import com.webterm.terminal.model.LineKey;
-import com.webterm.terminal.model.ScreenLineContent;
+import com.webterm.terminal.model.LineBodyRecord;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.TerminalColor;
@@ -70,8 +70,9 @@ final class CaptureSerializer {
         return arr;
     }
 
-    static JSONObject semanticLine(ScreenLineContent line) throws JSONException {
+    static JSONObject semanticLine(LineBodyRecord line) throws JSONException {
         JSONObject o = new JSONObject();
+        if (line == null) return o;
         LineKey key = line.key();
         LineBody body = line.body();
         o.put("lineId", key.lineId());
@@ -99,10 +100,10 @@ final class CaptureSerializer {
         return o;
     }
 
-    static JSONArray semanticLineList(List<ScreenLineContent> lines) throws JSONException {
+    static JSONArray semanticLineList(List<LineBodyRecord> lines) throws JSONException {
         JSONArray arr = new JSONArray();
         if (lines != null) {
-            for (ScreenLineContent line : lines) arr.put(semanticLine(line));
+            for (LineBodyRecord line : lines) arr.put(semanticLine(line));
         }
         return arr;
     }
@@ -201,7 +202,7 @@ final class CaptureSerializer {
         o.put("cols", s.cols);
         o.put("activeBuffer", String.valueOf(s.activeBuffer));
         o.put("cursor", cursor(s.cursor));
-        o.put("screen", semanticLineList(s.screen));
+        o.put("screen", semanticLineList(s.screenBodies));
         o.put("historyExtentFirst", s.historyExtent.firstSeq);
         o.put("historyExtentLast", s.historyExtent.lastSeq);
         return o;
