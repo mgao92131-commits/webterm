@@ -32,6 +32,8 @@ import java.util.List;
 public final class RemoteTerminalRenderer {
 
   static final int SELECTION_OVERLAY = 0x665B92F3;
+  /** 终端正文固定使用 Android 系统内置等宽字体，不接受应用自定义字体。 */
+  private static final Typeface TERMINAL_TYPEFACE = Typeface.MONOSPACE;
 
   private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Paint bgPaint = new Paint();
@@ -46,16 +48,18 @@ public final class RemoteTerminalRenderer {
   private float lineHeight;
   private float baselineOffset;
   private int textSizeSp = 14;
-  @Nullable private Typeface typeface = Typeface.MONOSPACE;
 
   public RemoteTerminalRenderer() {
     applyFont();
   }
 
-  public void updateFont(float textSizePx, @Nullable Typeface tf) {
-    typeface = tf;
+  /**
+   * 更新字号和字体度量。兼容旧调用签名，但传入的 Typeface 会被忽略；
+   * 终端始终使用 Android 系统 {@link Typeface#MONOSPACE}。
+   */
+  public void updateFont(float textSizePx, @Nullable Typeface ignoredTypeface) {
     textPaint.setTextSize(textSizePx);
-    textPaint.setTypeface(tf != null ? tf : Typeface.MONOSPACE);
+    textPaint.setTypeface(TERMINAL_TYPEFACE);
     // ceil 保证行高落在整数像素；与像素对齐的 topInset 一起，使相邻行
     // RenderNode 的上下边界都落在整数 Y，避免硬件合成时出现 1px 暗缝。
     lineHeight = (float) Math.ceil(textPaint.getFontSpacing());
@@ -65,7 +69,7 @@ public final class RemoteTerminalRenderer {
     // made a full-cell block cursor appear visibly too high.
     baselineOffset = -textPaint.ascent();
     cellWidth = textPaint.measureText("X");
-    // 预热 fallback chain，避免首个 emoji 采用错误的测量宽度。
+    // 预热系统 fallback chain，避免首个 emoji 采用错误的测量宽度。
     textPaint.measureText("😀");
   }
 
@@ -104,14 +108,17 @@ public final class RemoteTerminalRenderer {
     applyFont();
   }
 
-  public void setTypeface(@Nullable Typeface typeface) {
-    this.typeface = typeface;
-    applyFont();
+  /**
+   * 已停用的兼容入口。终端字体固定为系统 monospace，传入值不会生效。
+   */
+  @Deprecated
+  public void setTypeface(@Nullable Typeface ignoredTypeface) {
+    // Intentionally ignored. Keep the method temporarily for source compatibility.
   }
 
   private void applyFont() {
     textPaint.setTextSize(textSizeSp);
-    textPaint.setTypeface(typeface != null ? typeface : Typeface.MONOSPACE);
+    textPaint.setTypeface(TERMINAL_TYPEFACE);
   }
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
