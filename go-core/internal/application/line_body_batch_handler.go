@@ -15,7 +15,11 @@ import (
 	"webterm/go-core/internal/terminalengine"
 )
 
-const lineBodyBatchContentType = "application/x-protobuf"
+const (
+	lineBodyBatchContentType = "application/x-protobuf"
+	// lineBodyBatchMaxKeys 与 Android LineBodyFetchPolicy.MAX_BATCH_KEYS 对齐。
+	lineBodyBatchMaxKeys = 512
+)
 
 // parseLineBodyBatchPath 解析 POST /api/sessions/{id}/line-bodies
 func parseLineBodyBatchPath(method, rawPath string) (sessionID string, ok bool) {
@@ -59,17 +63,40 @@ func (handler *TransferHTTPHandler) routeLineBodyBatch(
 			pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_UNSPECIFIED,
 			terminalengine.LineBodyBatchData{}, "INVALID_REQUEST")
 	}
+	if request.GetInstanceId() == "" {
+		return handler.lineBodyBatchResult(sessionID, http.StatusBadRequest,
+			pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_UNSPECIFIED,
+			terminalengine.LineBodyBatchData{}, "INVALID_REQUEST")
+	}
+	if len(request.GetKeys()) == 0 {
+		return handler.lineBodyBatchResult(sessionID, http.StatusBadRequest,
+			pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_UNSPECIFIED,
+			terminalengine.LineBodyBatchData{InstanceID: request.GetInstanceId()}, "INVALID_REQUEST")
+	}
+	if len(request.GetKeys()) > lineBodyBatchMaxKeys {
+		return handler.lineBodyBatchResult(sessionID, http.StatusBadRequest,
+			pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_UNSPECIFIED,
+			terminalengine.LineBodyBatchData{InstanceID: request.GetInstanceId()}, "TOO_MANY_KEYS")
+	}
+	seen := make(map[terminalengine.LineKey]struct{}, len(request.GetKeys()))
 	keys := make([]terminalengine.LineKey, 0, len(request.GetKeys()))
 	for _, key := range request.GetKeys() {
 		if key == nil || key.GetLineId() == 0 || key.GetBodyVersion() == 0 {
-			continue
+			return handler.lineBodyBatchResult(sessionID, http.StatusBadRequest,
+				pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_UNSPECIFIED,
+				terminalengine.LineBodyBatchData{InstanceID: request.GetInstanceId()}, "INVALID_KEY")
 		}
-		keys = append(keys, terminalengine.LineKey{
+		normalized := terminalengine.LineKey{
 			ID:      terminalengine.LineID(key.GetLineId()),
 			Version: terminalengine.BodyVersion(key.GetBodyVersion()),
-		})
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		keys = append(keys, normalized)
 	}
-	if request.GetInstanceId() == "" || len(keys) == 0 {
+	if len(keys) == 0 {
 		return handler.lineBodyBatchResult(sessionID, http.StatusBadRequest,
 			pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_UNSPECIFIED,
 			terminalengine.LineBodyBatchData{InstanceID: request.GetInstanceId()}, "INVALID_REQUEST")

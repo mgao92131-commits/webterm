@@ -12,48 +12,111 @@ import com.webterm.terminal.model.HistoryCatalog;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.SemanticHistoryRenderView;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
 
 public final class VisibleBodyLoaderTest {
   @Test
-  public void firstMissingBatchCollectsUnloadedKeysAndRespectsSingleFlight()
-      throws Exception {
+  public void visibleGapPrefetchesToMinimumBatchTowardOlderHistory() throws Exception {
     VisibleBodyLoader loader = new VisibleBodyLoader();
-    HistoryCatalog catalog = catalogWithBindings(
-        new LineKey(10, 1), new LineKey(11, 1), new LineKey(12, 1));
-    BodyCache cache = new BodyCache(HistoryBudget.defaults())
-        .edit()
-        .setHistoryExtent(new HistoryExtent(1, 3))
-        .setAvailableExtent(new HistoryExtent(1, 3))
-        .commit();
-    SemanticHistoryRenderView history = new SemanticHistoryRenderView(catalog, cache);
-
-    loader.setDemand(new VisibleBodyLoader.Demand(1, 3, 1));
-    VisibleBodyLoader.Batch batch = loader.firstMissingBatch(
-        "i1", 1, 1, 1, 3, new HistoryExtent(1, 3), history, cache, catalog);
+    Fixture fixture = fixture(1000);
+    VisibleBodyLoader.Demand demand = new VisibleBodyLoader.Demand(
+        900, 919, 900, -1, 20, 1, 0L);
+    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
+        demand, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
     assertNotNull(batch);
-    assertEquals(3, batch.keys.size());
-    assertEquals(new LineKey(10, 1), batch.keys.get(0));
-    assertEquals(new LineKey(11, 1), batch.keys.get(1));
-    assertEquals(new LineKey(12, 1), batch.keys.get(2));
+    assertEquals(128, batch.keys.size());
+    assertEquals(20, batch.visibleKeyCount);
+    assertEquals(108, batch.prefetchKeyCount);
+    assertEquals(new LineKey(900, 1), batch.keys.get(0));
+    assertTrue(batch.plannedFromSeq < 900);
+    assertEquals(919, batch.plannedToSeq);
+  }
 
+  @Test
+  public void directionPlusOnePrefersNewerHistory() throws Exception {
+    VisibleBodyLoader loader = new VisibleBodyLoader();
+    Fixture fixture = fixture(1000);
+    VisibleBodyLoader.Demand demand = new VisibleBodyLoader.Demand(
+        100, 119, 100, 1, 20, 1, 0L);
+    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
+        demand, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(batch);
+    assertEquals(128, batch.keys.size());
+    assertEquals(new LineKey(100, 1), batch.keys.get(0));
+    assertEquals(100, batch.plannedFromSeq);
+    assertTrue(batch.plannedToSeq > 119);
+  }
+
+  @Test
+  public void skipsAlreadyLoadedVisibleKeys() throws Exception {
+    VisibleBodyLoader loader = new VisibleBodyLoader();
+    Fixture fixture = fixture(40);
+    LineKey loaded = new LineKey(1, 1);
+    BodyCache cache = fixture.cache.edit()
+        .putHistory(1, loaded, body())
+        .commit();
+    SemanticHistoryRenderView history = new SemanticHistoryRenderView(fixture.catalog, cache);
+    VisibleBodyLoader.Demand demand = new VisibleBodyLoader.Demand(
+        1, 10, 1, 0, 10, 1, 0L);
+    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
+        demand, "i1", 1, 1, fixture.extent, history, cache, fixture.catalog);
+    assertNotNull(batch);
+    assertFalse(batch.keys.contains(loaded));
+    assertEquals(9, batch.visibleKeyCount);
+  }
+
+  @Test
+  public void activeBatchCoveringVisibleMissingReusesDemandEpoch() throws Exception {
+    VisibleBodyLoader loader = new VisibleBodyLoader();
+    Fixture fixture = fixture(300);
+    VisibleBodyLoader.Demand accepted = loader.acceptDemand(
+        100, 119, 100, -1, 20, 0L,
+        "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(accepted);
+    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
+        accepted, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(batch);
     AtomicBoolean cancelled = new AtomicBoolean();
     assertTrue(loader.begin(batch, () -> cancelled.set(true)));
-    assertFalse(loader.begin(
-        new VisibleBodyLoader.Batch("i1", 1, 1, batch.keys, 1),
-        () -> {}));
-    assertNotNull(loader.activeRequest());
+
+    VisibleBodyLoader.Demand again = loader.acceptDemand(
+        105, 124, 105, -1, 20, 0L,
+        "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(again);
+    assertEquals(accepted.demandEpoch, again.demandEpoch);
     assertFalse(cancelled.get());
+    assertNotNull(loader.activeRequest());
+  }
+
+  @Test
+  public void farJumpCancelsActiveRequest() throws Exception {
+    VisibleBodyLoader loader = new VisibleBodyLoader();
+    Fixture fixture = fixture(1000);
+    VisibleBodyLoader.Demand accepted = loader.acceptDemand(
+        100, 119, 100, -1, 20, 0L,
+        "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
+        accepted, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    AtomicBoolean cancelled = new AtomicBoolean();
+    assertTrue(loader.begin(batch, () -> cancelled.set(true)));
+
+    VisibleBodyLoader.Demand jumped = loader.acceptDemand(
+        800, 819, 800, -1, 20, 0L,
+        "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(jumped);
+    assertTrue(cancelled.get());
+    assertNull(loader.activeRequest());
   }
 
   @Test
   public void closeCancelsInFlightRequest() {
     VisibleBodyLoader loader = new VisibleBodyLoader();
     AtomicBoolean cancelled = new AtomicBoolean();
-    VisibleBodyLoader.Batch batch =
-        new VisibleBodyLoader.Batch("i1", 1, 1, List.of(new LineKey(1, 1)), 1);
+    VisibleBodyLoader.Batch batch = new VisibleBodyLoader.Batch(
+        "i1", 1, 1, List.of(new LineKey(1, 1)), 1, 1, 1, 1, 0);
     assertTrue(loader.begin(batch, () -> cancelled.set(true)));
     loader.close();
     assertTrue(loader.closed());
@@ -61,13 +124,50 @@ public final class VisibleBodyLoaderTest {
     assertTrue(cancelled.get());
   }
 
-  private static HistoryCatalog catalogWithBindings(LineKey... keys)
-      throws Exception {
+  private static Fixture fixture(int lines) throws Exception {
+    List<LineKey> keys = new ArrayList<>(lines);
+    for (int i = 1; i <= lines; i++) {
+      keys.add(new LineKey(i, 1));
+    }
+    HistoryCatalog catalog = catalogWithBindings(keys.toArray(new LineKey[0]));
+    HistoryExtent extent = new HistoryExtent(1, lines);
+    BodyCache cache = new BodyCache(HistoryBudget.defaults())
+        .edit()
+        .setHistoryExtent(extent)
+        .setAvailableExtent(extent)
+        .commit();
+    return new Fixture(catalog, cache, extent, new SemanticHistoryRenderView(catalog, cache));
+  }
+
+  private static HistoryCatalog catalogWithBindings(LineKey... keys) throws Exception {
     HistoryCatalog.Editor editor = new HistoryCatalog().edit();
     editor.setExtent(new HistoryExtent(1, keys.length));
     for (int i = 0; i < keys.length; i++) {
       editor.bindNew(i + 1L, keys[i]);
     }
     return editor.commit();
+  }
+
+  private static com.webterm.terminal.model.LineBody body() {
+    return new com.webterm.terminal.model.LineBody(1, false,
+        new com.webterm.terminal.model.CellValue[] {
+            new com.webterm.terminal.model.CellValue("x", (byte) 1, null, null)
+        });
+  }
+
+  private static final class Fixture {
+    final HistoryCatalog catalog;
+    final BodyCache cache;
+    final HistoryExtent extent;
+    final SemanticHistoryRenderView history;
+
+    Fixture(
+        HistoryCatalog catalog, BodyCache cache, HistoryExtent extent,
+        SemanticHistoryRenderView history) {
+      this.catalog = catalog;
+      this.cache = cache;
+      this.extent = extent;
+      this.history = history;
+    }
   }
 }

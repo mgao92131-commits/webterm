@@ -959,12 +959,19 @@ public final class TerminalSessionRuntime {
     if (projection.projectionComplete && snapshot != null) {
       accepted = visibleBodyLoader.acceptDemand(
           update.visibleFromSeq, update.visibleToSeq,
+          update.anchorSeq, update.direction, update.visibleRowCount,
+          update.createdAtNanos,
           projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
           projection.mainHistoryExtent, snapshot.history,
           model.bodyCache(), model.historyCatalog());
     } else {
+      int rows = update.visibleRowCount > 0
+          ? update.visibleRowCount
+          : (int) Math.min(Integer.MAX_VALUE,
+              update.visibleToSeq - update.visibleFromSeq + 1);
       visibleBodyLoader.setDemand(new VisibleBodyLoader.Demand(
-          update.visibleFromSeq, update.visibleToSeq, 0));
+          update.visibleFromSeq, update.visibleToSeq,
+          update.anchorSeq, update.direction, rows, 0, update.createdAtNanos));
       accepted = visibleBodyLoader.latestDemand();
     }
     if (accepted == null) return;
@@ -972,6 +979,9 @@ public final class TerminalSessionRuntime {
     emitHistoryRangeInfo("history_body_demand_updated",
         "fromSeq", accepted.visibleFromSeq,
         "toSeq", accepted.visibleToSeq,
+        "anchorSeq", accepted.anchorSeq,
+        "direction", accepted.direction,
+        "visibleRowCount", accepted.visibleRowCount,
         "demandEpoch", accepted.demandEpoch);
     refreshEvictionPins();
     pumpVisibleBodies();
@@ -988,9 +998,9 @@ public final class TerminalSessionRuntime {
     if (snap == null) return;
     VisibleBodyLoader.Demand demand = visibleBodyLoader.latestDemand();
     refreshEvictionPins();
-    VisibleBodyLoader.Batch target = visibleBodyLoader.firstMissingBatch(
+    VisibleBodyLoader.Batch target = visibleBodyLoader.planMissingBatch(
+        demand,
         projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
-        demand.visibleFromSeq, demand.visibleToSeq,
         projection.mainHistoryExtent, snap.history,
         model.bodyCache(), model.historyCatalog());
     if (target == null) return;
@@ -1007,6 +1017,11 @@ public final class TerminalSessionRuntime {
     emitHistoryRangeInfo("history_body_batch_requested",
         "requestId", active.callId,
         "keyCount", target.keys.size(),
+        "visibleKeyCount", target.visibleKeyCount,
+        "prefetchKeyCount", target.prefetchKeyCount,
+        "plannedFromSeq", target.plannedFromSeq,
+        "plannedToSeq", target.plannedToSeq,
+        "direction", demand.direction,
         "demandEpoch", target.demandEpoch);
     LineBodyBatchSource.RequestHandle handle = source.fetch(target,
         new LineBodyBatchSource.Callback() {
