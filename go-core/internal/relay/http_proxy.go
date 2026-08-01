@@ -243,10 +243,10 @@ func isUploadRequest(meta relaycore.HTTPRequestMeta) bool {
 		strings.HasSuffix(meta.Path, "/upload")
 }
 
-func isHistoryRangeRequest(meta relaycore.HTTPRequestMeta) bool {
-	return meta.Method == http.MethodGet &&
+func isLineBodyBatchRequest(meta relaycore.HTTPRequestMeta) bool {
+	return meta.Method == http.MethodPost &&
 		strings.HasPrefix(meta.Path, "/api/sessions/") &&
-		strings.HasSuffix(meta.Path, "/history/range")
+		strings.HasSuffix(meta.Path, "/line-bodies")
 }
 
 func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID string, meta relaycore.HTTPRequestMeta, body []byte, done <-chan struct{}) {
@@ -256,7 +256,7 @@ func (p *HTTPProxy) respond(ctx context.Context, conn *websocket.Conn, streamID 
 	}
 
 	// 文件发送与历史范围等流式/二进制接口走 RouteHTTPv2
-	if strings.HasPrefix(meta.Path, "/api/file-send/") || isHistoryRangeRequest(meta) {
+	if strings.HasPrefix(meta.Path, "/api/file-send/") || isLineBodyBatchRequest(meta) {
 		p.respondStream(ctx, conn, streamID, meta, bytes.NewReader(body), done)
 		return
 	}

@@ -245,6 +245,44 @@ func (r *Runtime) ID() string {
 	return r.id
 }
 
+// LineBodyBatch 并发按 LineKey 拉取正文，不进入 actor。
+func (r *Runtime) LineBodyBatch(
+	instanceID string, keys []terminalengine.LineKey,
+) terminalengine.LineBodyBatchData {
+	if r == nil || r.projector == nil {
+		return terminalengine.LineBodyBatchData{InstanceID: instanceID}
+	}
+	before := r.Info()
+	if instanceID == "" || instanceID != before.InstanceID {
+		return terminalengine.LineBodyBatchData{
+			Status:            terminalengine.LineBodyBatchStale,
+			InstanceID:        before.InstanceID,
+			LayoutEpoch:       before.LayoutEpoch,
+			HistoryGeneration: r.projector.HistoryGeneration(),
+		}
+	}
+	if !r.allowHistoryRange() {
+		return terminalengine.LineBodyBatchData{
+			Status:            terminalengine.LineBodyBatchRetryable,
+			InstanceID:        before.InstanceID,
+			LayoutEpoch:       before.LayoutEpoch,
+			HistoryGeneration: r.projector.HistoryGeneration(),
+			RetryAfterMS:      125,
+		}
+	}
+	data := r.projector.LineBodyBatch(keys)
+	after := r.Info()
+	data.InstanceID = after.InstanceID
+	data.LayoutEpoch = after.LayoutEpoch
+	if after.InstanceID != before.InstanceID || after.LayoutEpoch != before.LayoutEpoch {
+		data.Status = terminalengine.LineBodyBatchStale
+		data.Lines = nil
+		data.Styles = nil
+		data.Links = nil
+	}
+	return data
+}
+
 // HistoryRange 并发读取权威 Scrollback 的任意闭区间，不进入 actor。
 func (r *Runtime) HistoryRange(
 	instanceID string, layoutEpoch, generation, fromSeq, toSeq uint64,

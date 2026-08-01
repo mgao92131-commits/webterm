@@ -2,7 +2,7 @@
 
 > **多端会话聚合大厅** —— 基于 Go 权威终端状态与屏幕协议的远程终端管理器。
 
-WebTerm Android 客户端是一个轻量的远程终端管理器。Go PC Agent 中的无头终端是唯一的 ANSI 解析、滚动历史和光标状态源；Android 只通过 `webterm.screen.v2` 接收权威屏幕投影，并提供输入、选择、复制和本地绘制。
+WebTerm Android 客户端是一个轻量的远程终端管理器。Go PC Agent 中的无头终端是唯一的 ANSI 解析、滚动历史和光标状态源；Android 只通过 `webterm.screen.v3` 接收权威屏幕投影，并提供输入、选择、复制和本地绘制。
 
 ---
 
@@ -22,7 +22,7 @@ WebTerm Android 客户端是一个轻量的远程终端管理器。Go PC Agent �
 
 ```mermaid
 graph TD
-    Go[Go PC Agent: headless terminal] -->|webterm.screen.v2| Protocol[terminal-protocol]
+    Go[Go PC Agent: headless terminal] -->|webterm.screen.v3| Protocol[terminal-protocol]
     Protocol --> Model[terminal-model]
     Model --> Renderer[terminal-renderer]
     Renderer --> Feature[feature:terminal]

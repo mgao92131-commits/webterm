@@ -13,8 +13,8 @@ import (
 	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/logs"
 	"webterm/go-core/internal/screenprojection"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
-	"webterm/go-core/internal/screenprotocolv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
+	"webterm/go-core/internal/screenprotocolv3"
 	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
 	"webterm/go-core/internal/terminalsession"
@@ -34,7 +34,7 @@ type terminalChannelRuntime struct {
 	ownerKey       string
 	screenAttached atomic.Bool
 	writerStarted  atomic.Bool
-	screenHandler  *screenprotocolv2.Handler
+	screenHandler  *screenprotocolv3.Handler
 
 	screenMu      sync.Mutex
 	screenPending terminalengine.ScreenFrame
@@ -103,9 +103,9 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 	}
 	client.encodeFrame = func(frame terminalengine.ScreenFrame) ([]byte, error) {
 		if frame.Kind == terminalengine.FrameSnapshot {
-			return screenprotocolv2.EncodeBaseline(frame, 0)
+			return screenprotocolv3.EncodeBaseline(frame, 0)
 		}
-		return screenprotocolv2.EncodeTerminalCommit(frame, 0)
+		return screenprotocolv3.EncodeTerminalCommit(frame, 0)
 	}
 	if terminal != nil {
 		client.screenHandler = client.newScreenHandler()
@@ -121,49 +121,49 @@ func newOwnedTerminalChannelRuntime(terminal *TerminalSession, sink ChannelFrame
 	return client
 }
 
-func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv2.Handler {
+func (client *terminalChannelRuntime) newScreenHandler() *screenprotocolv3.Handler {
 	if client.session == nil {
 		return nil
 	}
 	rt := client.session.ScreenRuntime()
-	return screenprotocolv2.NewHandler(
-		screenprotocolv2.WithHelloCallback(func(hello *pb.Hello) {
+	return screenprotocolv3.NewHandler(
+		screenprotocolv3.WithHelloCallback(func(hello *pb.Hello) {
 			client.handleScreenHello(hello)
 		}),
-		screenprotocolv2.WithResyncCallback(func(_ *pb.ResyncRequest) {
+		screenprotocolv3.WithResyncCallback(func(_ *pb.ResyncRequest) {
 			if rt != nil {
 				rt.ResyncClient(client.screenClientID)
 			}
 		}),
-		screenprotocolv2.WithInputCallback(func(input *pb.TerminalInput) {
+		screenprotocolv3.WithInputCallback(func(input *pb.TerminalInput) {
 			if rt != nil {
 				rt.WriteSemanticInput(client.screenClientID, input.LeaseId, semanticInput(input))
 			}
 		}),
-		screenprotocolv2.WithResizeCallback(func(resize *pb.Resize) {
+		screenprotocolv3.WithResizeCallback(func(resize *pb.Resize) {
 			if rt != nil {
 				rt.Resize(client.screenClientID, resize.LeaseId, int(resize.Cols), int(resize.Rows))
 			}
 		}),
-		screenprotocolv2.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
+		screenprotocolv3.WithAcquireLayoutCallback(func(req *pb.AcquireLayout) {
 			if rt == nil {
 				return
 			}
 			result := rt.AcquireLayoutRequest(client.screenClientID, req.RequestId, req.Interactive)
 			client.sendLayoutLease(result)
 		}),
-		screenprotocolv2.WithReleaseLayoutCallback(func(req *pb.ReleaseLayout) {
+		screenprotocolv3.WithReleaseLayoutCallback(func(req *pb.ReleaseLayout) {
 			if rt != nil {
 				rt.ReleaseLayout(client.screenClientID, req.LeaseId)
 			}
 		}),
-		screenprotocolv2.WithClipboardResponseCallback(func(resp *pb.ClipboardResponse) {
+		screenprotocolv3.WithClipboardResponseCallback(func(resp *pb.ClipboardResponse) {
 			if rt != nil {
 				rt.ClipboardResponse(client.screenClientID, resp.RequestId, resp.Allowed && !resp.Timeout, resp.Data)
 			}
 		}),
-		screenprotocolv2.WithPingCallback(func(screenRevision uint64) {
-			payload, err := screenprotocolv2.EncodePong(screenRevision)
+		screenprotocolv3.WithPingCallback(func(screenRevision uint64) {
+			payload, err := screenprotocolv3.EncodePong(screenRevision)
 			if err == nil {
 				client.enqueueBinary(payload, "other")
 			}
@@ -198,7 +198,7 @@ func (client *terminalChannelRuntime) SendExit(code int) {
 
 func (client *terminalChannelRuntime) SendExitAndWait(ctx context.Context, code int) bool {
 	envelope := &pb.ScreenEnvelope{
-		ProtocolVersion: screenprotocolv2.ProtocolVersion,
+		ProtocolVersion: screenprotocolv3.ProtocolVersion,
 		Payload:         &pb.ScreenEnvelope_Exit{Exit: &pb.Exit{Code: int32(code)}},
 	}
 	payload, err := proto.Marshal(envelope)
@@ -468,7 +468,7 @@ func classifyScreenError(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	var baselineValidation *screenprotocolv2.BaselineValidationError
+	var baselineValidation *screenprotocolv3.BaselineValidationError
 	if errors.As(err, &baselineValidation) {
 		return baselineValidation.Code
 	}
@@ -573,7 +573,7 @@ func (client *terminalChannelRuntime) sendLayoutLease(result terminalsession.Lay
 		expiresAtMs = uint64(result.ExpiresAt.UnixMilli())
 	}
 	envelope := &pb.ScreenEnvelope{
-		ProtocolVersion: screenprotocolv2.ProtocolVersion,
+		ProtocolVersion: screenprotocolv3.ProtocolVersion,
 		Payload: &pb.ScreenEnvelope_LayoutLease{
 			LayoutLease: &pb.LayoutLease{
 				RequestId:   result.RequestID,
@@ -633,7 +633,13 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 	if token := hello.GetResume(); token != nil {
 		rows := make([]screenprojection.ResumeScreenLine, len(token.GetActiveRows()))
 		for i, row := range token.GetActiveRows() {
-			rows[i] = screenprojection.ResumeScreenLine{LineID: row.GetLineId(), LineVersion: row.GetLineVersion()}
+			key := row.GetKey()
+			if key == nil {
+				continue
+			}
+			rows[i] = screenprojection.ResumeScreenLine{
+				LineID: key.GetLineId(), LineVersion: key.GetBodyVersion(),
+			}
 		}
 		buffer := terminalengine.BufferMain
 		if token.GetActiveBuffer() == pb.BufferKind_BUFFER_KIND_ALTERNATE {
@@ -641,7 +647,7 @@ func (client *terminalChannelRuntime) attachScreenClient(hello *pb.Hello) {
 		}
 		resume = &screenprojection.ResumeToken{InstanceID: token.GetInstanceId(),
 			LayoutEpoch: token.GetLayoutEpoch(), ScreenRevision: token.GetScreenRevision(),
-			DictionaryGeneration: token.GetDictionaryGeneration(), HistoryGeneration: token.GetHistoryGeneration(),
+			HistoryGeneration: token.GetHistoryGeneration(),
 			ActiveBuffer: buffer, ActiveRows: rows}
 	}
 	client.session.AttachScreenClient(&terminalsession.ScreenClient{
@@ -671,11 +677,11 @@ func (client *terminalChannelRuntime) sendInitialScreenSync(syncMessage terminal
 
 func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage terminalsession.InitialSync) ([]byte, string, error) {
 	if syncMessage.ResumeAccepted {
-		payload, err := screenprotocolv2.EncodeResumeAccepted(syncMessage.State)
+		payload, err := screenprotocolv3.EncodeResumeAccepted(syncMessage.State)
 		return payload, "other", err
 	}
 	if syncMessage.Projection.Kind == terminalengine.FramePatch {
-		commitPayload, err := screenprotocolv2.EncodeTerminalCommit(syncMessage.Projection, 0)
+		commitPayload, err := screenprotocolv3.EncodeTerminalCommit(syncMessage.Projection, 0)
 		if err != nil {
 			return nil, "commit", err
 		}
@@ -683,18 +689,18 @@ func (client *terminalChannelRuntime) encodeInitialScreenSync(syncMessage termin
 		// authoritative rebuild.
 		baseline := syncMessage.State
 		baseline.Kind = terminalengine.FrameSnapshot
-		baselinePayload, baselineErr := screenprotocolv2.EncodeBaseline(baseline, 0)
+		baselinePayload, baselineErr := screenprotocolv3.EncodeBaseline(baseline, 0)
 		if baselineErr == nil && len(commitPayload) >= len(baselinePayload) {
 			return baselinePayload, "baseline", nil
 		}
 		return commitPayload, "commit", nil
 	}
-	payload, err := screenprotocolv2.EncodeBaseline(syncMessage.Projection, 0)
+	payload, err := screenprotocolv3.EncodeBaseline(syncMessage.Projection, 0)
 	return payload, "baseline", err
 }
 
 func (client *terminalChannelRuntime) sendScreenEffect(instanceID string, revision uint64, effect terminalengine.Effect) {
-	payload, err := screenprotocolv2.EncodeEffect(instanceID, revision, effect)
+	payload, err := screenprotocolv3.EncodeEffect(instanceID, revision, effect)
 	if err == nil {
 		client.enqueueBinary(payload, "other")
 	}

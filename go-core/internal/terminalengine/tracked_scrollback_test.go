@@ -22,7 +22,7 @@ func TestIndexWindowIsAtomicDuringConcurrentTrim(t *testing.T) {
 		<-start
 		for i := 1; i <= 2_000; i++ {
 			sb.Push(headlessterm.ScrollbackLine{
-				LineID: uint64(i), LineVersion: 1,
+				LineID: uint64(i),
 			})
 		}
 		close(writerDone)
@@ -82,7 +82,7 @@ func TestTrackedScrollback_LineID(t *testing.T) {
 func TestTrackedScrollbackPromotionKeepsTransferredLineBody(t *testing.T) {
 	sb := NewTrackedScrollback(10, nil)
 	line := headlessterm.ScrollbackLine{
-		LineID: 77, LineVersion: 3,
+		LineID: 77,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	}
 	sb.Push(line)
@@ -98,7 +98,7 @@ func TestTrackedScrollbackPromotionKeepsTransferredLineBody(t *testing.T) {
 func TestTrackedScrollback_PreservesNonMonotonicLineIDsAndAssignsHistorySeq(t *testing.T) {
 	sb := NewTrackedScrollback(100, nil)
 	for _, id := range []uint64{100, 7, 55} {
-		sb.Push(headlessterm.ScrollbackLine{LineID: id, LineVersion: 3,
+		sb.Push(headlessterm.ScrollbackLine{LineID: id,
 			Cells: []headlessterm.Cell{headlessterm.NewCell()}})
 	}
 	result := sb.Range(1, 3)
@@ -391,7 +391,7 @@ func pushBlankLines(sb *TrackedScrollback, n int) {
 
 func TestTrackedScrollback_PopThenPushReusesHistorySeq(t *testing.T) {
 	sb := NewTrackedScrollback(10000, nil)
-	line := headlessterm.ScrollbackLine{LineID: 100, LineVersion: 1,
+	line := headlessterm.ScrollbackLine{LineID: 100,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()}}
 	sb.Push(line)
 	if got, ok := sb.LineByHistorySeq(1); !ok || got.LineID != 100 {

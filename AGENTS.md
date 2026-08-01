@@ -24,19 +24,19 @@ WebTerm 是 Android-only 的远程终端项目。PC Agent 支持两种互相独�
 - Android 到 Relay：HTTPS API 与 `/ws/sessions`。
 - Android 到 Direct Agent：HTTP API 与 `/ws/sessions`（同一套路由，经 `internal/direct` 接入）。
 - Android 物理 WS：`webterm.mux.v1`（Direct 与 Relay 共用，不重新设计）。
-- 终端虚拟通道：只允许 `webterm.screen.v2` Protobuf。
+- 终端虚拟通道：只允许 `webterm.screen.v3` Protobuf。
 - Relay 到 Agent：`/ws/agent` 与 `relaycore` 帧。
 - Direct Server 与 Relay Client 共享同一个 `SessionRouter`（经 `internal/agentrouter` 统一装配）；不要复制出第二套控制消息注册或文件传输路由。
 - manager 和 mux control 仍使用 JSON；不要将 JSON 消息误认为已删除的旧终端子协议。
 - 文件接收保留 `/api/file-send/{id}`，上传保留
   `POST /api/sessions/{id}/upload`。
 - Direct 认证使用 HttpOnly Cookie `webterm_token`（登录 `POST /api/auth/login`、刷新 `POST /api/auth/refresh`）；HTTP Direct 只适合可信局域网，公网须经 HTTPS 反向代理/VPN。
-- `shared/proto/terminal_screen_v2.proto` 是 Go/Android 屏幕协议 schema。
+- `shared/proto/terminal_screen_v3.proto` 是 Go/Android 屏幕协议 schema。
 
 ## 主要目录
 
 - `go-core/internal/session`、`terminalsession`、`terminalengine`：终端生命周期与权威状态。
-- `go-core/internal/screenprotocolv2`、`screenprojection`：Android 屏幕协议。
+- `go-core/internal/screenprotocolv3`、`screenprojection`：Android 屏幕协议。
 - `go-core/internal/mux`：Android 单 WS 多通道复用。
 - `go-core/internal/agentrouter`：Direct/Relay 共享的 SessionRouter 统一装配。
 - `go-core/internal/direct`：Direct Server（HTTP/WS 接入、登录认证、Cookie 校验）。

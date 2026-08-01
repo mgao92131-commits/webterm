@@ -80,7 +80,7 @@ else
   GIT_DIRTY=false
   SOURCE_TREE_HASH="$(printf '%s' "$COMMIT" | shasum -a 256 | awk '{print $1}')"
 fi
-PROTOCOL_SCHEMA_HASH="$(shasum -a 256 "$REPO_ROOT/shared/proto/terminal_screen_v2.proto" | awk '{print $1}')"
+PROTOCOL_SCHEMA_HASH="$(shasum -a 256 "$REPO_ROOT/shared/proto/terminal_screen_v3.proto" | awk '{print $1}')"
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 LDFLAGS="-s -w -X main.version=$VERSION -X main.gitCommit=$COMMIT -X main.gitDirty=$GIT_DIRTY -X main.sourceTreeHash=$SOURCE_TREE_HASH -X main.buildTime=$BUILD_TIME -X main.buildVariant=webterm_capture -X main.protocolSchemaHash=$PROTOCOL_SCHEMA_HASH"
 

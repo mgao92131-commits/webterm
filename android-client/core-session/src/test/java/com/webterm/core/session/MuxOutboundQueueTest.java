@@ -85,7 +85,7 @@ public final class MuxOutboundQueueTest {
     @Test
     public void infersFrameKindFromChannelId() {
         MuxOutboundQueue queue = new MuxOutboundQueue(8, 128L);
-        queue.offer("webterm.screen.v2", new byte[] {1}, true, result -> {});
+        queue.offer("webterm.screen.v3", new byte[] {1}, true, result -> {});
         queue.offer("term:manager", new byte[] {1}, true, result -> {});
         queue.offer("capture-preview", new byte[] {1}, true, result -> {});
         queue.offer("term:input", new byte[] {1}, true, result -> {});

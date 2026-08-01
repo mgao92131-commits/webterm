@@ -15,7 +15,7 @@ import (
 
 	"webterm/go-core/internal/application"
 	"webterm/go-core/internal/protocol"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 	"webterm/go-core/internal/session"
 	"webterm/go-core/internal/testutil"
 )
@@ -409,7 +409,7 @@ func TestMuxTerminalChannelRoundTrip(t *testing.T) {
 
 	// 发 screen hello（protobuf 帧经 tunnel frame）。
 	helloFrame, err := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 			DesiredGeometry: &pb.Geometry{Cols: 80, Rows: 24},
 		}},

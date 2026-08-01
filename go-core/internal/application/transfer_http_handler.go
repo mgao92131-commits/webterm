@@ -53,10 +53,8 @@ func (handler *TransferHTTPHandler) SetFileUploadService(service *fileupload.Ser
 
 func (handler *TransferHTTPHandler) Route(method string, rawPath string, header http.Header, body io.Reader) (*HTTPResult, error) {
 	path := cleanPath(rawPath)
-	if sessionID, instanceID, layoutEpoch, generation, from, to, ok :=
-		parseHistoryRangePath(method, rawPath); ok {
-		return handler.routeHistoryRange(
-			sessionID, instanceID, layoutEpoch, generation, from, to), nil
+	if sessionID, ok := parseLineBodyBatchPath(method, rawPath); ok {
+		return handler.routeLineBodyBatch(sessionID, body), nil
 	}
 	if method == http.MethodPost && strings.HasPrefix(path, "/api/sessions/") {
 		if id, ok := strings.CutSuffix(strings.TrimPrefix(path, "/api/sessions/"), "/upload"); ok {

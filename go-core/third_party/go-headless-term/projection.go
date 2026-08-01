@@ -32,11 +32,10 @@ type ProjectionCursor struct {
 // Cells is deep-copied; its length is the row's actual cell count
 // (normally equal to ProjectionRead.Cols).
 type ProjectionRow struct {
-	Index       int
-	LineID      uint64
-	LineVersion uint64
-	Wrapped     bool
-	Cells       []Cell
+	Index   int
+	LineID  uint64
+	Wrapped bool
+	Cells   []Cell
 }
 
 // ProjectionRead is an atomic, immutable view of terminal state.
@@ -199,10 +198,9 @@ func (b *Buffer) copyRow(r int) ProjectionRow {
 		cells[i] = b.cells[r][i].Copy()
 	}
 	return ProjectionRow{
-		Index:       r,
-		LineID:      b.lineID[r],
-		LineVersion: b.lineVersion[r],
-		Wrapped:     b.wrapped[r],
-		Cells:       cells,
+		Index:   r,
+		LineID:  b.lineID[r],
+		Wrapped: b.wrapped[r],
+		Cells:   cells,
 	}
 }

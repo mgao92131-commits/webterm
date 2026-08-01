@@ -33,12 +33,23 @@ type HistoryChangeIndex struct {
 
 const maxHistoryMutationBatches = 1024
 
+// HistoryVersionResolver 把 HistorySeq/LineID 解析为 LineStore 正文版本。
+// 版本只应来自 LineStore.Commit，不得使用物理 buffer 版本。
+type HistoryVersionResolver func(historySeq, lineID uint64) uint64
+
 // sync 在 Projector 的导出提交点同步一次历史索引。返回 true 表示本次发现了
 // 必须推进 snapshot barrier 的结构缺口。普通从最旧端 trim 不算缺口：恢复
 // Patch 通过 first_available_history_seq 原子推进水位即可。
-func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, revision uint64) bool {
+func (h *HistoryChangeIndex) sync(
+	scrollback *terminalengine.TrackedScrollback,
+	revision uint64,
+	resolve HistoryVersionResolver,
+) bool {
 	if scrollback == nil {
 		return false
+	}
+	if resolve == nil {
+		resolve = func(_, _ uint64) uint64 { return 1 }
 	}
 	delta, deltaChanged := scrollback.IndexDeltaIfChanged(
 		h.mutationVersion, h.generation)
@@ -46,7 +57,7 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 		return false
 	}
 	if delta.Complete && h.generation != 0 && delta.Generation == h.generation {
-		if gap, applied := h.applyDelta(delta, revision); applied {
+		if gap, applied := h.applyDelta(delta, revision, resolve); applied {
 			return gap
 		}
 	}
@@ -92,18 +103,19 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 			gap = true
 			continue
 		}
+		lineVersion := resolve(entry.HistorySeq, entry.LineID)
 		change := HistoryChange{
 			HistorySeq: entry.HistorySeq, LineID: entry.LineID,
-			LineVersion: entry.LineVersion, CreatedRevision: revision,
+			LineVersion: lineVersion, CreatedRevision: revision,
 		}
 		if previous, ok := old[entry.HistorySeq]; ok &&
-			previous.LineID == entry.LineID && previous.LineVersion == entry.LineVersion {
+			previous.LineID == entry.LineID && previous.LineVersion == lineVersion {
 			change.CreatedRevision = previous.CreatedRevision
 		} else {
 			pushes = append(pushes, terminalengine.HistoryPush{
 				HistorySeq:  entry.HistorySeq,
 				LineID:      entry.LineID,
-				LineVersion: entry.LineVersion,
+				LineVersion: lineVersion,
 			})
 		}
 		next = append(next, change)
@@ -134,7 +146,9 @@ func (h *HistoryChangeIndex) sync(scrollback *terminalengine.TrackedScrollback, 
 }
 
 func (h *HistoryChangeIndex) applyDelta(
-	delta terminalengine.ScrollbackIndexDelta, revision uint64,
+	delta terminalengine.ScrollbackIndexDelta,
+	revision uint64,
+	resolve HistoryVersionResolver,
 ) (gap bool, applied bool) {
 	oldFirstSeq := h.firstSeq
 	var next []HistoryChange
@@ -159,7 +173,7 @@ func (h *HistoryChangeIndex) applyDelta(
 	missingCount := expected - uint64(len(next))
 	var missing map[uint64]struct{}
 	for _, entry := range delta.Entries {
-		if entry.LineID == 0 || entry.LineVersion == 0 {
+		if entry.LineID == 0 {
 			return false, false
 		}
 		if entry.HistorySeq < delta.FirstSeq || entry.HistorySeq > delta.LastSeq {
@@ -178,10 +192,15 @@ func (h *HistoryChangeIndex) applyDelta(
 	if uint64(len(missing)) != missingCount {
 		return false, false
 	}
+	pushes := make([]terminalengine.HistoryPush, 0, len(delta.Entries))
 	for _, entry := range delta.Entries {
 		if entry.HistorySeq < delta.FirstSeq || entry.HistorySeq > delta.LastSeq ||
-			entry.LineID == 0 || entry.LineVersion == 0 {
+			entry.LineID == 0 {
 			continue
+		}
+		lineVersion := resolve(entry.HistorySeq, entry.LineID)
+		if lineVersion == 0 {
+			return false, false
 		}
 		index := sort.Search(len(next), func(i int) bool {
 			return next[i].HistorySeq >= entry.HistorySeq
@@ -189,20 +208,25 @@ func (h *HistoryChangeIndex) applyDelta(
 		change := HistoryChange{
 			HistorySeq:      entry.HistorySeq,
 			LineID:          entry.LineID,
-			LineVersion:     entry.LineVersion,
+			LineVersion:     lineVersion,
 			CreatedRevision: revision,
 		}
 		if index < len(next) && next[index].HistorySeq == entry.HistorySeq {
 			if next[index].LineID == entry.LineID &&
-				next[index].LineVersion == entry.LineVersion {
+				next[index].LineVersion == lineVersion {
 				change.CreatedRevision = next[index].CreatedRevision
 			}
 			next[index] = change
-			continue
+		} else {
+			next = append(next, HistoryChange{})
+			copy(next[index+1:], next[index:])
+			next[index] = change
 		}
-		next = append(next, HistoryChange{})
-		copy(next[index+1:], next[index:])
-		next[index] = change
+		pushes = append(pushes, terminalengine.HistoryPush{
+			HistorySeq:  entry.HistorySeq,
+			LineID:      entry.LineID,
+			LineVersion: lineVersion,
+		})
 	}
 	h.Changes = next
 	h.firstSeq = delta.FirstSeq
@@ -214,16 +238,6 @@ func (h *HistoryChangeIndex) applyDelta(
 	}
 	oldMutationVersion := h.mutationVersion
 	h.mutationVersion = delta.MutationVersion
-	pushes := make([]terminalengine.HistoryPush, 0, len(delta.Entries))
-	for _, entry := range delta.Entries {
-		if entry.HistorySeq >= delta.FirstSeq && entry.HistorySeq <= delta.LastSeq {
-			pushes = append(pushes, terminalengine.HistoryPush{
-				HistorySeq:  entry.HistorySeq,
-				LineID:      entry.LineID,
-				LineVersion: entry.LineVersion,
-			})
-		}
-	}
 	if h.lineageView == nil {
 		h.lineageView = terminalengine.NewHistoryLineageView(
 			delta.FirstSeq, delta.LastSeq, pushes)

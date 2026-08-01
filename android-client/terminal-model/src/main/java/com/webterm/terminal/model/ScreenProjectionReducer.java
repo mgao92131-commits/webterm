@@ -22,14 +22,13 @@ public final class ScreenProjectionReducer {
         || baseline.layoutEpoch < 1) {
       return needs(ProjectionFault.INVALID_IDENTITY);
     }
-    if (baseline.screenRevision < 1 || baseline.dictionaryGeneration < 1
-        || baseline.historyGeneration < 1) {
+    if (baseline.screenRevision < 1 || baseline.historyGeneration < 1) {
       return needs(ProjectionFault.INVALID_GENERATION);
     }
     if (baseline.rows < 1 || baseline.cols < 1) {
       return needs(ProjectionFault.INVALID_GEOMETRY);
     }
-    if (baseline.screen == null || baseline.screen.size() != baseline.rows) {
+    if (baseline.screenRows == null || baseline.screenRows.size() != baseline.rows) {
       return needs(ProjectionFault.SCREEN_LINE_COUNT_MISMATCH);
     }
     if (baseline.historyExtent == null || baseline.historyBindings == null
@@ -37,6 +36,7 @@ public final class ScreenProjectionReducer {
       return needs(ProjectionFault.HISTORY_BINDING_COUNT_MISMATCH);
     }
     try {
+      Map<LineKey, LineBody> bodies = indexBodies(baseline.screenBodies);
       TerminalSurfaceState surface = new TerminalSurfaceState(historyBudget);
       TerminalSurfaceTransaction tx = surface.beginTransaction();
       tx.historyCatalog().setExtent(baseline.historyExtent);
@@ -59,29 +59,45 @@ public final class ScreenProjectionReducer {
         if (!historical.add(binding.key)) {
           return needs(ProjectionFault.DUPLICATE_HISTORY_KEY);
         }
-        tx.historyCatalog().bindNew(binding.historySeq, binding.key);
         previousSeq = binding.historySeq;
+      }
+
+      for (LineBodyRecord record : baseline.screenBodies) {
+        if (record == null || record.body().physicalColumns != baseline.cols) {
+          return needs(ProjectionFault.LINE_COLUMN_COUNT_MISMATCH);
+        }
+        tx.bodyCache().putBody(record.key(), record.body());
       }
 
       LineKey[] active = new LineKey[baseline.rows];
       Set<LineKey> activeSet = new HashSet<>();
       for (int row = 0; row < baseline.rows; row++) {
-        ScreenLineContent line = baseline.screen.get(row);
-        if (line == null || line.key() == null || line.body() == null) {
+        LineKey key = baseline.screenRows.get(row);
+        if (key == null) {
           return needs(ProjectionFault.INVALID_LINE_BODY);
         }
-        if (line.body().physicalColumns != baseline.cols) {
-          return needs(ProjectionFault.LINE_COLUMN_COUNT_MISMATCH);
-        }
-        if (!activeSet.add(line.key())) {
+        if (!activeSet.add(key)) {
           return needs(ProjectionFault.DUPLICATE_ACTIVE_KEY);
         }
-        if (historical.contains(line.key())) {
+        if (historical.contains(key)) {
           return needs(ProjectionFault.ACTIVE_HISTORY_KEY_CONFLICT);
         }
-        tx.bodyCache().putBody(line.key(), line.body());
-        active[row] = line.key();
+        LineBody body = bodies.get(key);
+        if (body == null || tx.bodyCache().body(key) == null) {
+          return needs(ProjectionFault.INVALID_LINE_BODY);
+        }
+        active[row] = key;
       }
+
+      previousSeq = 0;
+      for (HistoryPush binding : baseline.historyBindings) {
+        tx.historyCatalog().bindNew(binding.historySeq, binding.key);
+        if (tx.bodyCache().body(binding.key) == null) {
+          return needs(ProjectionFault.PROMOTION_BODY_INVARIANT_FAILURE);
+        }
+        previousSeq = binding.historySeq;
+      }
+
       tx.activeRows(new ActiveRowLayout(active));
       TerminalSurfaceState nextSurface = tx.commit();
       TerminalSurfaceState main = baseline.activeBuffer == TerminalBufferKind.MAIN
@@ -93,7 +109,6 @@ public final class ScreenProjectionReducer {
           new ProjectionIdentity(
               baseline.instanceId, baseline.layoutEpoch, baseline.historyGeneration),
           baseline.screenRevision,
-          baseline.dictionaryGeneration,
           baseline.rows,
           baseline.cols,
           baseline.activeBuffer,
@@ -109,6 +124,18 @@ public final class ScreenProjectionReducer {
     } catch (RuntimeException invalid) {
       return needs(ProjectionFault.MODEL_REJECTED_BASELINE);
     }
+  }
+
+  private static Map<LineKey, LineBody> indexBodies(List<LineBodyRecord> records) {
+    Map<LineKey, LineBody> bodies = new HashMap<>();
+    if (records == null) return bodies;
+    for (LineBodyRecord record : records) {
+      if (record == null) continue;
+      if (bodies.putIfAbsent(record.key(), record.body()) != null) {
+        throw new IllegalArgumentException("duplicate baseline body key");
+      }
+    }
+    return bodies;
   }
 
   private static ProjectionResult.NeedsBaseline needs(ProjectionFault fault) {
@@ -129,11 +156,11 @@ public final class ScreenProjectionReducer {
     boolean bufferChanged = nextBuffer != current.activeBuffer;
     TerminalSurfaceState source = nextBuffer == TerminalBufferKind.ALTERNATE
         ? current.alternateSurface : current.mainSurface;
-    if (!bufferChanged && commit.screen == null && commit.history == null) {
+    boolean hasBodyUpserts = commit.bodyUpserts != null && !commit.bodyUpserts.isEmpty();
+    if (!bufferChanged && commit.screen == null && commit.history == null && !hasBodyUpserts) {
       ProjectionState next = new ProjectionState(
           current.identity,
           commit.revision,
-          current.dictionaryGeneration,
           current.rows,
           current.columns,
           current.activeBuffer,
@@ -147,6 +174,14 @@ public final class ScreenProjectionReducer {
     }
     try {
       TerminalSurfaceTransaction tx = source.beginTransaction();
+      for (LineBodyRecord upsert : commit.bodyUpserts) {
+        if (upsert == null || upsert.body().physicalColumns != current.columns) {
+          return new ProjectionResult.NeedsBaseline(
+              ProjectionFault.INVALID_LINE_BODY);
+        }
+        tx.bodyCache().putBody(upsert.key(), upsert.body());
+      }
+
       LineKey[] rows = source.activeRows.size() == current.rows
           ? source.activeRows.copyKeys() : new LineKey[current.rows];
       BitSet changedRows = new BitSet(current.rows);
@@ -160,15 +195,17 @@ public final class ScreenProjectionReducer {
         }
         boolean[] written = new boolean[current.rows];
         for (ScreenRowWrite write : commit.screen.writes) {
-          if (write == null || write.line == null || write.row < 0
-              || write.row >= current.rows || written[write.row]
-              || write.line.body().physicalColumns != current.columns) {
+          if (write == null || write.key == null || write.row < 0
+              || write.row >= current.rows || written[write.row]) {
+            return new ProjectionResult.NeedsBaseline(
+                ProjectionFault.INVALID_SCREEN_MUTATION);
+          }
+          if (tx.bodyCache().body(write.key) == null) {
             return new ProjectionResult.NeedsBaseline(
                 ProjectionFault.INVALID_SCREEN_MUTATION);
           }
           written[write.row] = true;
-          tx.bodyCache().putBody(write.line.key(), write.line.body());
-          rows[write.row] = write.line.key();
+          rows[write.row] = write.key;
           changedRows.set(write.row);
         }
       } else if (bufferChanged) {
@@ -213,26 +250,15 @@ public final class ScreenProjectionReducer {
           }
           previousSeq = push.historySeq;
         }
-        Map<Long, LineKey> previousActiveByLineId = new HashMap<>();
-        for (int row = 0; row < source.activeRows.size(); row++) {
-          LineKey key = source.activeRows.keyAt(row);
-          if (key != null) previousActiveByLineId.put(key.lineId(), key);
-        }
         for (HistoryPush push : commit.history.pushes) {
           tx.historyCatalog().bindAuthoritative(push.historySeq, push.key);
-          if (tx.bodyCache().body(push.key) != null) {
-            tx.bodyCache().markHistoryResident(push.historySeq, push.key);
-            HistoryPromotionMetrics.recordExactReuse();
-          } else {
-            LineKey previousScreenKey = previousActiveByLineId.get(push.key.lineId());
-            if (previousScreenKey != null
-                && tx.bodyCache().body(previousScreenKey) != null) {
-              HistoryPromotionMetrics.recordVersionMismatch(
-                  push.historySeq, previousScreenKey.lineVersion(), push.key.lineVersion());
-            } else {
-              HistoryPromotionMetrics.recordBodyAbsent(push.historySeq);
-            }
+          if (tx.bodyCache().body(push.key) == null) {
+            HistoryPromotionMetrics.recordBodyInvariantFailure(push.historySeq);
+            return new ProjectionResult.NeedsBaseline(
+                ProjectionFault.PROMOTION_BODY_INVARIANT_FAILURE);
           }
+          tx.bodyCache().markHistoryResident(push.historySeq, push.key);
+          HistoryPromotionMetrics.recordExactReuse();
         }
         historyChanged = true;
       }
@@ -247,7 +273,6 @@ public final class ScreenProjectionReducer {
       ProjectionState next = new ProjectionState(
           current.identity,
           commit.revision,
-          current.dictionaryGeneration,
           current.rows,
           current.columns,
           nextBuffer,
@@ -280,9 +305,6 @@ public final class ScreenProjectionReducer {
     if (current.screenRevision != commit.baseRevision
         || commit.revision <= commit.baseRevision) {
       return ProjectionFault.REVISION_GAP;
-    }
-    if (current.dictionaryGeneration != commit.dictionaryGeneration) {
-      return ProjectionFault.DICTIONARY_GENERATION_MISMATCH;
     }
     if (current.identity.historyGeneration() != commit.historyGeneration) {
       return ProjectionFault.HISTORY_GENERATION_MISMATCH;

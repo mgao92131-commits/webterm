@@ -26,30 +26,30 @@ public final class TerminalHistoryProto {
         (com.google.protobuf.ExtensionRegistryLite) registry);
   }
   /**
-   * Protobuf enum {@code webterm.terminal.screen.v2.HistoryRangeStatus}
+   * Protobuf enum {@code webterm.terminal.screen.v3.LineBodyBatchStatus}
    */
-  public enum HistoryRangeStatus
+  public enum LineBodyBatchStatus
       implements com.google.protobuf.ProtocolMessageEnum {
     /**
-     * <code>HISTORY_RANGE_STATUS_UNSPECIFIED = 0;</code>
+     * <code>LINE_BODY_BATCH_STATUS_UNSPECIFIED = 0;</code>
      */
-    HISTORY_RANGE_STATUS_UNSPECIFIED(0),
+    LINE_BODY_BATCH_STATUS_UNSPECIFIED(0),
     /**
-     * <code>HISTORY_RANGE_STATUS_OK = 1;</code>
+     * <code>LINE_BODY_BATCH_STATUS_OK = 1;</code>
      */
-    HISTORY_RANGE_STATUS_OK(1),
+    LINE_BODY_BATCH_STATUS_OK(1),
     /**
-     * <code>HISTORY_RANGE_STATUS_STALE_PROJECTION = 2;</code>
+     * <code>LINE_BODY_BATCH_STATUS_STALE = 2;</code>
      */
-    HISTORY_RANGE_STATUS_STALE_PROJECTION(2),
+    LINE_BODY_BATCH_STATUS_STALE(2),
     /**
-     * <code>HISTORY_RANGE_STATUS_SESSION_GONE = 3;</code>
+     * <code>LINE_BODY_BATCH_STATUS_SESSION_GONE = 3;</code>
      */
-    HISTORY_RANGE_STATUS_SESSION_GONE(3),
+    LINE_BODY_BATCH_STATUS_SESSION_GONE(3),
     /**
-     * <code>HISTORY_RANGE_STATUS_RETRYABLE = 4;</code>
+     * <code>LINE_BODY_BATCH_STATUS_RETRYABLE = 4;</code>
      */
-    HISTORY_RANGE_STATUS_RETRYABLE(4),
+    LINE_BODY_BATCH_STATUS_RETRYABLE(4),
     UNRECOGNIZED(-1),
     ;
 
@@ -60,28 +60,28 @@ public final class TerminalHistoryProto {
         /* minor= */ 29,
         /* patch= */ 2,
         /* suffix= */ "",
-        HistoryRangeStatus.class.getName());
+        LineBodyBatchStatus.class.getName());
     }
     /**
-     * <code>HISTORY_RANGE_STATUS_UNSPECIFIED = 0;</code>
+     * <code>LINE_BODY_BATCH_STATUS_UNSPECIFIED = 0;</code>
      */
-    public static final int HISTORY_RANGE_STATUS_UNSPECIFIED_VALUE = 0;
+    public static final int LINE_BODY_BATCH_STATUS_UNSPECIFIED_VALUE = 0;
     /**
-     * <code>HISTORY_RANGE_STATUS_OK = 1;</code>
+     * <code>LINE_BODY_BATCH_STATUS_OK = 1;</code>
      */
-    public static final int HISTORY_RANGE_STATUS_OK_VALUE = 1;
+    public static final int LINE_BODY_BATCH_STATUS_OK_VALUE = 1;
     /**
-     * <code>HISTORY_RANGE_STATUS_STALE_PROJECTION = 2;</code>
+     * <code>LINE_BODY_BATCH_STATUS_STALE = 2;</code>
      */
-    public static final int HISTORY_RANGE_STATUS_STALE_PROJECTION_VALUE = 2;
+    public static final int LINE_BODY_BATCH_STATUS_STALE_VALUE = 2;
     /**
-     * <code>HISTORY_RANGE_STATUS_SESSION_GONE = 3;</code>
+     * <code>LINE_BODY_BATCH_STATUS_SESSION_GONE = 3;</code>
      */
-    public static final int HISTORY_RANGE_STATUS_SESSION_GONE_VALUE = 3;
+    public static final int LINE_BODY_BATCH_STATUS_SESSION_GONE_VALUE = 3;
     /**
-     * <code>HISTORY_RANGE_STATUS_RETRYABLE = 4;</code>
+     * <code>LINE_BODY_BATCH_STATUS_RETRYABLE = 4;</code>
      */
-    public static final int HISTORY_RANGE_STATUS_RETRYABLE_VALUE = 4;
+    public static final int LINE_BODY_BATCH_STATUS_RETRYABLE_VALUE = 4;
 
 
     public final int getNumber() {
@@ -98,7 +98,7 @@ public final class TerminalHistoryProto {
      * @deprecated Use {@link #forNumber(int)} instead.
      */
     @java.lang.Deprecated
-    public static HistoryRangeStatus valueOf(int value) {
+    public static LineBodyBatchStatus valueOf(int value) {
       return forNumber(value);
     }
 
@@ -106,26 +106,26 @@ public final class TerminalHistoryProto {
      * @param value The numeric wire value of the corresponding enum entry.
      * @return The enum associated with the given numeric wire value.
      */
-    public static HistoryRangeStatus forNumber(int value) {
+    public static LineBodyBatchStatus forNumber(int value) {
       switch (value) {
-        case 0: return HISTORY_RANGE_STATUS_UNSPECIFIED;
-        case 1: return HISTORY_RANGE_STATUS_OK;
-        case 2: return HISTORY_RANGE_STATUS_STALE_PROJECTION;
-        case 3: return HISTORY_RANGE_STATUS_SESSION_GONE;
-        case 4: return HISTORY_RANGE_STATUS_RETRYABLE;
+        case 0: return LINE_BODY_BATCH_STATUS_UNSPECIFIED;
+        case 1: return LINE_BODY_BATCH_STATUS_OK;
+        case 2: return LINE_BODY_BATCH_STATUS_STALE;
+        case 3: return LINE_BODY_BATCH_STATUS_SESSION_GONE;
+        case 4: return LINE_BODY_BATCH_STATUS_RETRYABLE;
         default: return null;
       }
     }
 
-    public static com.google.protobuf.Internal.EnumLiteMap<HistoryRangeStatus>
+    public static com.google.protobuf.Internal.EnumLiteMap<LineBodyBatchStatus>
         internalGetValueMap() {
       return internalValueMap;
     }
     private static final com.google.protobuf.Internal.EnumLiteMap<
-        HistoryRangeStatus> internalValueMap =
-          new com.google.protobuf.Internal.EnumLiteMap<HistoryRangeStatus>() {
-            public HistoryRangeStatus findValueByNumber(int number) {
-              return HistoryRangeStatus.forNumber(number);
+        LineBodyBatchStatus> internalValueMap =
+          new com.google.protobuf.Internal.EnumLiteMap<LineBodyBatchStatus>() {
+            public LineBodyBatchStatus findValueByNumber(int number) {
+              return LineBodyBatchStatus.forNumber(number);
             }
           };
 
@@ -146,9 +146,9 @@ public final class TerminalHistoryProto {
       return com.webterm.terminal.protocol.generated.TerminalHistoryProto.getDescriptor().getEnumTypes().get(0);
     }
 
-    private static final HistoryRangeStatus[] VALUES = values();
+    private static final LineBodyBatchStatus[] VALUES = values();
 
-    public static HistoryRangeStatus valueOf(
+    public static LineBodyBatchStatus valueOf(
         com.google.protobuf.Descriptors.EnumValueDescriptor desc) {
       if (desc.getType() != getDescriptor()) {
         throw new java.lang.IllegalArgumentException(
@@ -162,119 +162,64 @@ public final class TerminalHistoryProto {
 
     private final int value;
 
-    private HistoryRangeStatus(int value) {
+    private LineBodyBatchStatus(int value) {
       this.value = value;
     }
 
-    // @@protoc_insertion_point(enum_scope:webterm.terminal.screen.v2.HistoryRangeStatus)
+    // @@protoc_insertion_point(enum_scope:webterm.terminal.screen.v3.LineBodyBatchStatus)
   }
 
-  public interface HistoryRangeResponseOrBuilder extends
-      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v2.HistoryRangeResponse)
+  public interface LineBodyBatchRequestOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v3.LineBodyBatchRequest)
       com.google.protobuf.MessageOrBuilder {
 
     /**
-     * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-     * @return The enum numeric value on the wire for status.
-     */
-    int getStatusValue();
-    /**
-     * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-     * @return The status.
-     */
-    com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus getStatus();
-
-    /**
-     * <code>string instance_id = 2;</code>
+     * <code>string instance_id = 1;</code>
      * @return The instanceId.
      */
     java.lang.String getInstanceId();
     /**
-     * <code>string instance_id = 2;</code>
+     * <code>string instance_id = 1;</code>
      * @return The bytes for instanceId.
      */
     com.google.protobuf.ByteString
         getInstanceIdBytes();
 
     /**
-     * <code>uint64 layout_epoch = 3;</code>
-     * @return The layoutEpoch.
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
      */
-    long getLayoutEpoch();
-
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey>
+        getKeysList();
     /**
-     * <code>uint64 history_generation = 4;</code>
-     * @return The historyGeneration.
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
      */
-    long getHistoryGeneration();
-
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey getKeys(int index);
     /**
-     * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-     * @return Whether the currentExtent field is set.
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
      */
-    boolean hasCurrentExtent();
+    int getKeysCount();
     /**
-     * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-     * @return The currentExtent.
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
      */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent getCurrentExtent();
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+        getKeysOrBuilderList();
     /**
-     * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
      */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtentOrBuilder getCurrentExtentOrBuilder();
-
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData>
-        getLinesList();
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData getLines(int index);
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    int getLinesCount();
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder>
-        getLinesOrBuilderList();
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder getLinesOrBuilder(
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder getKeysOrBuilder(
         int index);
-
-    /**
-     * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
-     * @return Whether the dictionary field is set.
-     */
-    boolean hasDictionary();
-    /**
-     * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
-     * @return The dictionary.
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary getDictionary();
-    /**
-     * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
-     */
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder getDictionaryOrBuilder();
-
-    /**
-     * <code>uint32 retry_after_ms = 8;</code>
-     * @return The retryAfterMs.
-     */
-    int getRetryAfterMs();
   }
   /**
-   * Protobuf type {@code webterm.terminal.screen.v2.HistoryRangeResponse}
+   * <pre>
+   * HTTP 历史正文批量拉取（不经 ScreenEnvelope）。
+   * </pre>
+   *
+   * Protobuf type {@code webterm.terminal.screen.v3.LineBodyBatchRequest}
    */
-  public static final class HistoryRangeResponse extends
+  public static final class LineBodyBatchRequest extends
       com.google.protobuf.GeneratedMessage implements
-      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v2.HistoryRangeResponse)
-      HistoryRangeResponseOrBuilder {
+      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v3.LineBodyBatchRequest)
+      LineBodyBatchRequestOrBuilder {
   private static final long serialVersionUID = 0L;
     static {
       com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
@@ -283,55 +228,35 @@ public final class TerminalHistoryProto {
         /* minor= */ 29,
         /* patch= */ 2,
         /* suffix= */ "",
-        HistoryRangeResponse.class.getName());
+        LineBodyBatchRequest.class.getName());
     }
-    // Use HistoryRangeResponse.newBuilder() to construct.
-    private HistoryRangeResponse(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+    // Use LineBodyBatchRequest.newBuilder() to construct.
+    private LineBodyBatchRequest(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
       super(builder);
     }
-    private HistoryRangeResponse() {
-      status_ = 0;
+    private LineBodyBatchRequest() {
       instanceId_ = "";
-      lines_ = java.util.Collections.emptyList();
+      keys_ = java.util.Collections.emptyList();
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
         getDescriptor() {
-      return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_descriptor;
+      return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_descriptor;
     }
 
     @java.lang.Override
     protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
         internalGetFieldAccessorTable() {
-      return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_fieldAccessorTable
+      return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.class, com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.Builder.class);
+              com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.class, com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.Builder.class);
     }
 
-    private int bitField0_;
-    public static final int STATUS_FIELD_NUMBER = 1;
-    private int status_ = 0;
-    /**
-     * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-     * @return The enum numeric value on the wire for status.
-     */
-    @java.lang.Override public int getStatusValue() {
-      return status_;
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-     * @return The status.
-     */
-    @java.lang.Override public com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus getStatus() {
-      com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus result = com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus.forNumber(status_);
-      return result == null ? com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus.UNRECOGNIZED : result;
-    }
-
-    public static final int INSTANCE_ID_FIELD_NUMBER = 2;
+    public static final int INSTANCE_ID_FIELD_NUMBER = 1;
     @SuppressWarnings("serial")
     private volatile java.lang.Object instanceId_ = "";
     /**
-     * <code>string instance_id = 2;</code>
+     * <code>string instance_id = 1;</code>
      * @return The instanceId.
      */
     @java.lang.Override
@@ -348,7 +273,7 @@ public final class TerminalHistoryProto {
       }
     }
     /**
-     * <code>string instance_id = 2;</code>
+     * <code>string instance_id = 1;</code>
      * @return The bytes for instanceId.
      */
     @java.lang.Override
@@ -366,10 +291,1099 @@ public final class TerminalHistoryProto {
       }
     }
 
-    public static final int LAYOUT_EPOCH_FIELD_NUMBER = 3;
+    public static final int KEYS_FIELD_NUMBER = 2;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> keys_;
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> getKeysList() {
+      return keys_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+        getKeysOrBuilderList() {
+      return keys_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+     */
+    @java.lang.Override
+    public int getKeysCount() {
+      return keys_.size();
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey getKeys(int index) {
+      return keys_.get(index);
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder getKeysOrBuilder(
+        int index) {
+      return keys_.get(index);
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(instanceId_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, instanceId_);
+      }
+      for (int i = 0; i < keys_.size(); i++) {
+        output.writeMessage(2, keys_.get(i));
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(instanceId_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, instanceId_);
+      }
+      for (int i = 0; i < keys_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(2, keys_.get(i));
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest)) {
+        return super.equals(obj);
+      }
+      com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest other = (com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest) obj;
+
+      if (!getInstanceId()
+          .equals(other.getInstanceId())) return false;
+      if (!getKeysList()
+          .equals(other.getKeysList())) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + INSTANCE_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getInstanceId().hashCode();
+      if (getKeysCount() > 0) {
+        hash = (37 * hash) + KEYS_FIELD_NUMBER;
+        hash = (53 * hash) + getKeysList().hashCode();
+      }
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * <pre>
+     * HTTP 历史正文批量拉取（不经 ScreenEnvelope）。
+     * </pre>
+     *
+     * Protobuf type {@code webterm.terminal.screen.v3.LineBodyBatchRequest}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v3.LineBodyBatchRequest)
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequestOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.class, com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.Builder.class);
+      }
+
+      // Construct using com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        instanceId_ = "";
+        if (keysBuilder_ == null) {
+          keys_ = java.util.Collections.emptyList();
+        } else {
+          keys_ = null;
+          keysBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00000002);
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_descriptor;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest getDefaultInstanceForType() {
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest build() {
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest buildPartial() {
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest result = new com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest(this);
+        buildPartialRepeatedFields(result);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartialRepeatedFields(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest result) {
+        if (keysBuilder_ == null) {
+          if (((bitField0_ & 0x00000002) != 0)) {
+            keys_ = java.util.Collections.unmodifiableList(keys_);
+            bitField0_ = (bitField0_ & ~0x00000002);
+          }
+          result.keys_ = keys_;
+        } else {
+          result.keys_ = keysBuilder_.build();
+        }
+      }
+
+      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.instanceId_ = instanceId_;
+        }
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest) {
+          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest other) {
+        if (other == com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest.getDefaultInstance()) return this;
+        if (!other.getInstanceId().isEmpty()) {
+          instanceId_ = other.instanceId_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
+        if (keysBuilder_ == null) {
+          if (!other.keys_.isEmpty()) {
+            if (keys_.isEmpty()) {
+              keys_ = other.keys_;
+              bitField0_ = (bitField0_ & ~0x00000002);
+            } else {
+              ensureKeysIsMutable();
+              keys_.addAll(other.keys_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.keys_.isEmpty()) {
+            if (keysBuilder_.isEmpty()) {
+              keysBuilder_.dispose();
+              keysBuilder_ = null;
+              keys_ = other.keys_;
+              bitField0_ = (bitField0_ & ~0x00000002);
+              keysBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getKeysFieldBuilder() : null;
+            } else {
+              keysBuilder_.addAllMessages(other.keys_);
+            }
+          }
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 10: {
+                instanceId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 10
+              case 18: {
+                com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey m =
+                    input.readMessage(
+                        com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.parser(),
+                        extensionRegistry);
+                if (keysBuilder_ == null) {
+                  ensureKeysIsMutable();
+                  keys_.add(m);
+                } else {
+                  keysBuilder_.addMessage(m);
+                }
+                break;
+              } // case 18
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private java.lang.Object instanceId_ = "";
+      /**
+       * <code>string instance_id = 1;</code>
+       * @return The instanceId.
+       */
+      public java.lang.String getInstanceId() {
+        java.lang.Object ref = instanceId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          instanceId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string instance_id = 1;</code>
+       * @return The bytes for instanceId.
+       */
+      public com.google.protobuf.ByteString
+          getInstanceIdBytes() {
+        java.lang.Object ref = instanceId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b =
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          instanceId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string instance_id = 1;</code>
+       * @param value The instanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setInstanceId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        instanceId_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string instance_id = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearInstanceId() {
+        instanceId_ = getDefaultInstance().getInstanceId();
+        bitField0_ = (bitField0_ & ~0x00000001);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string instance_id = 1;</code>
+       * @param value The bytes for instanceId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setInstanceIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        instanceId_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> keys_ =
+        java.util.Collections.emptyList();
+      private void ensureKeysIsMutable() {
+        if (!((bitField0_ & 0x00000002) != 0)) {
+          keys_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey>(keys_);
+          bitField0_ |= 0x00000002;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder> keysBuilder_;
+
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> getKeysList() {
+        if (keysBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(keys_);
+        } else {
+          return keysBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public int getKeysCount() {
+        if (keysBuilder_ == null) {
+          return keys_.size();
+        } else {
+          return keysBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey getKeys(int index) {
+        if (keysBuilder_ == null) {
+          return keys_.get(index);
+        } else {
+          return keysBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder setKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey value) {
+        if (keysBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureKeysIsMutable();
+          keys_.set(index, value);
+          onChanged();
+        } else {
+          keysBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder setKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder builderForValue) {
+        if (keysBuilder_ == null) {
+          ensureKeysIsMutable();
+          keys_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          keysBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder addKeys(com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey value) {
+        if (keysBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureKeysIsMutable();
+          keys_.add(value);
+          onChanged();
+        } else {
+          keysBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder addKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey value) {
+        if (keysBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureKeysIsMutable();
+          keys_.add(index, value);
+          onChanged();
+        } else {
+          keysBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder addKeys(
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder builderForValue) {
+        if (keysBuilder_ == null) {
+          ensureKeysIsMutable();
+          keys_.add(builderForValue.build());
+          onChanged();
+        } else {
+          keysBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder addKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder builderForValue) {
+        if (keysBuilder_ == null) {
+          ensureKeysIsMutable();
+          keys_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          keysBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder addAllKeys(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> values) {
+        if (keysBuilder_ == null) {
+          ensureKeysIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, keys_);
+          onChanged();
+        } else {
+          keysBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder clearKeys() {
+        if (keysBuilder_ == null) {
+          keys_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000002);
+          onChanged();
+        } else {
+          keysBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public Builder removeKeys(int index) {
+        if (keysBuilder_ == null) {
+          ensureKeysIsMutable();
+          keys_.remove(index);
+          onChanged();
+        } else {
+          keysBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder getKeysBuilder(
+          int index) {
+        return getKeysFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder getKeysOrBuilder(
+          int index) {
+        if (keysBuilder_ == null) {
+          return keys_.get(index);  } else {
+          return keysBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+           getKeysOrBuilderList() {
+        if (keysBuilder_ != null) {
+          return keysBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(keys_);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder addKeysBuilder() {
+        return getKeysFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder addKeysBuilder(
+          int index) {
+        return getKeysFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey keys = 2;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder>
+           getKeysBuilderList() {
+        return getKeysFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+          getKeysFieldBuilder() {
+        if (keysBuilder_ == null) {
+          keysBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>(
+                  keys_,
+                  ((bitField0_ & 0x00000002) != 0),
+                  getParentForChildren(),
+                  isClean());
+          keys_ = null;
+        }
+        return keysBuilder_;
+      }
+
+      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v3.LineBodyBatchRequest)
+    }
+
+    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v3.LineBodyBatchRequest)
+    private static final com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest();
+    }
+
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<LineBodyBatchRequest>
+        PARSER = new com.google.protobuf.AbstractParser<LineBodyBatchRequest>() {
+      @java.lang.Override
+      public LineBodyBatchRequest parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<LineBodyBatchRequest> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<LineBodyBatchRequest> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchRequest getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
+  public interface LineBodyBatchResponseOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:webterm.terminal.screen.v3.LineBodyBatchResponse)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>string instance_id = 1;</code>
+     * @return The instanceId.
+     */
+    java.lang.String getInstanceId();
+    /**
+     * <code>string instance_id = 1;</code>
+     * @return The bytes for instanceId.
+     */
+    com.google.protobuf.ByteString
+        getInstanceIdBytes();
+
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord>
+        getBodiesList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord getBodies(int index);
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    int getBodiesCount();
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder>
+        getBodiesOrBuilderList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder getBodiesOrBuilder(
+        int index);
+
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey>
+        getMissingKeysList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey getMissingKeys(int index);
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    int getMissingKeysCount();
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+        getMissingKeysOrBuilderList();
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder getMissingKeysOrBuilder(
+        int index);
+
+    /**
+     * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
+     * @return Whether the dictionary field is set.
+     */
+    boolean hasDictionary();
+    /**
+     * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
+     * @return The dictionary.
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary getDictionary();
+    /**
+     * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
+     */
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.DictionaryOrBuilder getDictionaryOrBuilder();
+
+    /**
+     * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+     * @return The enum numeric value on the wire for status.
+     */
+    int getStatusValue();
+    /**
+     * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+     * @return The status.
+     */
+    com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus getStatus();
+
+    /**
+     * <code>uint64 layout_epoch = 6;</code>
+     * @return The layoutEpoch.
+     */
+    long getLayoutEpoch();
+
+    /**
+     * <code>uint64 history_generation = 7;</code>
+     * @return The historyGeneration.
+     */
+    long getHistoryGeneration();
+
+    /**
+     * <code>uint32 retry_after_ms = 8;</code>
+     * @return The retryAfterMs.
+     */
+    int getRetryAfterMs();
+  }
+  /**
+   * Protobuf type {@code webterm.terminal.screen.v3.LineBodyBatchResponse}
+   */
+  public static final class LineBodyBatchResponse extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:webterm.terminal.screen.v3.LineBodyBatchResponse)
+      LineBodyBatchResponseOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 29,
+        /* patch= */ 2,
+        /* suffix= */ "",
+        LineBodyBatchResponse.class.getName());
+    }
+    // Use LineBodyBatchResponse.newBuilder() to construct.
+    private LineBodyBatchResponse(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private LineBodyBatchResponse() {
+      instanceId_ = "";
+      bodies_ = java.util.Collections.emptyList();
+      missingKeys_ = java.util.Collections.emptyList();
+      status_ = 0;
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.class, com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.Builder.class);
+    }
+
+    private int bitField0_;
+    public static final int INSTANCE_ID_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object instanceId_ = "";
+    /**
+     * <code>string instance_id = 1;</code>
+     * @return The instanceId.
+     */
+    @java.lang.Override
+    public java.lang.String getInstanceId() {
+      java.lang.Object ref = instanceId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        instanceId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string instance_id = 1;</code>
+     * @return The bytes for instanceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getInstanceIdBytes() {
+      java.lang.Object ref = instanceId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b =
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        instanceId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int BODIES_FIELD_NUMBER = 2;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord> bodies_;
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord> getBodiesList() {
+      return bodies_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder>
+        getBodiesOrBuilderList() {
+      return bodies_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    @java.lang.Override
+    public int getBodiesCount() {
+      return bodies_.size();
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord getBodies(int index) {
+      return bodies_.get(index);
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder getBodiesOrBuilder(
+        int index) {
+      return bodies_.get(index);
+    }
+
+    public static final int MISSING_KEYS_FIELD_NUMBER = 3;
+    @SuppressWarnings("serial")
+    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> missingKeys_;
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    @java.lang.Override
+    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> getMissingKeysList() {
+      return missingKeys_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+        getMissingKeysOrBuilderList() {
+      return missingKeys_;
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    @java.lang.Override
+    public int getMissingKeysCount() {
+      return missingKeys_.size();
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey getMissingKeys(int index) {
+      return missingKeys_.get(index);
+    }
+    /**
+     * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder getMissingKeysOrBuilder(
+        int index) {
+      return missingKeys_.get(index);
+    }
+
+    public static final int DICTIONARY_FIELD_NUMBER = 4;
+    private com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary dictionary_;
+    /**
+     * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
+     * @return Whether the dictionary field is set.
+     */
+    @java.lang.Override
+    public boolean hasDictionary() {
+      return ((bitField0_ & 0x00000001) != 0);
+    }
+    /**
+     * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
+     * @return The dictionary.
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary getDictionary() {
+      return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.getDefaultInstance() : dictionary_;
+    }
+    /**
+     * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
+     */
+    @java.lang.Override
+    public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.DictionaryOrBuilder getDictionaryOrBuilder() {
+      return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.getDefaultInstance() : dictionary_;
+    }
+
+    public static final int STATUS_FIELD_NUMBER = 5;
+    private int status_ = 0;
+    /**
+     * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+     * @return The enum numeric value on the wire for status.
+     */
+    @java.lang.Override public int getStatusValue() {
+      return status_;
+    }
+    /**
+     * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+     * @return The status.
+     */
+    @java.lang.Override public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus getStatus() {
+      com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus result = com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus.forNumber(status_);
+      return result == null ? com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus.UNRECOGNIZED : result;
+    }
+
+    public static final int LAYOUT_EPOCH_FIELD_NUMBER = 6;
     private long layoutEpoch_ = 0L;
     /**
-     * <code>uint64 layout_epoch = 3;</code>
+     * <code>uint64 layout_epoch = 6;</code>
      * @return The layoutEpoch.
      */
     @java.lang.Override
@@ -377,108 +1391,15 @@ public final class TerminalHistoryProto {
       return layoutEpoch_;
     }
 
-    public static final int HISTORY_GENERATION_FIELD_NUMBER = 4;
+    public static final int HISTORY_GENERATION_FIELD_NUMBER = 7;
     private long historyGeneration_ = 0L;
     /**
-     * <code>uint64 history_generation = 4;</code>
+     * <code>uint64 history_generation = 7;</code>
      * @return The historyGeneration.
      */
     @java.lang.Override
     public long getHistoryGeneration() {
       return historyGeneration_;
-    }
-
-    public static final int CURRENT_EXTENT_FIELD_NUMBER = 5;
-    private com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent currentExtent_;
-    /**
-     * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-     * @return Whether the currentExtent field is set.
-     */
-    @java.lang.Override
-    public boolean hasCurrentExtent() {
-      return ((bitField0_ & 0x00000001) != 0);
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-     * @return The currentExtent.
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent getCurrentExtent() {
-      return currentExtent_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.getDefaultInstance() : currentExtent_;
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtentOrBuilder getCurrentExtentOrBuilder() {
-      return currentExtent_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.getDefaultInstance() : currentExtent_;
-    }
-
-    public static final int LINES_FIELD_NUMBER = 6;
-    @SuppressWarnings("serial")
-    private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData> lines_;
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    @java.lang.Override
-    public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData> getLinesList() {
-      return lines_;
-    }
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    @java.lang.Override
-    public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder>
-        getLinesOrBuilderList() {
-      return lines_;
-    }
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    @java.lang.Override
-    public int getLinesCount() {
-      return lines_.size();
-    }
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData getLines(int index) {
-      return lines_.get(index);
-    }
-    /**
-     * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder getLinesOrBuilder(
-        int index) {
-      return lines_.get(index);
-    }
-
-    public static final int DICTIONARY_FIELD_NUMBER = 7;
-    private com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary dictionary_;
-    /**
-     * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
-     * @return Whether the dictionary field is set.
-     */
-    @java.lang.Override
-    public boolean hasDictionary() {
-      return ((bitField0_ & 0x00000002) != 0);
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
-     * @return The dictionary.
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary getDictionary() {
-      return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.getDefaultInstance() : dictionary_;
-    }
-    /**
-     * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
-     */
-    @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder getDictionaryOrBuilder() {
-      return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.getDefaultInstance() : dictionary_;
     }
 
     public static final int RETRY_AFTER_MS_FIELD_NUMBER = 8;
@@ -506,26 +1427,26 @@ public final class TerminalHistoryProto {
     @java.lang.Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
-      if (status_ != com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus.HISTORY_RANGE_STATUS_UNSPECIFIED.getNumber()) {
-        output.writeEnum(1, status_);
-      }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(instanceId_)) {
-        com.google.protobuf.GeneratedMessage.writeString(output, 2, instanceId_);
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, instanceId_);
       }
-      if (layoutEpoch_ != 0L) {
-        output.writeUInt64(3, layoutEpoch_);
+      for (int i = 0; i < bodies_.size(); i++) {
+        output.writeMessage(2, bodies_.get(i));
       }
-      if (historyGeneration_ != 0L) {
-        output.writeUInt64(4, historyGeneration_);
+      for (int i = 0; i < missingKeys_.size(); i++) {
+        output.writeMessage(3, missingKeys_.get(i));
       }
       if (((bitField0_ & 0x00000001) != 0)) {
-        output.writeMessage(5, getCurrentExtent());
+        output.writeMessage(4, getDictionary());
       }
-      for (int i = 0; i < lines_.size(); i++) {
-        output.writeMessage(6, lines_.get(i));
+      if (status_ != com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus.LINE_BODY_BATCH_STATUS_UNSPECIFIED.getNumber()) {
+        output.writeEnum(5, status_);
       }
-      if (((bitField0_ & 0x00000002) != 0)) {
-        output.writeMessage(7, getDictionary());
+      if (layoutEpoch_ != 0L) {
+        output.writeUInt64(6, layoutEpoch_);
+      }
+      if (historyGeneration_ != 0L) {
+        output.writeUInt64(7, historyGeneration_);
       }
       if (retryAfterMs_ != 0) {
         output.writeUInt32(8, retryAfterMs_);
@@ -539,32 +1460,32 @@ public final class TerminalHistoryProto {
       if (size != -1) return size;
 
       size = 0;
-      if (status_ != com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus.HISTORY_RANGE_STATUS_UNSPECIFIED.getNumber()) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeEnumSize(1, status_);
-      }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(instanceId_)) {
-        size += com.google.protobuf.GeneratedMessage.computeStringSize(2, instanceId_);
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, instanceId_);
       }
-      if (layoutEpoch_ != 0L) {
+      for (int i = 0; i < bodies_.size(); i++) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(3, layoutEpoch_);
+          .computeMessageSize(2, bodies_.get(i));
       }
-      if (historyGeneration_ != 0L) {
+      for (int i = 0; i < missingKeys_.size(); i++) {
         size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(4, historyGeneration_);
+          .computeMessageSize(3, missingKeys_.get(i));
       }
       if (((bitField0_ & 0x00000001) != 0)) {
         size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(5, getCurrentExtent());
+          .computeMessageSize(4, getDictionary());
       }
-      for (int i = 0; i < lines_.size(); i++) {
+      if (status_ != com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus.LINE_BODY_BATCH_STATUS_UNSPECIFIED.getNumber()) {
         size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(6, lines_.get(i));
+          .computeEnumSize(5, status_);
       }
-      if (((bitField0_ & 0x00000002) != 0)) {
+      if (layoutEpoch_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(7, getDictionary());
+          .computeUInt64Size(6, layoutEpoch_);
+      }
+      if (historyGeneration_ != 0L) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt64Size(7, historyGeneration_);
       }
       if (retryAfterMs_ != 0) {
         size += com.google.protobuf.CodedOutputStream
@@ -580,30 +1501,27 @@ public final class TerminalHistoryProto {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse)) {
+      if (!(obj instanceof com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse)) {
         return super.equals(obj);
       }
-      com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse other = (com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse) obj;
+      com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse other = (com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse) obj;
 
-      if (status_ != other.status_) return false;
       if (!getInstanceId()
           .equals(other.getInstanceId())) return false;
-      if (getLayoutEpoch()
-          != other.getLayoutEpoch()) return false;
-      if (getHistoryGeneration()
-          != other.getHistoryGeneration()) return false;
-      if (hasCurrentExtent() != other.hasCurrentExtent()) return false;
-      if (hasCurrentExtent()) {
-        if (!getCurrentExtent()
-            .equals(other.getCurrentExtent())) return false;
-      }
-      if (!getLinesList()
-          .equals(other.getLinesList())) return false;
+      if (!getBodiesList()
+          .equals(other.getBodiesList())) return false;
+      if (!getMissingKeysList()
+          .equals(other.getMissingKeysList())) return false;
       if (hasDictionary() != other.hasDictionary()) return false;
       if (hasDictionary()) {
         if (!getDictionary()
             .equals(other.getDictionary())) return false;
       }
+      if (status_ != other.status_) return false;
+      if (getLayoutEpoch()
+          != other.getLayoutEpoch()) return false;
+      if (getHistoryGeneration()
+          != other.getHistoryGeneration()) return false;
       if (getRetryAfterMs()
           != other.getRetryAfterMs()) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
@@ -617,28 +1535,28 @@ public final class TerminalHistoryProto {
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (37 * hash) + STATUS_FIELD_NUMBER;
-      hash = (53 * hash) + status_;
       hash = (37 * hash) + INSTANCE_ID_FIELD_NUMBER;
       hash = (53 * hash) + getInstanceId().hashCode();
+      if (getBodiesCount() > 0) {
+        hash = (37 * hash) + BODIES_FIELD_NUMBER;
+        hash = (53 * hash) + getBodiesList().hashCode();
+      }
+      if (getMissingKeysCount() > 0) {
+        hash = (37 * hash) + MISSING_KEYS_FIELD_NUMBER;
+        hash = (53 * hash) + getMissingKeysList().hashCode();
+      }
+      if (hasDictionary()) {
+        hash = (37 * hash) + DICTIONARY_FIELD_NUMBER;
+        hash = (53 * hash) + getDictionary().hashCode();
+      }
+      hash = (37 * hash) + STATUS_FIELD_NUMBER;
+      hash = (53 * hash) + status_;
       hash = (37 * hash) + LAYOUT_EPOCH_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getLayoutEpoch());
       hash = (37 * hash) + HISTORY_GENERATION_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getHistoryGeneration());
-      if (hasCurrentExtent()) {
-        hash = (37 * hash) + CURRENT_EXTENT_FIELD_NUMBER;
-        hash = (53 * hash) + getCurrentExtent().hashCode();
-      }
-      if (getLinesCount() > 0) {
-        hash = (37 * hash) + LINES_FIELD_NUMBER;
-        hash = (53 * hash) + getLinesList().hashCode();
-      }
-      if (hasDictionary()) {
-        hash = (37 * hash) + DICTIONARY_FIELD_NUMBER;
-        hash = (53 * hash) + getDictionary().hashCode();
-      }
       hash = (37 * hash) + RETRY_AFTER_MS_FIELD_NUMBER;
       hash = (53 * hash) + getRetryAfterMs();
       hash = (29 * hash) + getUnknownFields().hashCode();
@@ -646,44 +1564,44 @@ public final class TerminalHistoryProto {
       return hash;
     }
 
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(byte[] data)
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(java.io.InputStream input)
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -691,26 +1609,26 @@ public final class TerminalHistoryProto {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseDelimitedFrom(java.io.InputStream input)
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input);
     }
 
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseDelimitedFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse parseFrom(
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -723,7 +1641,7 @@ public final class TerminalHistoryProto {
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse prototype) {
+    public static Builder newBuilder(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
     @java.lang.Override
@@ -739,26 +1657,26 @@ public final class TerminalHistoryProto {
       return builder;
     }
     /**
-     * Protobuf type {@code webterm.terminal.screen.v2.HistoryRangeResponse}
+     * Protobuf type {@code webterm.terminal.screen.v3.LineBodyBatchResponse}
      */
     public static final class Builder extends
         com.google.protobuf.GeneratedMessage.Builder<Builder> implements
-        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v2.HistoryRangeResponse)
-        com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponseOrBuilder {
+        // @@protoc_insertion_point(builder_implements:webterm.terminal.screen.v3.LineBodyBatchResponse)
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponseOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
-        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_descriptor;
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_descriptor;
       }
 
       @java.lang.Override
       protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
           internalGetFieldAccessorTable() {
-        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_fieldAccessorTable
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.class, com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.Builder.class);
+                com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.class, com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.Builder.class);
       }
 
-      // Construct using com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.newBuilder()
+      // Construct using com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.newBuilder()
       private Builder() {
         maybeForceBuilderInitialization();
       }
@@ -771,8 +1689,8 @@ public final class TerminalHistoryProto {
       private void maybeForceBuilderInitialization() {
         if (com.google.protobuf.GeneratedMessage
                 .alwaysUseFieldBuilders) {
-          getCurrentExtentFieldBuilder();
-          getLinesFieldBuilder();
+          getBodiesFieldBuilder();
+          getMissingKeysFieldBuilder();
           getDictionaryFieldBuilder();
         }
       }
@@ -780,27 +1698,29 @@ public final class TerminalHistoryProto {
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
-        status_ = 0;
         instanceId_ = "";
-        layoutEpoch_ = 0L;
-        historyGeneration_ = 0L;
-        currentExtent_ = null;
-        if (currentExtentBuilder_ != null) {
-          currentExtentBuilder_.dispose();
-          currentExtentBuilder_ = null;
-        }
-        if (linesBuilder_ == null) {
-          lines_ = java.util.Collections.emptyList();
+        if (bodiesBuilder_ == null) {
+          bodies_ = java.util.Collections.emptyList();
         } else {
-          lines_ = null;
-          linesBuilder_.clear();
+          bodies_ = null;
+          bodiesBuilder_.clear();
         }
-        bitField0_ = (bitField0_ & ~0x00000020);
+        bitField0_ = (bitField0_ & ~0x00000002);
+        if (missingKeysBuilder_ == null) {
+          missingKeys_ = java.util.Collections.emptyList();
+        } else {
+          missingKeys_ = null;
+          missingKeysBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00000004);
         dictionary_ = null;
         if (dictionaryBuilder_ != null) {
           dictionaryBuilder_.dispose();
           dictionaryBuilder_ = null;
         }
+        status_ = 0;
+        layoutEpoch_ = 0L;
+        historyGeneration_ = 0L;
         retryAfterMs_ = 0;
         return this;
       }
@@ -808,17 +1728,17 @@ public final class TerminalHistoryProto {
       @java.lang.Override
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
-        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_descriptor;
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_descriptor;
       }
 
       @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse getDefaultInstanceForType() {
-        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.getDefaultInstance();
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse getDefaultInstanceForType() {
+        return com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.getDefaultInstance();
       }
 
       @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse build() {
-        com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse result = buildPartial();
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse build() {
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
@@ -826,52 +1746,55 @@ public final class TerminalHistoryProto {
       }
 
       @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse buildPartial() {
-        com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse result = new com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse(this);
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse buildPartial() {
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse result = new com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse(this);
         buildPartialRepeatedFields(result);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
       }
 
-      private void buildPartialRepeatedFields(com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse result) {
-        if (linesBuilder_ == null) {
-          if (((bitField0_ & 0x00000020) != 0)) {
-            lines_ = java.util.Collections.unmodifiableList(lines_);
-            bitField0_ = (bitField0_ & ~0x00000020);
+      private void buildPartialRepeatedFields(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse result) {
+        if (bodiesBuilder_ == null) {
+          if (((bitField0_ & 0x00000002) != 0)) {
+            bodies_ = java.util.Collections.unmodifiableList(bodies_);
+            bitField0_ = (bitField0_ & ~0x00000002);
           }
-          result.lines_ = lines_;
+          result.bodies_ = bodies_;
         } else {
-          result.lines_ = linesBuilder_.build();
+          result.bodies_ = bodiesBuilder_.build();
+        }
+        if (missingKeysBuilder_ == null) {
+          if (((bitField0_ & 0x00000004) != 0)) {
+            missingKeys_ = java.util.Collections.unmodifiableList(missingKeys_);
+            bitField0_ = (bitField0_ & ~0x00000004);
+          }
+          result.missingKeys_ = missingKeys_;
+        } else {
+          result.missingKeys_ = missingKeysBuilder_.build();
         }
       }
 
-      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse result) {
+      private void buildPartial0(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse result) {
         int from_bitField0_ = bitField0_;
         if (((from_bitField0_ & 0x00000001) != 0)) {
-          result.status_ = status_;
-        }
-        if (((from_bitField0_ & 0x00000002) != 0)) {
           result.instanceId_ = instanceId_;
         }
-        if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.layoutEpoch_ = layoutEpoch_;
-        }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
-          result.historyGeneration_ = historyGeneration_;
-        }
         int to_bitField0_ = 0;
-        if (((from_bitField0_ & 0x00000010) != 0)) {
-          result.currentExtent_ = currentExtentBuilder_ == null
-              ? currentExtent_
-              : currentExtentBuilder_.build();
-          to_bitField0_ |= 0x00000001;
-        }
-        if (((from_bitField0_ & 0x00000040) != 0)) {
+        if (((from_bitField0_ & 0x00000008) != 0)) {
           result.dictionary_ = dictionaryBuilder_ == null
               ? dictionary_
               : dictionaryBuilder_.build();
-          to_bitField0_ |= 0x00000002;
+          to_bitField0_ |= 0x00000001;
+        }
+        if (((from_bitField0_ & 0x00000010) != 0)) {
+          result.status_ = status_;
+        }
+        if (((from_bitField0_ & 0x00000020) != 0)) {
+          result.layoutEpoch_ = layoutEpoch_;
+        }
+        if (((from_bitField0_ & 0x00000040) != 0)) {
+          result.historyGeneration_ = historyGeneration_;
         }
         if (((from_bitField0_ & 0x00000080) != 0)) {
           result.retryAfterMs_ = retryAfterMs_;
@@ -881,61 +1804,84 @@ public final class TerminalHistoryProto {
 
       @java.lang.Override
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse) {
-          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse)other);
+        if (other instanceof com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse) {
+          return mergeFrom((com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse other) {
-        if (other == com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse.getDefaultInstance()) return this;
-        if (other.status_ != 0) {
-          setStatusValue(other.getStatusValue());
-        }
+      public Builder mergeFrom(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse other) {
+        if (other == com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse.getDefaultInstance()) return this;
         if (!other.getInstanceId().isEmpty()) {
           instanceId_ = other.instanceId_;
-          bitField0_ |= 0x00000002;
+          bitField0_ |= 0x00000001;
           onChanged();
+        }
+        if (bodiesBuilder_ == null) {
+          if (!other.bodies_.isEmpty()) {
+            if (bodies_.isEmpty()) {
+              bodies_ = other.bodies_;
+              bitField0_ = (bitField0_ & ~0x00000002);
+            } else {
+              ensureBodiesIsMutable();
+              bodies_.addAll(other.bodies_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.bodies_.isEmpty()) {
+            if (bodiesBuilder_.isEmpty()) {
+              bodiesBuilder_.dispose();
+              bodiesBuilder_ = null;
+              bodies_ = other.bodies_;
+              bitField0_ = (bitField0_ & ~0x00000002);
+              bodiesBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getBodiesFieldBuilder() : null;
+            } else {
+              bodiesBuilder_.addAllMessages(other.bodies_);
+            }
+          }
+        }
+        if (missingKeysBuilder_ == null) {
+          if (!other.missingKeys_.isEmpty()) {
+            if (missingKeys_.isEmpty()) {
+              missingKeys_ = other.missingKeys_;
+              bitField0_ = (bitField0_ & ~0x00000004);
+            } else {
+              ensureMissingKeysIsMutable();
+              missingKeys_.addAll(other.missingKeys_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.missingKeys_.isEmpty()) {
+            if (missingKeysBuilder_.isEmpty()) {
+              missingKeysBuilder_.dispose();
+              missingKeysBuilder_ = null;
+              missingKeys_ = other.missingKeys_;
+              bitField0_ = (bitField0_ & ~0x00000004);
+              missingKeysBuilder_ =
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getMissingKeysFieldBuilder() : null;
+            } else {
+              missingKeysBuilder_.addAllMessages(other.missingKeys_);
+            }
+          }
+        }
+        if (other.hasDictionary()) {
+          mergeDictionary(other.getDictionary());
+        }
+        if (other.status_ != 0) {
+          setStatusValue(other.getStatusValue());
         }
         if (other.getLayoutEpoch() != 0L) {
           setLayoutEpoch(other.getLayoutEpoch());
         }
         if (other.getHistoryGeneration() != 0L) {
           setHistoryGeneration(other.getHistoryGeneration());
-        }
-        if (other.hasCurrentExtent()) {
-          mergeCurrentExtent(other.getCurrentExtent());
-        }
-        if (linesBuilder_ == null) {
-          if (!other.lines_.isEmpty()) {
-            if (lines_.isEmpty()) {
-              lines_ = other.lines_;
-              bitField0_ = (bitField0_ & ~0x00000020);
-            } else {
-              ensureLinesIsMutable();
-              lines_.addAll(other.lines_);
-            }
-            onChanged();
-          }
-        } else {
-          if (!other.lines_.isEmpty()) {
-            if (linesBuilder_.isEmpty()) {
-              linesBuilder_.dispose();
-              linesBuilder_ = null;
-              lines_ = other.lines_;
-              bitField0_ = (bitField0_ & ~0x00000020);
-              linesBuilder_ =
-                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
-                   getLinesFieldBuilder() : null;
-            } else {
-              linesBuilder_.addAllMessages(other.lines_);
-            }
-          }
-        }
-        if (other.hasDictionary()) {
-          mergeDictionary(other.getDictionary());
         }
         if (other.getRetryAfterMs() != 0) {
           setRetryAfterMs(other.getRetryAfterMs());
@@ -966,53 +1912,59 @@ public final class TerminalHistoryProto {
               case 0:
                 done = true;
                 break;
-              case 8: {
-                status_ = input.readEnum();
+              case 10: {
+                instanceId_ = input.readStringRequireUtf8();
                 bitField0_ |= 0x00000001;
                 break;
-              } // case 8
+              } // case 10
               case 18: {
-                instanceId_ = input.readStringRequireUtf8();
-                bitField0_ |= 0x00000002;
-                break;
-              } // case 18
-              case 24: {
-                layoutEpoch_ = input.readUInt64();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 24
-              case 32: {
-                historyGeneration_ = input.readUInt64();
-                bitField0_ |= 0x00000008;
-                break;
-              } // case 32
-              case 42: {
-                input.readMessage(
-                    getCurrentExtentFieldBuilder().getBuilder(),
-                    extensionRegistry);
-                bitField0_ |= 0x00000010;
-                break;
-              } // case 42
-              case 50: {
-                com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData m =
+                com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord m =
                     input.readMessage(
-                        com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.parser(),
+                        com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.parser(),
                         extensionRegistry);
-                if (linesBuilder_ == null) {
-                  ensureLinesIsMutable();
-                  lines_.add(m);
+                if (bodiesBuilder_ == null) {
+                  ensureBodiesIsMutable();
+                  bodies_.add(m);
                 } else {
-                  linesBuilder_.addMessage(m);
+                  bodiesBuilder_.addMessage(m);
                 }
                 break;
-              } // case 50
-              case 58: {
+              } // case 18
+              case 26: {
+                com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey m =
+                    input.readMessage(
+                        com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.parser(),
+                        extensionRegistry);
+                if (missingKeysBuilder_ == null) {
+                  ensureMissingKeysIsMutable();
+                  missingKeys_.add(m);
+                } else {
+                  missingKeysBuilder_.addMessage(m);
+                }
+                break;
+              } // case 26
+              case 34: {
                 input.readMessage(
                     getDictionaryFieldBuilder().getBuilder(),
                     extensionRegistry);
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 34
+              case 40: {
+                status_ = input.readEnum();
+                bitField0_ |= 0x00000010;
+                break;
+              } // case 40
+              case 48: {
+                layoutEpoch_ = input.readUInt64();
+                bitField0_ |= 0x00000020;
+                break;
+              } // case 48
+              case 56: {
+                historyGeneration_ = input.readUInt64();
                 bitField0_ |= 0x00000040;
                 break;
-              } // case 58
+              } // case 56
               case 64: {
                 retryAfterMs_ = input.readUInt32();
                 bitField0_ |= 0x00000080;
@@ -1035,62 +1987,9 @@ public final class TerminalHistoryProto {
       }
       private int bitField0_;
 
-      private int status_ = 0;
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-       * @return The enum numeric value on the wire for status.
-       */
-      @java.lang.Override public int getStatusValue() {
-        return status_;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-       * @param value The enum numeric value on the wire for status to set.
-       * @return This builder for chaining.
-       */
-      public Builder setStatusValue(int value) {
-        status_ = value;
-        bitField0_ |= 0x00000001;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-       * @return The status.
-       */
-      @java.lang.Override
-      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus getStatus() {
-        com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus result = com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus.forNumber(status_);
-        return result == null ? com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus.UNRECOGNIZED : result;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-       * @param value The status to set.
-       * @return This builder for chaining.
-       */
-      public Builder setStatus(com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeStatus value) {
-        if (value == null) {
-          throw new NullPointerException();
-        }
-        bitField0_ |= 0x00000001;
-        status_ = value.getNumber();
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryRangeStatus status = 1;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearStatus() {
-        bitField0_ = (bitField0_ & ~0x00000001);
-        status_ = 0;
-        onChanged();
-        return this;
-      }
-
       private java.lang.Object instanceId_ = "";
       /**
-       * <code>string instance_id = 2;</code>
+       * <code>string instance_id = 1;</code>
        * @return The instanceId.
        */
       public java.lang.String getInstanceId() {
@@ -1106,7 +2005,7 @@ public final class TerminalHistoryProto {
         }
       }
       /**
-       * <code>string instance_id = 2;</code>
+       * <code>string instance_id = 1;</code>
        * @return The bytes for instanceId.
        */
       public com.google.protobuf.ByteString
@@ -1123,7 +2022,7 @@ public final class TerminalHistoryProto {
         }
       }
       /**
-       * <code>string instance_id = 2;</code>
+       * <code>string instance_id = 1;</code>
        * @param value The instanceId to set.
        * @return This builder for chaining.
        */
@@ -1131,22 +2030,22 @@ public final class TerminalHistoryProto {
           java.lang.String value) {
         if (value == null) { throw new NullPointerException(); }
         instanceId_ = value;
-        bitField0_ |= 0x00000002;
+        bitField0_ |= 0x00000001;
         onChanged();
         return this;
       }
       /**
-       * <code>string instance_id = 2;</code>
+       * <code>string instance_id = 1;</code>
        * @return This builder for chaining.
        */
       public Builder clearInstanceId() {
         instanceId_ = getDefaultInstance().getInstanceId();
-        bitField0_ = (bitField0_ & ~0x00000002);
+        bitField0_ = (bitField0_ & ~0x00000001);
         onChanged();
         return this;
       }
       /**
-       * <code>string instance_id = 2;</code>
+       * <code>string instance_id = 1;</code>
        * @param value The bytes for instanceId to set.
        * @return This builder for chaining.
        */
@@ -1155,461 +2054,516 @@ public final class TerminalHistoryProto {
         if (value == null) { throw new NullPointerException(); }
         checkByteStringIsUtf8(value);
         instanceId_ = value;
-        bitField0_ |= 0x00000002;
+        bitField0_ |= 0x00000001;
         onChanged();
         return this;
       }
 
-      private long layoutEpoch_ ;
-      /**
-       * <code>uint64 layout_epoch = 3;</code>
-       * @return The layoutEpoch.
-       */
-      @java.lang.Override
-      public long getLayoutEpoch() {
-        return layoutEpoch_;
-      }
-      /**
-       * <code>uint64 layout_epoch = 3;</code>
-       * @param value The layoutEpoch to set.
-       * @return This builder for chaining.
-       */
-      public Builder setLayoutEpoch(long value) {
-
-        layoutEpoch_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>uint64 layout_epoch = 3;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearLayoutEpoch() {
-        bitField0_ = (bitField0_ & ~0x00000004);
-        layoutEpoch_ = 0L;
-        onChanged();
-        return this;
-      }
-
-      private long historyGeneration_ ;
-      /**
-       * <code>uint64 history_generation = 4;</code>
-       * @return The historyGeneration.
-       */
-      @java.lang.Override
-      public long getHistoryGeneration() {
-        return historyGeneration_;
-      }
-      /**
-       * <code>uint64 history_generation = 4;</code>
-       * @param value The historyGeneration to set.
-       * @return This builder for chaining.
-       */
-      public Builder setHistoryGeneration(long value) {
-
-        historyGeneration_ = value;
-        bitField0_ |= 0x00000008;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>uint64 history_generation = 4;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearHistoryGeneration() {
-        bitField0_ = (bitField0_ & ~0x00000008);
-        historyGeneration_ = 0L;
-        onChanged();
-        return this;
-      }
-
-      private com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent currentExtent_;
-      private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtentOrBuilder> currentExtentBuilder_;
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       * @return Whether the currentExtent field is set.
-       */
-      public boolean hasCurrentExtent() {
-        return ((bitField0_ & 0x00000010) != 0);
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       * @return The currentExtent.
-       */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent getCurrentExtent() {
-        if (currentExtentBuilder_ == null) {
-          return currentExtent_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.getDefaultInstance() : currentExtent_;
-        } else {
-          return currentExtentBuilder_.getMessage();
-        }
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      public Builder setCurrentExtent(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent value) {
-        if (currentExtentBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          currentExtent_ = value;
-        } else {
-          currentExtentBuilder_.setMessage(value);
-        }
-        bitField0_ |= 0x00000010;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      public Builder setCurrentExtent(
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.Builder builderForValue) {
-        if (currentExtentBuilder_ == null) {
-          currentExtent_ = builderForValue.build();
-        } else {
-          currentExtentBuilder_.setMessage(builderForValue.build());
-        }
-        bitField0_ |= 0x00000010;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      public Builder mergeCurrentExtent(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent value) {
-        if (currentExtentBuilder_ == null) {
-          if (((bitField0_ & 0x00000010) != 0) &&
-            currentExtent_ != null &&
-            currentExtent_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.getDefaultInstance()) {
-            getCurrentExtentBuilder().mergeFrom(value);
-          } else {
-            currentExtent_ = value;
-          }
-        } else {
-          currentExtentBuilder_.mergeFrom(value);
-        }
-        if (currentExtent_ != null) {
-          bitField0_ |= 0x00000010;
-          onChanged();
-        }
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      public Builder clearCurrentExtent() {
-        bitField0_ = (bitField0_ & ~0x00000010);
-        currentExtent_ = null;
-        if (currentExtentBuilder_ != null) {
-          currentExtentBuilder_.dispose();
-          currentExtentBuilder_ = null;
-        }
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.Builder getCurrentExtentBuilder() {
-        bitField0_ |= 0x00000010;
-        onChanged();
-        return getCurrentExtentFieldBuilder().getBuilder();
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtentOrBuilder getCurrentExtentOrBuilder() {
-        if (currentExtentBuilder_ != null) {
-          return currentExtentBuilder_.getMessageOrBuilder();
-        } else {
-          return currentExtent_ == null ?
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.getDefaultInstance() : currentExtent_;
-        }
-      }
-      /**
-       * <code>.webterm.terminal.screen.v2.HistoryExtent current_extent = 5;</code>
-       */
-      private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtentOrBuilder>
-          getCurrentExtentFieldBuilder() {
-        if (currentExtentBuilder_ == null) {
-          currentExtentBuilder_ = new com.google.protobuf.SingleFieldBuilder<
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtent.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.HistoryExtentOrBuilder>(
-                  getCurrentExtent(),
-                  getParentForChildren(),
-                  isClean());
-          currentExtent_ = null;
-        }
-        return currentExtentBuilder_;
-      }
-
-      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData> lines_ =
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord> bodies_ =
         java.util.Collections.emptyList();
-      private void ensureLinesIsMutable() {
-        if (!((bitField0_ & 0x00000020) != 0)) {
-          lines_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData>(lines_);
-          bitField0_ |= 0x00000020;
+      private void ensureBodiesIsMutable() {
+        if (!((bitField0_ & 0x00000002) != 0)) {
+          bodies_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord>(bodies_);
+          bitField0_ |= 0x00000002;
          }
       }
 
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder> linesBuilder_;
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder> bodiesBuilder_;
 
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData> getLinesList() {
-        if (linesBuilder_ == null) {
-          return java.util.Collections.unmodifiableList(lines_);
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord> getBodiesList() {
+        if (bodiesBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(bodies_);
         } else {
-          return linesBuilder_.getMessageList();
+          return bodiesBuilder_.getMessageList();
         }
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public int getLinesCount() {
-        if (linesBuilder_ == null) {
-          return lines_.size();
+      public int getBodiesCount() {
+        if (bodiesBuilder_ == null) {
+          return bodies_.size();
         } else {
-          return linesBuilder_.getCount();
+          return bodiesBuilder_.getCount();
         }
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData getLines(int index) {
-        if (linesBuilder_ == null) {
-          return lines_.get(index);
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord getBodies(int index) {
+        if (bodiesBuilder_ == null) {
+          return bodies_.get(index);
         } else {
-          return linesBuilder_.getMessage(index);
+          return bodiesBuilder_.getMessage(index);
         }
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder setLines(
-          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData value) {
-        if (linesBuilder_ == null) {
+      public Builder setBodies(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord value) {
+        if (bodiesBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
           }
-          ensureLinesIsMutable();
-          lines_.set(index, value);
+          ensureBodiesIsMutable();
+          bodies_.set(index, value);
           onChanged();
         } else {
-          linesBuilder_.setMessage(index, value);
+          bodiesBuilder_.setMessage(index, value);
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder setLines(
-          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder builderForValue) {
-        if (linesBuilder_ == null) {
-          ensureLinesIsMutable();
-          lines_.set(index, builderForValue.build());
+      public Builder setBodies(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder builderForValue) {
+        if (bodiesBuilder_ == null) {
+          ensureBodiesIsMutable();
+          bodies_.set(index, builderForValue.build());
           onChanged();
         } else {
-          linesBuilder_.setMessage(index, builderForValue.build());
+          bodiesBuilder_.setMessage(index, builderForValue.build());
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder addLines(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData value) {
-        if (linesBuilder_ == null) {
+      public Builder addBodies(com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord value) {
+        if (bodiesBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
           }
-          ensureLinesIsMutable();
-          lines_.add(value);
+          ensureBodiesIsMutable();
+          bodies_.add(value);
           onChanged();
         } else {
-          linesBuilder_.addMessage(value);
+          bodiesBuilder_.addMessage(value);
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder addLines(
-          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData value) {
-        if (linesBuilder_ == null) {
+      public Builder addBodies(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord value) {
+        if (bodiesBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
           }
-          ensureLinesIsMutable();
-          lines_.add(index, value);
+          ensureBodiesIsMutable();
+          bodies_.add(index, value);
           onChanged();
         } else {
-          linesBuilder_.addMessage(index, value);
+          bodiesBuilder_.addMessage(index, value);
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder addLines(
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder builderForValue) {
-        if (linesBuilder_ == null) {
-          ensureLinesIsMutable();
-          lines_.add(builderForValue.build());
+      public Builder addBodies(
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder builderForValue) {
+        if (bodiesBuilder_ == null) {
+          ensureBodiesIsMutable();
+          bodies_.add(builderForValue.build());
           onChanged();
         } else {
-          linesBuilder_.addMessage(builderForValue.build());
+          bodiesBuilder_.addMessage(builderForValue.build());
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder addLines(
-          int index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder builderForValue) {
-        if (linesBuilder_ == null) {
-          ensureLinesIsMutable();
-          lines_.add(index, builderForValue.build());
+      public Builder addBodies(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder builderForValue) {
+        if (bodiesBuilder_ == null) {
+          ensureBodiesIsMutable();
+          bodies_.add(index, builderForValue.build());
           onChanged();
         } else {
-          linesBuilder_.addMessage(index, builderForValue.build());
+          bodiesBuilder_.addMessage(index, builderForValue.build());
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder addAllLines(
-          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData> values) {
-        if (linesBuilder_ == null) {
-          ensureLinesIsMutable();
+      public Builder addAllBodies(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord> values) {
+        if (bodiesBuilder_ == null) {
+          ensureBodiesIsMutable();
           com.google.protobuf.AbstractMessageLite.Builder.addAll(
-              values, lines_);
+              values, bodies_);
           onChanged();
         } else {
-          linesBuilder_.addAllMessages(values);
+          bodiesBuilder_.addAllMessages(values);
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder clearLines() {
-        if (linesBuilder_ == null) {
-          lines_ = java.util.Collections.emptyList();
-          bitField0_ = (bitField0_ & ~0x00000020);
+      public Builder clearBodies() {
+        if (bodiesBuilder_ == null) {
+          bodies_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000002);
           onChanged();
         } else {
-          linesBuilder_.clear();
+          bodiesBuilder_.clear();
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public Builder removeLines(int index) {
-        if (linesBuilder_ == null) {
-          ensureLinesIsMutable();
-          lines_.remove(index);
+      public Builder removeBodies(int index) {
+        if (bodiesBuilder_ == null) {
+          ensureBodiesIsMutable();
+          bodies_.remove(index);
           onChanged();
         } else {
-          linesBuilder_.remove(index);
+          bodiesBuilder_.remove(index);
         }
         return this;
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder getLinesBuilder(
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder getBodiesBuilder(
           int index) {
-        return getLinesFieldBuilder().getBuilder(index);
+        return getBodiesFieldBuilder().getBuilder(index);
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder getLinesOrBuilder(
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder getBodiesOrBuilder(
           int index) {
-        if (linesBuilder_ == null) {
-          return lines_.get(index);  } else {
-          return linesBuilder_.getMessageOrBuilder(index);
+        if (bodiesBuilder_ == null) {
+          return bodies_.get(index);  } else {
+          return bodiesBuilder_.getMessageOrBuilder(index);
         }
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder>
-           getLinesOrBuilderList() {
-        if (linesBuilder_ != null) {
-          return linesBuilder_.getMessageOrBuilderList();
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder>
+           getBodiesOrBuilderList() {
+        if (bodiesBuilder_ != null) {
+          return bodiesBuilder_.getMessageOrBuilderList();
         } else {
-          return java.util.Collections.unmodifiableList(lines_);
+          return java.util.Collections.unmodifiableList(bodies_);
         }
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder addLinesBuilder() {
-        return getLinesFieldBuilder().addBuilder(
-            com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.getDefaultInstance());
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder addBodiesBuilder() {
+        return getBodiesFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.getDefaultInstance());
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder addLinesBuilder(
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder addBodiesBuilder(
           int index) {
-        return getLinesFieldBuilder().addBuilder(
-            index, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.getDefaultInstance());
+        return getBodiesFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.getDefaultInstance());
       }
       /**
-       * <code>repeated .webterm.terminal.screen.v2.LineData lines = 6;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineBodyRecord bodies = 2;</code>
        */
-      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder>
-           getLinesBuilderList() {
-        return getLinesFieldBuilder().getBuilderList();
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder>
+           getBodiesBuilderList() {
+        return getBodiesFieldBuilder().getBuilderList();
       }
       private com.google.protobuf.RepeatedFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder>
-          getLinesFieldBuilder() {
-        if (linesBuilder_ == null) {
-          linesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineData.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.LineDataOrBuilder>(
-                  lines_,
-                  ((bitField0_ & 0x00000020) != 0),
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder>
+          getBodiesFieldBuilder() {
+        if (bodiesBuilder_ == null) {
+          bodiesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecord.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineBodyRecordOrBuilder>(
+                  bodies_,
+                  ((bitField0_ & 0x00000002) != 0),
                   getParentForChildren(),
                   isClean());
-          lines_ = null;
+          bodies_ = null;
         }
-        return linesBuilder_;
+        return bodiesBuilder_;
       }
 
-      private com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary dictionary_;
-      private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder> dictionaryBuilder_;
+      private java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> missingKeys_ =
+        java.util.Collections.emptyList();
+      private void ensureMissingKeysIsMutable() {
+        if (!((bitField0_ & 0x00000004) != 0)) {
+          missingKeys_ = new java.util.ArrayList<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey>(missingKeys_);
+          bitField0_ |= 0x00000004;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder> missingKeysBuilder_;
+
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> getMissingKeysList() {
+        if (missingKeysBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(missingKeys_);
+        } else {
+          return missingKeysBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public int getMissingKeysCount() {
+        if (missingKeysBuilder_ == null) {
+          return missingKeys_.size();
+        } else {
+          return missingKeysBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey getMissingKeys(int index) {
+        if (missingKeysBuilder_ == null) {
+          return missingKeys_.get(index);
+        } else {
+          return missingKeysBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder setMissingKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey value) {
+        if (missingKeysBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureMissingKeysIsMutable();
+          missingKeys_.set(index, value);
+          onChanged();
+        } else {
+          missingKeysBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder setMissingKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder builderForValue) {
+        if (missingKeysBuilder_ == null) {
+          ensureMissingKeysIsMutable();
+          missingKeys_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          missingKeysBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder addMissingKeys(com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey value) {
+        if (missingKeysBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureMissingKeysIsMutable();
+          missingKeys_.add(value);
+          onChanged();
+        } else {
+          missingKeysBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder addMissingKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey value) {
+        if (missingKeysBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureMissingKeysIsMutable();
+          missingKeys_.add(index, value);
+          onChanged();
+        } else {
+          missingKeysBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder addMissingKeys(
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder builderForValue) {
+        if (missingKeysBuilder_ == null) {
+          ensureMissingKeysIsMutable();
+          missingKeys_.add(builderForValue.build());
+          onChanged();
+        } else {
+          missingKeysBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder addMissingKeys(
+          int index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder builderForValue) {
+        if (missingKeysBuilder_ == null) {
+          ensureMissingKeysIsMutable();
+          missingKeys_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          missingKeysBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder addAllMissingKeys(
+          java.lang.Iterable<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey> values) {
+        if (missingKeysBuilder_ == null) {
+          ensureMissingKeysIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, missingKeys_);
+          onChanged();
+        } else {
+          missingKeysBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder clearMissingKeys() {
+        if (missingKeysBuilder_ == null) {
+          missingKeys_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000004);
+          onChanged();
+        } else {
+          missingKeysBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public Builder removeMissingKeys(int index) {
+        if (missingKeysBuilder_ == null) {
+          ensureMissingKeysIsMutable();
+          missingKeys_.remove(index);
+          onChanged();
+        } else {
+          missingKeysBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder getMissingKeysBuilder(
+          int index) {
+        return getMissingKeysFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder getMissingKeysOrBuilder(
+          int index) {
+        if (missingKeysBuilder_ == null) {
+          return missingKeys_.get(index);  } else {
+          return missingKeysBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public java.util.List<? extends com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+           getMissingKeysOrBuilderList() {
+        if (missingKeysBuilder_ != null) {
+          return missingKeysBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(missingKeys_);
+        }
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder addMissingKeysBuilder() {
+        return getMissingKeysFieldBuilder().addBuilder(
+            com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder addMissingKeysBuilder(
+          int index) {
+        return getMissingKeysFieldBuilder().addBuilder(
+            index, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .webterm.terminal.screen.v3.LineKey missing_keys = 3;</code>
+       */
+      public java.util.List<com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder>
+           getMissingKeysBuilderList() {
+        return getMissingKeysFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>
+          getMissingKeysFieldBuilder() {
+        if (missingKeysBuilder_ == null) {
+          missingKeysBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKey.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.LineKeyOrBuilder>(
+                  missingKeys_,
+                  ((bitField0_ & 0x00000004) != 0),
+                  getParentForChildren(),
+                  isClean());
+          missingKeys_ = null;
+        }
+        return missingKeysBuilder_;
+      }
+
+      private com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary dictionary_;
+      private com.google.protobuf.SingleFieldBuilder<
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.DictionaryOrBuilder> dictionaryBuilder_;
+      /**
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        * @return Whether the dictionary field is set.
        */
       public boolean hasDictionary() {
-        return ((bitField0_ & 0x00000040) != 0);
+        return ((bitField0_ & 0x00000008) != 0);
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        * @return The dictionary.
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary getDictionary() {
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary getDictionary() {
         if (dictionaryBuilder_ == null) {
-          return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.getDefaultInstance() : dictionary_;
+          return dictionary_ == null ? com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.getDefaultInstance() : dictionary_;
         } else {
           return dictionaryBuilder_.getMessage();
         }
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
-      public Builder setDictionary(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary value) {
+      public Builder setDictionary(com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary value) {
         if (dictionaryBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
@@ -1618,32 +2572,32 @@ public final class TerminalHistoryProto {
         } else {
           dictionaryBuilder_.setMessage(value);
         }
-        bitField0_ |= 0x00000040;
+        bitField0_ |= 0x00000008;
         onChanged();
         return this;
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
       public Builder setDictionary(
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.Builder builderForValue) {
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.Builder builderForValue) {
         if (dictionaryBuilder_ == null) {
           dictionary_ = builderForValue.build();
         } else {
           dictionaryBuilder_.setMessage(builderForValue.build());
         }
-        bitField0_ |= 0x00000040;
+        bitField0_ |= 0x00000008;
         onChanged();
         return this;
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
-      public Builder mergeDictionary(com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary value) {
+      public Builder mergeDictionary(com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary value) {
         if (dictionaryBuilder_ == null) {
-          if (((bitField0_ & 0x00000040) != 0) &&
+          if (((bitField0_ & 0x00000008) != 0) &&
             dictionary_ != null &&
-            dictionary_ != com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.getDefaultInstance()) {
+            dictionary_ != com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.getDefaultInstance()) {
             getDictionaryBuilder().mergeFrom(value);
           } else {
             dictionary_ = value;
@@ -1652,16 +2606,16 @@ public final class TerminalHistoryProto {
           dictionaryBuilder_.mergeFrom(value);
         }
         if (dictionary_ != null) {
-          bitField0_ |= 0x00000040;
+          bitField0_ |= 0x00000008;
           onChanged();
         }
         return this;
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
       public Builder clearDictionary() {
-        bitField0_ = (bitField0_ & ~0x00000040);
+        bitField0_ = (bitField0_ & ~0x00000008);
         dictionary_ = null;
         if (dictionaryBuilder_ != null) {
           dictionaryBuilder_.dispose();
@@ -1671,39 +2625,156 @@ public final class TerminalHistoryProto {
         return this;
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.Builder getDictionaryBuilder() {
-        bitField0_ |= 0x00000040;
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.Builder getDictionaryBuilder() {
+        bitField0_ |= 0x00000008;
         onChanged();
         return getDictionaryFieldBuilder().getBuilder();
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
-      public com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder getDictionaryOrBuilder() {
+      public com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.DictionaryOrBuilder getDictionaryOrBuilder() {
         if (dictionaryBuilder_ != null) {
           return dictionaryBuilder_.getMessageOrBuilder();
         } else {
           return dictionary_ == null ?
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.getDefaultInstance() : dictionary_;
+              com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.getDefaultInstance() : dictionary_;
         }
       }
       /**
-       * <code>.webterm.terminal.screen.v2.Dictionary dictionary = 7;</code>
+       * <code>.webterm.terminal.screen.v3.Dictionary dictionary = 4;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder>
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.DictionaryOrBuilder>
           getDictionaryFieldBuilder() {
         if (dictionaryBuilder_ == null) {
           dictionaryBuilder_ = new com.google.protobuf.SingleFieldBuilder<
-              com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.Dictionary.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.DictionaryOrBuilder>(
+              com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.Dictionary.Builder, com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.DictionaryOrBuilder>(
                   getDictionary(),
                   getParentForChildren(),
                   isClean());
           dictionary_ = null;
         }
         return dictionaryBuilder_;
+      }
+
+      private int status_ = 0;
+      /**
+       * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+       * @return The enum numeric value on the wire for status.
+       */
+      @java.lang.Override public int getStatusValue() {
+        return status_;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+       * @param value The enum numeric value on the wire for status to set.
+       * @return This builder for chaining.
+       */
+      public Builder setStatusValue(int value) {
+        status_ = value;
+        bitField0_ |= 0x00000010;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+       * @return The status.
+       */
+      @java.lang.Override
+      public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus getStatus() {
+        com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus result = com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus.forNumber(status_);
+        return result == null ? com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus.UNRECOGNIZED : result;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+       * @param value The status to set.
+       * @return This builder for chaining.
+       */
+      public Builder setStatus(com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchStatus value) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        bitField0_ |= 0x00000010;
+        status_ = value.getNumber();
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>.webterm.terminal.screen.v3.LineBodyBatchStatus status = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearStatus() {
+        bitField0_ = (bitField0_ & ~0x00000010);
+        status_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private long layoutEpoch_ ;
+      /**
+       * <code>uint64 layout_epoch = 6;</code>
+       * @return The layoutEpoch.
+       */
+      @java.lang.Override
+      public long getLayoutEpoch() {
+        return layoutEpoch_;
+      }
+      /**
+       * <code>uint64 layout_epoch = 6;</code>
+       * @param value The layoutEpoch to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLayoutEpoch(long value) {
+
+        layoutEpoch_ = value;
+        bitField0_ |= 0x00000020;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint64 layout_epoch = 6;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLayoutEpoch() {
+        bitField0_ = (bitField0_ & ~0x00000020);
+        layoutEpoch_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private long historyGeneration_ ;
+      /**
+       * <code>uint64 history_generation = 7;</code>
+       * @return The historyGeneration.
+       */
+      @java.lang.Override
+      public long getHistoryGeneration() {
+        return historyGeneration_;
+      }
+      /**
+       * <code>uint64 history_generation = 7;</code>
+       * @param value The historyGeneration to set.
+       * @return This builder for chaining.
+       */
+      public Builder setHistoryGeneration(long value) {
+
+        historyGeneration_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>uint64 history_generation = 7;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearHistoryGeneration() {
+        bitField0_ = (bitField0_ & ~0x00000040);
+        historyGeneration_ = 0L;
+        onChanged();
+        return this;
       }
 
       private int retryAfterMs_ ;
@@ -1738,23 +2809,23 @@ public final class TerminalHistoryProto {
         return this;
       }
 
-      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v2.HistoryRangeResponse)
+      // @@protoc_insertion_point(builder_scope:webterm.terminal.screen.v3.LineBodyBatchResponse)
     }
 
-    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v2.HistoryRangeResponse)
-    private static final com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse DEFAULT_INSTANCE;
+    // @@protoc_insertion_point(class_scope:webterm.terminal.screen.v3.LineBodyBatchResponse)
+    private static final com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse();
+      DEFAULT_INSTANCE = new com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse();
     }
 
-    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse getDefaultInstance() {
+    public static com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
-    private static final com.google.protobuf.Parser<HistoryRangeResponse>
-        PARSER = new com.google.protobuf.AbstractParser<HistoryRangeResponse>() {
+    private static final com.google.protobuf.Parser<LineBodyBatchResponse>
+        PARSER = new com.google.protobuf.AbstractParser<LineBodyBatchResponse>() {
       @java.lang.Override
-      public HistoryRangeResponse parsePartialFrom(
+      public LineBodyBatchResponse parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws com.google.protobuf.InvalidProtocolBufferException {
@@ -1773,27 +2844,32 @@ public final class TerminalHistoryProto {
       }
     };
 
-    public static com.google.protobuf.Parser<HistoryRangeResponse> parser() {
+    public static com.google.protobuf.Parser<LineBodyBatchResponse> parser() {
       return PARSER;
     }
 
     @java.lang.Override
-    public com.google.protobuf.Parser<HistoryRangeResponse> getParserForType() {
+    public com.google.protobuf.Parser<LineBodyBatchResponse> getParserForType() {
       return PARSER;
     }
 
     @java.lang.Override
-    public com.webterm.terminal.protocol.generated.TerminalHistoryProto.HistoryRangeResponse getDefaultInstanceForType() {
+    public com.webterm.terminal.protocol.generated.TerminalHistoryProto.LineBodyBatchResponse getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
   }
 
   private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_descriptor;
+    internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_descriptor;
   private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
-      internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_fieldAccessorTable;
+      internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_descriptor;
+  private static final
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_fieldAccessorTable;
 
   public static com.google.protobuf.Descriptors.FileDescriptor
       getDescriptor() {
@@ -1804,40 +2880,48 @@ public final class TerminalHistoryProto {
   static {
     java.lang.String[] descriptorData = {
       "\n#shared/proto/terminal_history.proto\022\032w" +
-      "ebterm.terminal.screen.v2\032%shared/proto/" +
-      "terminal_screen_v2.proto\"\351\002\n\024HistoryRang" +
-      "eResponse\022>\n\006status\030\001 \001(\0162..webterm.term" +
-      "inal.screen.v2.HistoryRangeStatus\022\023\n\013ins" +
-      "tance_id\030\002 \001(\t\022\024\n\014layout_epoch\030\003 \001(\004\022\032\n\022" +
-      "history_generation\030\004 \001(\004\022A\n\016current_exte" +
-      "nt\030\005 \001(\0132).webterm.terminal.screen.v2.Hi" +
-      "storyExtent\0223\n\005lines\030\006 \003(\0132$.webterm.ter" +
-      "minal.screen.v2.LineData\022:\n\ndictionary\030\007" +
-      " \001(\0132&.webterm.terminal.screen.v2.Dictio" +
-      "nary\022\026\n\016retry_after_ms\030\010 \001(\r*\315\001\n\022History" +
-      "RangeStatus\022$\n HISTORY_RANGE_STATUS_UNSP" +
-      "ECIFIED\020\000\022\033\n\027HISTORY_RANGE_STATUS_OK\020\001\022)" +
-      "\n%HISTORY_RANGE_STATUS_STALE_PROJECTION\020" +
-      "\002\022%\n!HISTORY_RANGE_STATUS_SESSION_GONE\020\003" +
-      "\022\"\n\036HISTORY_RANGE_STATUS_RETRYABLE\020\004Bt\n\'" +
-      "com.webterm.terminal.protocol.generatedB" +
-      "\024TerminalHistoryProtoZ3webterm/go-core/i" +
-      "nternal/screenprotocol/generatedv2b\006prot" +
-      "o3"
+      "ebterm.terminal.screen.v3\032%shared/proto/" +
+      "terminal_screen_v3.proto\"^\n\024LineBodyBatc" +
+      "hRequest\022\023\n\013instance_id\030\001 \001(\t\0221\n\004keys\030\002 " +
+      "\003(\0132#.webterm.terminal.screen.v3.LineKey" +
+      "\"\352\002\n\025LineBodyBatchResponse\022\023\n\013instance_i" +
+      "d\030\001 \001(\t\022:\n\006bodies\030\002 \003(\0132*.webterm.termin" +
+      "al.screen.v3.LineBodyRecord\0229\n\014missing_k" +
+      "eys\030\003 \003(\0132#.webterm.terminal.screen.v3.L" +
+      "ineKey\022:\n\ndictionary\030\004 \001(\0132&.webterm.ter" +
+      "minal.screen.v3.Dictionary\022?\n\006status\030\005 \001" +
+      "(\0162/.webterm.terminal.screen.v3.LineBody" +
+      "BatchStatus\022\024\n\014layout_epoch\030\006 \001(\004\022\032\n\022his" +
+      "tory_generation\030\007 \001(\004\022\026\n\016retry_after_ms\030" +
+      "\010 \001(\r*\315\001\n\023LineBodyBatchStatus\022&\n\"LINE_BO" +
+      "DY_BATCH_STATUS_UNSPECIFIED\020\000\022\035\n\031LINE_BO" +
+      "DY_BATCH_STATUS_OK\020\001\022 \n\034LINE_BODY_BATCH_" +
+      "STATUS_STALE\020\002\022\'\n#LINE_BODY_BATCH_STATUS" +
+      "_SESSION_GONE\020\003\022$\n LINE_BODY_BATCH_STATU" +
+      "S_RETRYABLE\020\004Bt\n\'com.webterm.terminal.pr" +
+      "otocol.generatedB\024TerminalHistoryProtoZ3" +
+      "webterm/go-core/internal/screenprotocol/" +
+      "generatedv3b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
         new com.google.protobuf.Descriptors.FileDescriptor[] {
-          com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.getDescriptor(),
+          com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.getDescriptor(),
         });
-    internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_descriptor =
+    internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_descriptor =
       getDescriptor().getMessageTypes().get(0);
-    internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_fieldAccessorTable = new
+    internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
-        internal_static_webterm_terminal_screen_v2_HistoryRangeResponse_descriptor,
-        new java.lang.String[] { "Status", "InstanceId", "LayoutEpoch", "HistoryGeneration", "CurrentExtent", "Lines", "Dictionary", "RetryAfterMs", });
+        internal_static_webterm_terminal_screen_v3_LineBodyBatchRequest_descriptor,
+        new java.lang.String[] { "InstanceId", "Keys", });
+    internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_descriptor =
+      getDescriptor().getMessageTypes().get(1);
+    internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_webterm_terminal_screen_v3_LineBodyBatchResponse_descriptor,
+        new java.lang.String[] { "InstanceId", "Bodies", "MissingKeys", "Dictionary", "Status", "LayoutEpoch", "HistoryGeneration", "RetryAfterMs", });
     descriptor.resolveAllFeaturesImmutable();
-    com.webterm.terminal.protocol.generated.TerminalScreenV2Proto.getDescriptor();
+    com.webterm.terminal.protocol.generated.TerminalScreenV3Proto.getDescriptor();
   }
 
   // @@protoc_insertion_point(outer_class_scope)

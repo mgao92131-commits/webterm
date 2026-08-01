@@ -90,7 +90,7 @@ public final class HistoryCatalogTest {
               new CellValue("r" + row, (byte) 1, null, null)
           })));
     }
-    assertTrue(model.applyBaseline(new ScreenBaseline(
+    assertTrue(model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1, 2, 1,
         TerminalBufferKind.MAIN,
         new HistoryExtent(1, 2),

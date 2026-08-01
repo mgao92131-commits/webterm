@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 	"webterm/go-core/internal/terminalengine"
 	"webterm/go-core/internal/terminalsession"
 )

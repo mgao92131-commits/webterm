@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
-	"webterm/go-core/internal/screenprotocolv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
+	"webterm/go-core/internal/screenprotocolv3"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -36,7 +36,7 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 	}
 	promotion.FirstAvailableHistorySeqChanged = true
 	promotion.HistoryPushes = []terminalengine.HistoryPush{{
-		LineID: 1, LineVersion: 1, HistorySeq: 1,
+		LineID: 1, HistorySeq: 1,
 	}}
 	fullHistory := promotion
 	fullHistory.History.Lines = []terminalengine.Line{payloadLine(1, 1, -1, 1, "existing body")}
@@ -66,52 +66,52 @@ func BenchmarkProjectionPayloadBytes(b *testing.B) {
 		encode func() ([]byte, error)
 	}
 	cases := []benchmarkCase{
-		{"01_80x24_ASCII_Baseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(asciiBaseline, 0) }},
+		{"01_80x24_ASCII_Baseline", func() ([]byte, error) { return screenprotocolv3.EncodeBaseline(asciiBaseline, 0) }},
 		{"01a_Compact_80ASCII_Line", compactASCII80LinePayload},
 		{"01b_LegacyCellRuns_80ASCII_Line", func() ([]byte, error) {
 			return legacyCellRunsLinePayload(80), nil
 		}},
-		{"02_SingleLine_ASCII_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(oneLine, 0) }},
-		{"03_ColorPrompt_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(color, 0) }},
-		{"04_CJK_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(cjk, 0) }},
-		{"05_EmojiCombining_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(emoji, 0) }},
-		{"06_OneLineScroll_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(scrollOne, 0) }},
-		{"07_Scroll100_BudgetedCommit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(scroll100, 0) }},
-		{"08a_HistoryPush", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(promotion, 0) }},
-		{"08b_FullScrollbackEntry", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(fullHistory, 0) }},
-		{"09_History500_BudgetedCommit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(budget500, 0) }},
-		{"10_NoDictionaryAddition", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(noDictionary, 0) }},
-		{"11_NewStyleAddition", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(newStyle, 0) }},
-		{"12_UnchangedReconnect_ResumeAccepted", func() ([]byte, error) { return screenprotocolv2.EncodeResumeAccepted(asciiBaseline) }},
-		{"13_OneLineReconnect_ResumeCommit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(oneLine, 0) }},
-		{"14a_ActiveBuffer_Commit", func() ([]byte, error) { return screenprotocolv2.EncodeTerminalCommit(activeBuffer, 0) }},
-		{"14b_ActiveBuffer_Baseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(asciiBaseline, 0) }},
-		{"15a_MailboxOverflow_ResumeAccepted", func() ([]byte, error) { return screenprotocolv2.EncodeResumeAccepted(asciiBaseline) }},
-		{"15b_MailboxOverflow_Baseline", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(asciiBaseline, 0) }},
-		{"16_ColdBaselineTail", func() ([]byte, error) { return screenprotocolv2.EncodeBaseline(coldTail, 0) }},
+		{"02_SingleLine_ASCII_Commit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(oneLine, 0) }},
+		{"03_ColorPrompt_Commit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(color, 0) }},
+		{"04_CJK_Commit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(cjk, 0) }},
+		{"05_EmojiCombining_Commit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(emoji, 0) }},
+		{"06_OneLineScroll_Commit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(scrollOne, 0) }},
+		{"07_Scroll100_BudgetedCommit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(scroll100, 0) }},
+		{"08a_HistoryPush", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(promotion, 0) }},
+		{"08b_FullScrollbackEntry", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(fullHistory, 0) }},
+		{"09_History500_BudgetedCommit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(budget500, 0) }},
+		{"10_NoDictionaryAddition", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(noDictionary, 0) }},
+		{"11_NewStyleAddition", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(newStyle, 0) }},
+		{"12_UnchangedReconnect_ResumeAccepted", func() ([]byte, error) { return screenprotocolv3.EncodeResumeAccepted(asciiBaseline) }},
+		{"13_OneLineReconnect_ResumeCommit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(oneLine, 0) }},
+		{"14a_ActiveBuffer_Commit", func() ([]byte, error) { return screenprotocolv3.EncodeTerminalCommit(activeBuffer, 0) }},
+		{"14b_ActiveBuffer_Baseline", func() ([]byte, error) { return screenprotocolv3.EncodeBaseline(asciiBaseline, 0) }},
+		{"15a_MailboxOverflow_ResumeAccepted", func() ([]byte, error) { return screenprotocolv3.EncodeResumeAccepted(asciiBaseline) }},
+		{"15b_MailboxOverflow_Baseline", func() ([]byte, error) { return screenprotocolv3.EncodeBaseline(asciiBaseline, 0) }},
+		{"16_ColdBaselineTail", func() ([]byte, error) { return screenprotocolv3.EncodeBaseline(coldTail, 0) }},
 		{"19a_Prompt80_UntrimmedBefore", func() ([]byte, error) {
 			return encodeCommitWithUntrimmedLines(prompt80)
 		}},
 		{"19b_Prompt80_TrimmedAfter", func() ([]byte, error) {
-			return screenprotocolv2.EncodeTerminalCommit(prompt80, 0)
+			return screenprotocolv3.EncodeTerminalCommit(prompt80, 0)
 		}},
 		{"20a_Command120_UntrimmedBefore", func() ([]byte, error) {
 			return encodeCommitWithUntrimmedLines(command120)
 		}},
 		{"20b_Command120_TrimmedAfter", func() ([]byte, error) {
-			return screenprotocolv2.EncodeTerminalCommit(command120, 0)
+			return screenprotocolv3.EncodeTerminalCommit(command120, 0)
 		}},
 		{"21a_StyledBlank80_UntrimmedBefore", func() ([]byte, error) {
 			return encodeCommitWithUntrimmedLines(styledBlank80)
 		}},
 		{"21b_StyledBlank80_TrimmedAfter", func() ([]byte, error) {
-			return screenprotocolv2.EncodeTerminalCommit(styledBlank80, 0)
+			return screenprotocolv3.EncodeTerminalCommit(styledBlank80, 0)
 		}},
 		{"22a_CJKEmoji80_UntrimmedBefore", func() ([]byte, error) {
 			return encodeCommitWithUntrimmedLines(cjkEmoji80)
 		}},
 		{"22b_CJKEmoji80_TrimmedAfter", func() ([]byte, error) {
-			return screenprotocolv2.EncodeTerminalCommit(cjkEmoji80, 0)
+			return screenprotocolv3.EncodeTerminalCommit(cjkEmoji80, 0)
 		}},
 	}
 	for _, tc := range cases {
@@ -163,7 +163,7 @@ func paddedPayloadLine(
 // encoder's behavior for benchmark comparison only: every default trailing
 // blank contributes UTF-8 and glyph metadata.
 func encodeCommitWithUntrimmedLines(frame terminalengine.ScreenFrame) ([]byte, error) {
-	wire, err := screenprotocolv2.EncodeTerminalCommit(frame, 0)
+	wire, err := screenprotocolv3.EncodeTerminalCommit(frame, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -172,15 +172,20 @@ func encodeCommitWithUntrimmedLines(frame terminalengine.ScreenFrame) ([]byte, e
 		return nil, err
 	}
 	for i, line := range frame.Screen {
-		envelope.GetTerminalCommit().GetScreen().Writes[i].Line = untrimmedLineData(line)
+		if i >= len(envelope.GetTerminalCommit().GetBodyUpserts()) {
+			envelope.GetTerminalCommit().BodyUpserts = append(
+				envelope.GetTerminalCommit().BodyUpserts, untrimmedLineBodyRecord(line))
+			continue
+		}
+		envelope.GetTerminalCommit().BodyUpserts[i] = untrimmedLineBodyRecord(line)
 	}
 	return proto.Marshal(&envelope)
 }
 
-func untrimmedLineData(line terminalengine.Line) *pb.LineData {
-	result := &pb.LineData{
-		LineId: line.ID, LineVersion: line.Version,
-		Wrapped: line.Wrapped, HistorySeq: line.HistorySeq,
+func untrimmedLineBodyRecord(line terminalengine.Line) *pb.LineBodyRecord {
+	result := &pb.LineBodyRecord{
+		Key: &pb.LineKey{LineId: line.ID, BodyVersion: line.Version},
+		Wrapped: line.Wrapped,
 	}
 	var open *pb.StyleSpan
 	for _, run := range line.Runs {
@@ -227,12 +232,12 @@ func compactASCII80LinePayload() ([]byte, error) {
 		text[i] = 'x'
 		meta[i] = 2 // utf8 byte length 1, display width 1.
 	}
-	return proto.Marshal(&pb.LineData{
-		LineId: 1, LineVersion: 1, Utf8Text: text, GlyphMeta: meta,
+	return proto.Marshal(&pb.LineBodyRecord{
+		Key: &pb.LineKey{LineId: 1, BodyVersion: 1}, Utf8Text: text, GlyphMeta: meta,
 	})
 }
 
-// Recreates the removed v2 LineData.runs/CellRun/Cell wire layout exactly
+// Recreates legacy cell-runs wire layout for benchmark comparison only.
 // enough to compare protobuf payload size. It is benchmark-only evidence, not
 // a production compatibility encoder.
 func legacyCellRunsLinePayload(columns int) []byte {

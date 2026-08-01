@@ -159,6 +159,27 @@ type HistoryRangeData struct {
 	HistoryGeneration uint64
 }
 
+type LineBodyBatchStatus uint8
+
+const (
+	LineBodyBatchOK LineBodyBatchStatus = iota + 1
+	LineBodyBatchStale
+	LineBodyBatchSessionGone
+	LineBodyBatchRetryable
+)
+
+type LineBodyBatchData struct {
+	Status            LineBodyBatchStatus
+	InstanceID        string
+	LayoutEpoch       uint64
+	Lines             []Line
+	MissingKeys       []LineKey
+	Styles            []TerminalStyle
+	Links             []Hyperlink
+	RetryAfterMS      uint32
+	HistoryGeneration uint64
+}
+
 // ScreenScroll 是 Commit 内可选的全屏连续滚动压缩描述。
 type ScreenScroll struct {
 	TopRow             int
@@ -243,6 +264,9 @@ type ScreenFrame struct {
 	// HistoryLineageView 是不可变分页位置视图。普通实时 State 只共享该视图；
 	// 仅在真正编码 Baseline 时才物化连续 ScrollbackLineage。
 	HistoryLineageView *HistoryLineageView
+	// BodyUpserts 携带 Commit 内新建或变更的正文（如历史规范化），不编码为独立
+	// ScreenRowWrite；screenprotocol 编码器合并进 body_upserts。
+	BodyUpserts []Line
 }
 
 type HistoryPush struct {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 )
 
 func TestScreenV2HelloGetsBaselineFromWriter(t *testing.T) {
@@ -16,13 +16,13 @@ func TestScreenV2HelloGetsBaselineFromWriter(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 
-	socket := &testSocket{protocolName: "webterm.screen.v2", writes: make(chan []byte, 8)}
+	socket := &testSocket{protocolName: "webterm.screen.v3", writes: make(chan []byte, 8)}
 	client := newTestTerminalChannelRuntime(socket, terminal, ClientModeScreen)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go client.run(ctx)
 	hello, _ := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 			DesiredGeometry: &pb.Geometry{Rows: 10, Cols: 20},
 		}},

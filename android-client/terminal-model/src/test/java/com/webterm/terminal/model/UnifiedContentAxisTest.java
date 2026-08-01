@@ -30,10 +30,11 @@ public final class UnifiedContentAxisTest {
   public void pushMovesTheSameLineBodyFromScreenToHistory() throws Exception {
     RemoteTerminalModel model = model();
     LineBody before = model.bodyCache().body(new LineKey(10, 1));
-    assertTrue(model.applyTerminalCommit(new TerminalCommit(
-        "i1", 1, 1, 2, 1, 1, null,
+    assertTrue(model.applyTerminalCommit(SemanticTestData.commitLegacy(
+        "i1", 1, 1, 2, 1, 1, TerminalBufferKind.MAIN,
+        SemanticTestData.upserts(SemanticTestData.screen(12, 1, "c")),
         new ScreenMutation(new ScreenScroll(0, 2, 1),
-            Collections.singletonList(new ScreenRowWrite(
+            Collections.singletonList(ScreenRowWrite.fromLine(
                 1, SemanticTestData.screen(12, 1, "c")))),
         new HistoryMutation(new HistoryExtent(1, 101),
             Collections.singletonList(
@@ -53,7 +54,7 @@ public final class UnifiedContentAxisTest {
       bindings.add(new HistoryPush(seq, new LineKey(100 + seq, 1)));
     }
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(new ScreenBaseline(
+    assertTrue(model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1,
         2, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 100), bindings,

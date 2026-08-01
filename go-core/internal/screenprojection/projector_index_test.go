@@ -18,6 +18,32 @@ func testLine(id, version uint64, row int, text string) terminalengine.Line {
 	}
 }
 
+func testCommitProjectionRow(
+	store *terminalengine.LineStore,
+) commitProjectionRowFn {
+	if store == nil {
+		store = terminalengine.NewLineStore()
+	}
+	return func(
+		exp *exporter,
+		row headlessterm.ProjectionRow,
+		cursorRow, cursorCol int,
+	) terminalengine.Line {
+		line := exp.exportProjectionRow(row, cursorRow, cursorCol)
+		body := terminalengine.BuildCanonicalLineAtRow(
+			row.LineID, row.Index, row.Cells, row.Wrapped,
+			terminalengine.CursorContext{Present: true, Row: cursorRow, Col: cursorCol},
+		)
+		record, _ := store.Commit(terminalengine.LineID(row.LineID), body)
+		if record != nil {
+			line.Version = uint64(record.Key.Version)
+		} else if line.Version == 0 {
+			line.Version = 1
+		}
+		return line
+	}
+}
+
 func mapPtr(m map[uint64]int) uintptr {
 	return reflect.ValueOf(m).Pointer()
 }
@@ -44,11 +70,11 @@ func TestProjectedStateSingleDirtyRowUpdatesPersistentIndex(t *testing.T) {
 		Rows: 3,
 		Cols: 8,
 		DirtyRows: []headlessterm.ProjectionRow{{
-			Index: 1, LineID: 2, LineVersion: 2, Cells: cells,
+			Index: 1, LineID: 2, Cells: cells,
 		}},
 	}
 	before := mapPtr(state.rowByLineID)
-	state.merge(proj, exp)
+	state.merge(proj, exp, testCommitProjectionRow(nil))
 	if mapPtr(state.rowByLineID) != before {
 		t.Fatalf("merge allocated a new LineID index map")
 	}
@@ -78,10 +104,10 @@ func TestProjectedStateReplacingLineIdRemovesOldBinding(t *testing.T) {
 		Rows: 2,
 		Cols: 4,
 		DirtyRows: []headlessterm.ProjectionRow{{
-			Index: 0, LineID: 99, LineVersion: 1, Cells: cells,
+			Index: 0, LineID: 99, Cells: cells,
 		}},
 	}
-	state.merge(proj, exp)
+	state.merge(proj, exp, testCommitProjectionRow(nil))
 	if _, ok := state.rowByLineID[10]; ok {
 		t.Fatalf("old line id binding was not removed")
 	}
@@ -113,7 +139,7 @@ func TestProjectedStateFullScreenScrollDoesNotCreateDuplicateBindings(t *testing
 		cells := make([]headlessterm.Cell, 4)
 		cells[0].Char = ch
 		return headlessterm.ProjectionRow{
-			Index: index, LineID: id, LineVersion: 1, Cells: cells,
+			Index: index, LineID: id, Cells: cells,
 		}
 	}
 	proj := headlessterm.ProjectionRead{
@@ -122,7 +148,7 @@ func TestProjectedStateFullScreenScrollDoesNotCreateDuplicateBindings(t *testing
 			mk(0, 2, "b"), mk(1, 3, "c"), mk(2, 4, "d"),
 		},
 	}
-	state.merge(proj, exp)
+	state.merge(proj, exp, testCommitProjectionRow(nil))
 	if !state.validateLineIndex() {
 		t.Fatalf("duplicate or inconsistent bindings after scroll merge: %+v", state.rowByLineID)
 	}
@@ -211,10 +237,10 @@ func TestDuplicateCandidateDoesNotPublishPartialState(t *testing.T) {
 	proj := headlessterm.ProjectionRead{
 		Rows: 2, Cols: 4,
 		DirtyRows: []headlessterm.ProjectionRow{{
-			Index: 0, LineID: 2, LineVersion: 1, Cells: cells,
+			Index: 0, LineID: 2, Cells: cells,
 		}},
 	}
-	state.merge(proj, exp)
+	state.merge(proj, exp, testCommitProjectionRow(nil))
 	if state.valid {
 		if !state.validateLineIndex() {
 			t.Fatalf("valid state must pass validateLineIndex: screen=%+v index=%+v",
@@ -231,21 +257,28 @@ func TestDuplicateCandidateDoesNotPublishPartialState(t *testing.T) {
 	}
 }
 
-func TestFallbackRebuildPreservesPriorLineVersion(t *testing.T) {
-	previous := []terminalengine.Line{
-		testLine(10, 9, 0, "same"),
-		testLine(11, 3, 1, "other"),
+func TestLineStorePreservesVersionForIdenticalCanonicalBody(t *testing.T) {
+	store := terminalengine.NewLineStore()
+	commit := testCommitProjectionRow(store)
+	exp := newExporter(
+		terminalengine.Color{Kind: terminalengine.ColorDefaultFG},
+		terminalengine.Color{Kind: terminalengine.ColorDefaultBG},
+	)
+	cells := make([]headlessterm.Cell, 4)
+	cells[0].Char = "s"
+	cells[1].Char = "a"
+	cells[2].Char = "m"
+	cells[3].Char = "e"
+	row := headlessterm.ProjectionRow{Index: 0, LineID: 10, Cells: cells}
+	first := commit(exp, row, 0, 0)
+	second := commit(exp, row, 0, 0)
+	if first.Version != second.Version {
+		t.Fatalf("identical body versions differ: %d vs %d", first.Version, second.Version)
 	}
-	index := indexRowsByLineID(previous)
-	candidate := testLine(10, 1, 0, "same")
-	got := reconcileFromSnapshot(previous, index, candidate)
-	if got.Version != 9 {
-		t.Fatalf("version=%d want 9 from prior snapshot", got.Version)
-	}
-	changed := testLine(10, 1, 0, "diff")
-	got = reconcileFromSnapshot(previous, index, changed)
-	if got.Version != 10 {
-		t.Fatalf("version=%d want 10 after content change", got.Version)
+	cells[0].Char = "d"
+	changed := commit(exp, row, 0, 0)
+	if changed.Version != first.Version+1 {
+		t.Fatalf("version=%d want %d after content change", changed.Version, first.Version+1)
 	}
 }
 
@@ -269,10 +302,10 @@ func TestUpdateScratchDoesNotRetainLines(t *testing.T) {
 	proj := headlessterm.ProjectionRead{
 		Rows: 2, Cols: 4,
 		DirtyRows: []headlessterm.ProjectionRow{{
-			Index: 1, LineID: 2, LineVersion: 2, Cells: cells,
+			Index: 1, LineID: 2, Cells: cells,
 		}},
 	}
-	state.merge(proj, exp)
+	state.merge(proj, exp, testCommitProjectionRow(nil))
 	if len(state.updateScratch) != 0 {
 		t.Fatalf("scratch len=%d want 0", len(state.updateScratch))
 	}
@@ -297,13 +330,13 @@ func BenchmarkProjectedStateSingleDirtyRow(b *testing.B) {
 			proj := headlessterm.ProjectionRead{
 				Rows: rows, Cols: 80,
 				DirtyRows: []headlessterm.ProjectionRow{{
-					Index: dirty, LineID: uint64(dirty + 1), LineVersion: 2, Cells: cells,
+					Index: dirty, LineID: uint64(dirty + 1), Cells: cells,
 				}},
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				state.merge(proj, exp)
+				state.merge(proj, exp, testCommitProjectionRow(nil))
 			}
 		})
 	}

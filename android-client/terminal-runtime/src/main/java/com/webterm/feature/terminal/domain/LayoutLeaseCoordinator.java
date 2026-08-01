@@ -3,7 +3,7 @@ package com.webterm.feature.terminal.domain;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
@@ -86,7 +86,7 @@ public final class LayoutLeaseCoordinator {
     }
   }
 
-  public void handleV2(@NonNull TerminalScreenV2Proto.LayoutLease lease) {
+  public void handleV3(@NonNull TerminalScreenV3Proto.LayoutLease lease) {
     handleValues(lease.getRequestId(), lease.getLeaseId(), lease.getGranted(),
         lease.getExpiresAtMs());
   }

@@ -95,8 +95,19 @@ public final class BodyCache {
 
     public Editor putHistory(long historySeq, LineKey key, LineBody body)
         throws CommitValidationException {
-      putBody(key, body);
+      if (key == null || body == null) {
+        throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
+      }
       boolean newlyResident = residency.key(historySeq) == null;
+      LineBody previous = bodies.get(key);
+      if (newlyResident) {
+        bodies.put(key, body);
+      } else {
+        if (previous != null && !previous.equals(body)) {
+          throw new CommitValidationException(CommitFailure.LINE_CONTENT_CONFLICT);
+        }
+        bodies.putIfAbsent(key, body);
+      }
       residency.put(historySeq, key);
       if (newlyResident) historyBytes += body.estimatedBytes;
       return this;

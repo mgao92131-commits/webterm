@@ -10,7 +10,9 @@ import com.webterm.terminal.model.HistoryBudget;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
-import com.webterm.terminal.model.HistoryRangeResult;
+import com.webterm.terminal.model.BodyBatchRequestContext;
+import com.webterm.terminal.model.HistoryBodyFault;
+import com.webterm.terminal.model.LineBodyBatchResult;
 import com.webterm.terminal.model.HistoryBodyFault;
 import com.webterm.terminal.model.HistoryBodyResult;
 import com.webterm.terminal.model.HistoryPush;
@@ -27,12 +29,12 @@ import com.webterm.terminal.model.CommitValidationException;
 import com.webterm.core.contract.diagnostics.Diagnostics;
 import com.webterm.core.contract.diagnostics.DiagnosticIdHasher;
 import com.webterm.terminal.model.TerminalRenderMetrics;
-import com.webterm.terminal.protocol.ScreenMessageV2Mapper;
-import com.webterm.terminal.protocol.ScreenMessageV2Validator;
+import com.webterm.terminal.protocol.ScreenMessageV3Mapper;
+import com.webterm.terminal.protocol.ScreenMessageV3Validator;
 import com.webterm.terminal.protocol.BaselineFaultCode;
 import com.webterm.terminal.protocol.BaselineValidationException;
 import com.webterm.terminal.protocol.CanonicalDictionaryState;
-import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -120,10 +122,10 @@ public final class TerminalSessionRuntime {
   /** 屏幕协议连接抽象。 */
   public interface ScreenConnection {
     void setListener(@NonNull Listener listener);
-    default boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+    default boolean beginSync(@Nullable TerminalScreenV3Proto.ResumeToken resume) {
       return beginSync(resume, false);
     }
-    default boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+    default boolean beginSync(@Nullable TerminalScreenV3Proto.ResumeToken resume,
                               boolean forceBaseline) {
       return false;
     }
@@ -214,12 +216,12 @@ public final class TerminalSessionRuntime {
 
   private final ResyncCoordinator resyncCoordinator;
   private final RecoveryArbiter recoveryArbiter;
-  private final HistoryRangeLoader historyLoader = new HistoryRangeLoader();
+  private final VisibleBodyLoader visibleBodyLoader = new VisibleBodyLoader();
   /** UI 线程到 model actor 的 latest-value mailbox；快速滚动不会逐事件排队。 */
   private final HistoryDemandMailbox historyDemandMailbox;
   /** 只服务 WS 屏幕正文解码；HTTP Range 始终使用响应自己的局部字典。 */
   @Nullable private CanonicalDictionaryState canonicalDictionaryState;
-  @Nullable private volatile HistoryRangeSource historyRangeSource;
+  @Nullable private volatile LineBodyBatchSource lineBodyBatchSource;
   /** Source 因凭据更新被替换后，保留本 runtime 的累计 HTTP 诊断。 */
   private final Map<String, Object> archivedHistoryHttpMetrics = new LinkedHashMap<>();
   private volatile ScreenConnection connection;
@@ -440,23 +442,15 @@ public final class TerminalSessionRuntime {
 
   @NonNull
   private Map<String, Object> historyDiagnosticsSnapshot() {
-    Map<String, Object> out = new LinkedHashMap<>(historyLoader.diagnosticsSnapshot());
+    Map<String, Object> out = new LinkedHashMap<>();
     Map<String, Object> http = new LinkedHashMap<>();
     synchronized (archivedHistoryHttpMetrics) {
       HistoryHttpMetrics.mergeInto(http, archivedHistoryHttpMetrics);
     }
-    HistoryRangeSource source = historyRangeSource;
+    LineBodyBatchSource source = lineBodyBatchSource;
     if (source != null) HistoryHttpMetrics.mergeInto(http, source.diagnosticsSnapshot());
     out.put("historyHttp", http);
     return out;
-  }
-
-  private void archiveHistoryHttp(@Nullable HistoryRangeSource source) {
-    if (source == null) return;
-    synchronized (archivedHistoryHttpMetrics) {
-      HistoryHttpMetrics.mergeInto(
-          archivedHistoryHttpMetrics, source.diagnosticsSnapshot());
-    }
   }
 
   /**
@@ -914,17 +908,16 @@ public final class TerminalSessionRuntime {
     layoutLeaseCoordinator.requestResize(cols, rows);
   }
 
-  /** 注入历史 Range Source（Direct/Relay HTTP）。 */
-  public void setHistoryRangeSource(@Nullable HistoryRangeSource source) {
+  /** 注入历史正文 batch Source（Direct/Relay HTTP）。 */
+  public void setLineBodyBatchSource(@Nullable LineBodyBatchSource source) {
     modelExecutor.execute(() -> {
-      HistoryRangeSource previous = historyRangeSource;
-      historyRangeSource = source;
-      historyLoader.resetLifecycle();
+      LineBodyBatchSource previous = lineBodyBatchSource;
+      lineBodyBatchSource = source;
       if (previous != null) {
         archiveHistoryHttp(previous);
         previous.close();
       }
-      pumpHistoryRanges();
+      pumpVisibleBodies();
     });
   }
 
@@ -936,34 +929,24 @@ public final class TerminalSessionRuntime {
         System.nanoTime());
     if (offered == HistoryDemandMailbox.OfferResult.REJECTED) return;
     HistoryDemandMetrics.mailboxResult(offered);
-    historyLoader.metrics().onDemandReceived();
-    if (offered == HistoryDemandMailbox.OfferResult.CONFLATED) {
-      historyLoader.metrics().onDemandConflated();
-    } else if (offered == HistoryDemandMailbox.OfferResult.DEDUPLICATED) {
-      historyLoader.metrics().onDemandDeduplicated();
-    }
   }
 
   public void onVisibleHistoryDemandCleared() {
-    HistoryDemandMailbox.OfferResult offered =
-        historyDemandMailbox.offerClear(System.nanoTime());
-    if (offered == HistoryDemandMailbox.OfferResult.CONFLATED) {
-      historyLoader.metrics().onDemandConflated();
-    }
+    historyDemandMailbox.offerClear(System.nanoTime());
   }
 
   /** 只在 modelExecutor 上执行；SET/CLEAR 共享 mailbox 顺序，避免 detach 后旧 SET 复活。 */
   private void applyHistoryDemandUpdate(@NonNull HistoryDemandMailbox.Update update) {
     if (update.clear) {
-      historyLoader.clearDemand();
+      visibleBodyLoader.clearDemand();
       refreshEvictionPins();
-      emitHistoryRangeInfo("history_range_demand_cleared", "reason", "detach");
+      emitHistoryRangeInfo("history_body_demand_cleared", "reason", "detach");
       return;
     }
     if (state != State.LIVE) {
-      historyLoader.clearDemand();
+      visibleBodyLoader.clearDemand();
       refreshEvictionPins();
-      emitHistoryRangeInfo("history_range_demand_cleared", "reason", "not_live");
+      emitHistoryRangeInfo("history_body_demand_cleared", "reason", "not_live");
       return;
     }
     if (update.visibleFromSeq <= 0 || update.visibleToSeq < update.visibleFromSeq) {
@@ -972,349 +955,160 @@ public final class TerminalSessionRuntime {
     }
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     RemoteTerminalModel.RenderSnapshot snapshot = model.peekRenderSnapshot();
-    HistoryRangeLoader.Demand accepted = projection.projectionComplete && snapshot != null
-        ? historyLoader.acceptDemand(
-            update.visibleFromSeq, update.visibleToSeq, update.anchorSeq,
-            update.direction, update.visibleRowCount, update.createdAtNanos,
-            projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
-            projection.mainHistoryExtent, snapshot.history)
-        : historyLoader.acceptDemand(
-            update.visibleFromSeq, update.visibleToSeq, update.anchorSeq,
-            update.direction, update.visibleRowCount, update.createdAtNanos);
+    VisibleBodyLoader.Demand accepted = null;
+    if (projection.projectionComplete && snapshot != null) {
+      accepted = visibleBodyLoader.acceptDemand(
+          update.visibleFromSeq, update.visibleToSeq,
+          projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
+          projection.mainHistoryExtent, snapshot.history,
+          model.bodyCache(), model.historyCatalog());
+    } else {
+      visibleBodyLoader.setDemand(new VisibleBodyLoader.Demand(
+          update.visibleFromSeq, update.visibleToSeq, 0));
+      accepted = visibleBodyLoader.latestDemand();
+    }
     if (accepted == null) return;
     HistoryDemandMetrics.modelApplied();
-    boolean cancelled = historyLoader.shouldCancelFor(accepted)
-        && historyLoader.cancelActiveForDemand();
-    emitHistoryRangeInfo("history_range_demand_updated",
+    emitHistoryRangeInfo("history_body_demand_updated",
         "fromSeq", accepted.visibleFromSeq,
         "toSeq", accepted.visibleToSeq,
-        "anchorSeq", accepted.anchorSeq,
-        "direction", accepted.direction,
-        "visibleRowCount", accepted.visibleRowCount,
-        "demandEpoch", accepted.demandEpoch,
-        "cancelledUnrelatedRequest", cancelled);
+        "demandEpoch", accepted.demandEpoch);
     refreshEvictionPins();
-    pumpHistoryRanges();
+    pumpVisibleBodies();
   }
 
-  private void pumpHistoryRanges() {
-    if (state != State.LIVE || historyLoader.closed()) return;
-    if (historyLoader.activeRequest() != null) {
-      return;
-    }
-    HistoryRangeSource source = historyRangeSource;
-    if (source == null || historyLoader.latestDemand() == null) return;
+  private void pumpVisibleBodies() {
+    if (state != State.LIVE || visibleBodyLoader.closed()) return;
+    if (visibleBodyLoader.activeRequest() != null) return;
+    LineBodyBatchSource source = lineBodyBatchSource;
+    if (source == null || visibleBodyLoader.latestDemand() == null) return;
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     if (!projection.projectionComplete || projection.historyGeneration < 1) return;
     RemoteTerminalModel.RenderSnapshot snap = model.peekRenderSnapshot();
     if (snap == null) return;
-    com.webterm.terminal.model.HistoryRenderView history = snap.history;
+    VisibleBodyLoader.Demand demand = visibleBodyLoader.latestDemand();
     refreshEvictionPins();
-    HistoryRangeLoader.Range target = historyLoader.firstMissingRange(
+    VisibleBodyLoader.Batch target = visibleBodyLoader.firstMissingBatch(
         projection.instanceId, projection.layoutEpoch, projection.historyGeneration,
-        projection.mainHistoryExtent, history);
+        demand.visibleFromSeq, demand.visibleToSeq,
+        projection.mainHistoryExtent, snap.history,
+        model.bodyCache(), model.historyCatalog());
     if (target == null) return;
-    long debounceToken = historyLoader.armTailDebounce(
-        target, projection.mainHistoryExtent);
-    if (debounceToken < 0) return;
-    if (debounceToken > 0) {
-      timeoutScheduler.schedule(
-          () -> modelExecutor.execute(() -> {
-            if (historyLoader.releaseTailDebounce(debounceToken)) {
-              pumpHistoryRanges();
-            }
-          }),
-          historyLoader.tailDebounceDelayMs(debounceToken));
-      return;
-    }
-    final HistoryRangeSource.RequestHandle[] handleSlot = new HistoryRangeSource.RequestHandle[1];
-    HistoryRangeSource.RequestHandle cancelProxy = () -> {
-      HistoryRangeSource.RequestHandle inner = handleSlot[0];
+    final LineBodyBatchSource.RequestHandle[] handleSlot =
+        new LineBodyBatchSource.RequestHandle[1];
+    if (!visibleBodyLoader.begin(target, () -> {
+      LineBodyBatchSource.RequestHandle inner = handleSlot[0];
       if (inner != null) inner.cancel();
-    };
-    if (!historyLoader.begin(target, cancelProxy)) {
+    })) {
       return;
     }
     refreshEvictionPins();
-    HistoryRangeLoader.ActiveRequest active = historyLoader.activeRequest();
-    emitHistoryRangeInfo("history_range_requested",
-        "requestId", active.callId, "historyGeneration", target.generation,
-        "fromSeq", target.fromSeq, "toSeq", target.toSeq,
+    VisibleBodyLoader.ActiveRequest active = visibleBodyLoader.activeRequest();
+    emitHistoryRangeInfo("history_body_batch_requested",
+        "requestId", active.callId,
+        "keyCount", target.keys.size(),
         "demandEpoch", target.demandEpoch);
-    HistoryRangeSource.RequestHandle handle = source.fetch(target,
-        new HistoryRangeSource.Callback() {
+    LineBodyBatchSource.RequestHandle handle = source.fetch(target,
+        new LineBodyBatchSource.Callback() {
           @Override
-          public void onResult(@NonNull HistoryRangeSource.Result result) {
-            long arrivedAtNanos = System.nanoTime();
-            historyLoader.responseArrived(active, arrivedAtNanos);
+          public void onResult(@NonNull LineBodyBatchSource.Result result) {
             modelExecutor.execute(() -> {
-              if (active == null || historyLoader.closed()) return;
-              long callbackQueueNanos =
-                  System.nanoTime() - active.responseArrivedAtNanos();
-              historyLoader.metrics().onRequestCompleted(
-                  result.completedAtNanos - active.startedAtNanos,
-                  callbackQueueNanos);
-              if (!historyLoader.sameLifecycle(active)) {
-                historyLoader.metrics().onRequestCompletionClassified(false);
-                if (!requestMatchesCurrentProjection(active)) {
-                  historyLoader.metrics().onStaleProjectionResponse();
-                }
-                return;
-              }
-              boolean ownedRequest = historyLoader.beginApplying(active);
-              HistoryRangeLoader.CompletionDisposition disposition =
-                  historyLoader.completionDisposition(active);
-              boolean useful =
-                  disposition != HistoryRangeLoader.CompletionDisposition.OBSOLETE;
-              historyLoader.metrics().onRequestCompletionClassified(useful);
+              if (visibleBodyLoader.closed()) return;
+              boolean owned = active.beginApplying();
               try {
-                historyLoader.clearTransientFailures();
-                boolean applyChanged;
-                try {
-                  applyChanged = applyDecodedHistoryRange(active, result);
-                } catch (RuntimeException protocolError) {
-                  applyChanged = false;
-                  Diagnostics.warn("history_range", "history_range_protocol_conflict",
-                      historyRangeFields(
-                          "requestId", active.callId,
-                          "demandEpoch", active.range.demandEpoch,
-                          "failureKind", protocolError.getClass().getSimpleName()));
-                  historyLoader.markRangeUnavailable(
-                      active.range,
-                      active.range.fromSeq,
-                      active.range.toSeq,
-                      "MODEL_APPLY");
-                }
-                emitHistoryRangeInfo("history_range_completed",
-                    "requestId", active.callId, "historyGeneration", result.historyGeneration,
-                    "demandEpoch", active.range.demandEpoch,
-                    "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
-                    "responseFirstSeq", result.currentExtent.firstSeq,
-                    "responseLastSeq", result.currentExtent.lastSeq,
-                    "returnedLineCount", result.lines.size(),
-                    "networkDurationMs", nanosToMillis(
-                        result.completedAtNanos - active.startedAtNanos),
-                    "callbackQueueDelayMs", nanosToMillis(callbackQueueNanos),
-                    "applyChanged", applyChanged,
-                    "completionDisposition", disposition.name(),
-                    "ownedRequest", ownedRequest);
+                applyDecodedLineBodyBatch(active, result);
               } finally {
-                if (ownedRequest) historyLoader.complete(active);
+                if (owned) visibleBodyLoader.complete(active);
                 refreshEvictionPins();
-                pumpHistoryRanges();
+                pumpVisibleBodies();
               }
             });
           }
 
           @Override
-          public void onFailure(@NonNull HistoryRangeSource.Failure failure) {
-            long arrivedAtNanos = System.nanoTime();
-            historyLoader.responseArrived(active, arrivedAtNanos);
+          public void onFailure(@NonNull LineBodyBatchSource.Failure failure) {
             modelExecutor.execute(() -> {
-              if (active == null || historyLoader.closed()) return;
-              long callbackQueueNanos =
-                  System.nanoTime() - active.responseArrivedAtNanos();
-              historyLoader.metrics().onRequestCompleted(
-                  failure.completedAtNanos - active.startedAtNanos,
-                  callbackQueueNanos);
-              if (!historyLoader.sameLifecycle(active)) {
-                historyLoader.metrics().onRequestCompletionClassified(false);
-                if (!requestMatchesCurrentProjection(active)) {
-                  historyLoader.metrics().onStaleProjectionResponse();
-                }
-                return;
-              }
-              boolean ownedRequest = historyLoader.beginApplying(active);
-              HistoryRangeLoader.CompletionDisposition disposition =
-                  historyLoader.completionDisposition(active);
-              boolean useful =
-                  disposition != HistoryRangeLoader.CompletionDisposition.OBSOLETE;
-              historyLoader.metrics().onRequestCompletionClassified(useful);
-              Diagnostics.warn("history_range", "history_range_failed", historyRangeFields(
-                  "requestId", active.callId,
-                  "demandEpoch", active.range.demandEpoch,
-                  "historyGeneration", active.range.generation,
-                  "fromSeq", active.range.fromSeq, "toSeq", active.range.toSeq,
-                  "networkDurationMs", nanosToMillis(
-                      failure.completedAtNanos - active.startedAtNanos),
-                  "callbackQueueDelayMs", nanosToMillis(callbackQueueNanos),
-                  "failureKind", failure.kind.name(),
-                  "completionDisposition", disposition.name(),
-                  "ownedRequest", ownedRequest));
-              if (!ownedRequest) {
-                refreshEvictionPins();
-                pumpHistoryRanges();
-                return;
-              }
-              historyLoader.complete(active);
+              if (visibleBodyLoader.closed()) return;
+              visibleBodyLoader.complete(active);
               refreshEvictionPins();
-              if (failure.kind == HistoryRangeSource.FailureKind.PROTOCOL) {
-                historyLoader.markRangeUnavailable(
-                    active.range,
-                    active.range.fromSeq,
-                    active.range.toSeq,
-                    failure.kind.name());
-                pumpHistoryRanges();
-                return;
-              }
-              if (failure.kind == HistoryRangeSource.FailureKind.NETWORK
-                  || failure.kind == HistoryRangeSource.FailureKind.RETRYABLE) {
-                historyLoader.metrics().onRetryableFailure();
-              }
-              if (handleRangeFailure(active, failure)) return;
+              if (handleBatchFailure(failure)) return;
               scheduleRangeRetry(failure.retryAfterMs);
             });
           }
         });
     handleSlot[0] = handle;
-    // source.fetch() 可以同步触发重入；若请求已被最新 demand 抢占，补做底层取消。
-    if (!historyLoader.isActive(active)) {
-      handle.cancel();
-    }
-    timeoutScheduler.schedule(
-        () -> modelExecutor.execute(() -> {
-          if (!historyLoader.timeout(active)) return;
-          emitHistoryRangeInfo("history_range_failed",
-              "requestId", active.callId,
-              "demandEpoch", active.range.demandEpoch,
-              "historyGeneration", active.range.generation,
-              "fromSeq", active.range.fromSeq,
-              "toSeq", active.range.toSeq,
-              "failureKind", "TIMEOUT");
-          refreshEvictionPins();
-          scheduleRangeRetry(HISTORY_RETRY_MIN_MS);
-        }),
-        HISTORY_REQUEST_TIMEOUT_MS);
   }
 
-  /** 根据最新 demand / active Range 刷新模型驱逐 pins。 */
+  /** 根据最新 demand 刷新模型驱逐 pins。 */
   private void refreshEvictionPins() {
-    HistoryRangeLoader.Demand demand = historyLoader.latestDemand();
-    HistoryRangeLoader.ActiveRequest active = historyLoader.activeRequest();
+    VisibleBodyLoader.Demand demand = visibleBodyLoader.latestDemand();
     EvictionPins.LongRange visible = null;
-    EvictionPins.LongRange anchor = null;
-    java.util.List<EvictionPins.LongRange> inFlight = new java.util.ArrayList<>();
     if (demand != null && demand.visibleFromSeq > 0
         && demand.visibleToSeq >= demand.visibleFromSeq) {
       visible = new EvictionPins.LongRange(demand.visibleFromSeq, demand.visibleToSeq);
-      long anchorSeq = demand.anchorSeq > 0 ? demand.anchorSeq : demand.visibleFromSeq;
-      anchor = new EvictionPins.LongRange(anchorSeq, anchorSeq);
     }
-    if (active != null) {
-      inFlight.add(new EvictionPins.LongRange(active.range.fromSeq, active.range.toSeq));
-    }
-    model.setEvictionPins(new EvictionPins(visible, anchor, inFlight, null, null));
+    model.setEvictionPins(new EvictionPins(visible, visible, java.util.List.of(), null, null));
   }
 
-  private boolean applyDecodedHistoryRange(
-      @NonNull HistoryRangeLoader.ActiveRequest active,
-      @NonNull HistoryRangeSource.Result decoded) {
+  private void applyDecodedLineBodyBatch(
+      @NonNull VisibleBodyLoader.ActiveRequest active,
+      @NonNull LineBodyBatchSource.Result decoded) {
     RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
     if (!decoded.instanceId.equals(projection.instanceId)
         || decoded.layoutEpoch != projection.layoutEpoch
         || decoded.historyGeneration != projection.historyGeneration) {
-      historyLoader.metrics().onStaleProjectionResponse();
-      Diagnostics.info("history_range", "history_range_discarded_stale", historyRangeFields(
-          "requestId", active.callId,
-          "demandEpoch", active.range.demandEpoch,
-          "historyGeneration", decoded.historyGeneration,
-          "currentGeneration", projection.historyGeneration));
-      return false;
+      return;
     }
-    historyLoader.observeServerExtent(
-        decoded.instanceId, decoded.layoutEpoch, decoded.historyGeneration,
-        decoded.currentExtent);
-    HistoryRangeResult range = new HistoryRangeResult(
-        "range-" + active.callId,
+    java.util.LinkedHashSet<com.webterm.terminal.model.LineKey> requested =
+        new java.util.LinkedHashSet<>(active.batch.keys);
+    LineBodyBatchResult batch = new LineBodyBatchResult(
+        "batch-" + active.callId,
         decoded.instanceId,
         decoded.layoutEpoch,
         decoded.historyGeneration,
-        HistoryRangeResult.Status.OK,
-        decoded.currentExtent,
-        decoded.lines,
+        LineBodyBatchResult.Status.OK,
+        decoded.bodies,
+        decoded.missingKeys,
         0);
     long publicationBefore = model.lastPublicationVersion();
-    long revisionBefore = model.screenRevision;
-    long applyStartedNanos = System.nanoTime();
-    HistoryBodyResult bodyResult;
-    try {
-      bodyResult = model.applyHistoryBody(
-          range,
-          new HistoryRequestContext(
-              new ProjectionIdentity(
-                  projection.instanceId,
-                  projection.layoutEpoch,
-                  projection.historyGeneration),
-              active.range.fromSeq,
-              active.range.toSeq,
-              active.range.fromSeq));
-    } finally {
-      historyLoader.metrics().onResponseApplied(System.nanoTime() - applyStartedNanos);
+    HistoryBodyResult bodyResult = model.applyLineBodyBatch(
+        batch,
+        new BodyBatchRequestContext(
+            new ProjectionIdentity(
+                projection.instanceId,
+                projection.layoutEpoch,
+                projection.historyGeneration),
+            requested));
+    if (bodyResult instanceof HistoryBodyResult.Rejected rejected
+        && rejected.fault() == HistoryBodyFault.MISSING_REFERENCED_BODY) {
+      startForceBaselineRecovery("history body batch missing referenced key");
+      return;
     }
-    if (bodyResult instanceof HistoryBodyResult.Rejected) {
-      HistoryBodyResult.Rejected rejected = (HistoryBodyResult.Rejected) bodyResult;
-      HistoryBodyFault fault = rejected.fault();
-      Diagnostics.warn("history_range", "history_range_protocol_conflict",
-          historyRangeFields("requestId", active.callId,
-              "demandEpoch", active.range.demandEpoch,
-              "failureKind", fault.name()));
-      historyLoader.markRangeUnavailable(
-          active.range,
-          rejected.failedFromSeq() > 0 ? rejected.failedFromSeq() : active.range.fromSeq,
-          rejected.failedToSeq() > 0 ? rejected.failedToSeq() : active.range.toSeq,
-          fault.name());
-      return false;
-    }
-    boolean changed = bodyResult instanceof HistoryBodyResult.Applied;
-    if (changed) {
+    if (bodyResult instanceof HistoryBodyResult.Applied) {
       recordCapturedModelState(false);
-      // 历史段通常不推进 screenRevision，但会推进 publicationVersion。
       recordPublicationAdvance(publicationBefore);
-      if (model.screenRevision != revisionBefore) {
-        pipelineMetrics.onModelApplied(model.screenRevision);
-      }
       dispatchRenderNeeded();
     }
-    return changed;
   }
 
-  private boolean handleRangeFailure(
-      @NonNull HistoryRangeLoader.ActiveRequest request,
-      @NonNull HistoryRangeSource.Failure failure) {
-    if (failure.kind == HistoryRangeSource.FailureKind.AUTH_REQUIRED) {
-      historyLoader.clearDemand();
-      emitHistoryRangeInfo("history_range_demand_cleared", "reason", "auth");
+  private boolean handleBatchFailure(@NonNull LineBodyBatchSource.Failure failure) {
+    if (failure.kind == LineBodyBatchSource.FailureKind.AUTH_REQUIRED) {
+      visibleBodyLoader.clearDemand();
       AuthenticationListener listener = authenticationListener;
       if (listener != null) {
-        callbackExecutor.execute(() -> listener.onAuthenticationRequired("history_range_auth"));
+        callbackExecutor.execute(() -> listener.onAuthenticationRequired("history_body_auth"));
       }
       return true;
     }
-    if (failure.kind == HistoryRangeSource.FailureKind.SESSION_NOT_READY) {
-      int attempt = historyLoader.noteSessionNotReadyFailure();
-      if (attempt >= 3) {
-        historyLoader.metrics().onRetryExhausted();
-        requestRecovery(
-            RecoveryArbiter.Level.CHANNEL_REBUILD,
-            "history route remained unavailable",
-            false);
-      } else {
-        scheduleRangeRetry(250L << (attempt - 1));
-      }
-      return true;
-    }
-    if (failure.kind == HistoryRangeSource.FailureKind.STALE_PROJECTION) {
-      historyLoader.metrics().onStaleProjectionResponse();
+    if (failure.kind == LineBodyBatchSource.FailureKind.STALE_PROJECTION) {
       requestRecovery(
           RecoveryArbiter.Level.FORCE_BASELINE,
-          "history range projection identity became stale",
+          "line body batch projection identity became stale",
           false);
       return true;
     }
-    if (failure.kind == HistoryRangeSource.FailureKind.SESSION_GONE) {
-      historyLoader.noteSessionGone();
-      historyLoader.clearDemand();
-      emitHistoryRangeInfo("history_range_demand_cleared", "reason", "session_gone");
+    if (failure.kind == LineBodyBatchSource.FailureKind.SESSION_GONE) {
+      visibleBodyLoader.clearDemand();
       return true;
     }
     return false;
@@ -1322,14 +1116,6 @@ public final class TerminalSessionRuntime {
 
   private static long nanosToMillis(long nanos) {
     return Math.max(0L, nanos) / 1_000_000L;
-  }
-
-  private boolean requestMatchesCurrentProjection(
-      @NonNull HistoryRangeLoader.ActiveRequest request) {
-    RemoteTerminalModel.ProjectionReadView projection = model.projectionReadView();
-    return request.range.instanceId.equals(projection.instanceId)
-        && request.range.layoutEpoch == projection.layoutEpoch
-        && request.range.generation == projection.historyGeneration;
   }
 
   private void emitHistoryRangeInfo(@NonNull String event, Object... pairs) {
@@ -1362,9 +1148,9 @@ public final class TerminalSessionRuntime {
 
   private void shutdownHistoryLoading() {
     historyDemandMailbox.close();
-    historyLoader.close();
-    HistoryRangeSource source = historyRangeSource;
-    historyRangeSource = null;
+    visibleBodyLoader.close();
+    LineBodyBatchSource source = lineBodyBatchSource;
+    lineBodyBatchSource = null;
     if (source != null) {
       archiveHistoryHttp(source);
       source.close();
@@ -1375,15 +1161,20 @@ public final class TerminalSessionRuntime {
   private void scheduleRangeRetry(long serverDelayMs) {
     long delay = Math.max(HISTORY_RETRY_MIN_MS,
         Math.min(HISTORY_RETRY_MAX_MS, serverDelayMs > 0 ? serverDelayMs : HISTORY_RETRY_MIN_MS));
-    long epoch = historyLoader.lifecycleEpoch();
-    historyLoader.metrics().onRetryScheduled();
     timeoutScheduler.schedule(
         () -> modelExecutor.execute(() -> {
-          if (historyLoader.closed() || historyLoader.lifecycleEpoch() != epoch) return;
-          if (historyLoader.latestDemand() == null) return;
-          pumpHistoryRanges();
+          if (visibleBodyLoader.closed() || visibleBodyLoader.latestDemand() == null) return;
+          pumpVisibleBodies();
         }),
         delay);
+  }
+
+  private void archiveHistoryHttp(@Nullable LineBodyBatchSource source) {
+    if (source == null) return;
+    synchronized (archivedHistoryHttpMetrics) {
+      HistoryHttpMetrics.mergeInto(
+          archivedHistoryHttpMetrics, source.diagnosticsSnapshot());
+    }
   }
 
   @NonNull
@@ -1475,25 +1266,25 @@ public final class TerminalSessionRuntime {
         || state != State.SYNCING) return;
     projectionContinuity = ProjectionContinuityState.SYNCING;
     long generation = nextSyncGeneration();
-    TerminalScreenV2Proto.ResumeToken resume = null;
+    TerminalScreenV3Proto.ResumeToken resume = null;
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
     if (model.projectionReadView().projectionComplete
         && snapshot.screenView.size() > 0) {
-      TerminalScreenV2Proto.ResumeToken.Builder builder =
-          TerminalScreenV2Proto.ResumeToken.newBuilder()
+      TerminalScreenV3Proto.ResumeToken.Builder builder =
+          TerminalScreenV3Proto.ResumeToken.newBuilder()
               .setInstanceId(snapshot.instanceId)
               .setLayoutEpoch(snapshot.layoutEpoch)
               .setScreenRevision(snapshot.screenRevision)
-              .setDictionaryGeneration(model.dictionaryGeneration())
               .setHistoryGeneration(model.historyGeneration())
               .setActiveBuffer(snapshot.activeBuffer == TerminalBufferKind.ALTERNATE
-                  ? TerminalScreenV2Proto.BufferKind.BUFFER_KIND_ALTERNATE
-                  : TerminalScreenV2Proto.BufferKind.BUFFER_KIND_MAIN);
+                  ? TerminalScreenV3Proto.BufferKind.BUFFER_KIND_ALTERNATE
+                  : TerminalScreenV3Proto.BufferKind.BUFFER_KIND_MAIN);
       for (com.webterm.terminal.model.RenderLine line
           : snapshot.screenView.copyLines()) {
-        builder.addActiveRows(TerminalScreenV2Proto.ResumeScreenLine.newBuilder()
-            .setLineId(line.key().lineId())
-            .setLineVersion(line.key().lineVersion()));
+        builder.addActiveRows(TerminalScreenV3Proto.ResumeScreenLine.newBuilder()
+            .setKey(TerminalScreenV3Proto.LineKey.newBuilder()
+                .setLineId(line.key().lineId())
+                .setBodyVersion(line.key().lineVersion())));
       }
       resume = builder.build();
     }
@@ -1660,7 +1451,7 @@ public final class TerminalSessionRuntime {
       if (tag <= 0) break;
       int field = tag >>> 3;
       int wireType = tag & 7;
-      // ScreenEnvelope oneof fields in terminal_screen_v2.proto.
+      // ScreenEnvelope oneof fields in terminal_screen_v3.proto.
       // 字段 6/7 曾为 HistoryRange，已 reserved。
       if (field == 3) return ScreenMailbox.MessageKind.BASELINE;
       if (field == 11) return ScreenMailbox.MessageKind.LAYOUT_LEASE;
@@ -1821,14 +1612,14 @@ public final class TerminalSessionRuntime {
           "terminal_recovery", "recovery_completed", recoveryDiagnosticFields());
     }
     historyDemandMailbox.invalidatePending();
-    historyLoader.resetLifecycle();
-    pumpHistoryRanges();
+    visibleBodyLoader.clearDemand();
+    pumpVisibleBodies();
   }
 
   private void resetResyncRecovery() {
     resyncCoordinator.reset();
     historyDemandMailbox.invalidatePending();
-    historyLoader.resetLifecycle();
+    visibleBodyLoader.clearDemand();
     screenMailbox.reset();
   }
 
@@ -1881,27 +1672,27 @@ public final class TerminalSessionRuntime {
   }
 
   private void processScreenMessage(@NonNull ScreenMailbox.Message message) {
-    TerminalScreenV2Proto.ScreenEnvelope envelope;
+    TerminalScreenV3Proto.ScreenEnvelope envelope;
     try {
       long parseStartedNanos = System.nanoTime();
-      envelope = TerminalScreenV2Proto.ScreenEnvelope.parseFrom(
+      envelope = TerminalScreenV3Proto.ScreenEnvelope.parseFrom(
           message.payload.asReadOnlyBuffer());
       TerminalRenderMetrics.protobufParseDuration(System.nanoTime() - parseStartedNanos);
-      if (envelope.getProtocolVersion() != 2) {
+      if (envelope.getProtocolVersion() != 3) {
         throw new IllegalArgumentException("unsupported screen protocol version");
       }
     } catch (Exception e) {
       Diagnostics.warn("screen_protocol", "screen_frame_decode_failed", diagnosticFields(
           "failureKind", e.getClass().getSimpleName(),
           "localRevision", model.screenRevision));
-      startResyncRecovery("invalid screen.v2 message");
+      startResyncRecovery("invalid screen.v3 message");
       return;
     }
     if (message.connectionEpoch != connectionEpoch.get()
         || message.sourceConnection != connection) return;
     if (projectionContinuity == ProjectionContinuityState.LOST
         && envelope.getPayloadCase()
-            == TerminalScreenV2Proto.ScreenEnvelope.PayloadCase.TERMINAL_COMMIT) {
+            == TerminalScreenV3Proto.ScreenEnvelope.PayloadCase.TERMINAL_COMMIT) {
       Diagnostics.info("terminal_recovery", "commit_suppressed_while_projection_lost",
           recoveryDiagnosticFields(
               "recoveryId", recoveryArbiter.activeRecoveryId(),
@@ -1921,10 +1712,10 @@ public final class TerminalSessionRuntime {
     try {
       switch (envelope.getPayloadCase()) {
         case BASELINE: {
-          TerminalScreenV2Proto.Baseline wire = envelope.getBaseline();
+          TerminalScreenV3Proto.Baseline wire = envelope.getBaseline();
           failureReason = "INVALID_BASELINE";
           failureStage = "WIRE_VALIDATE";
-          ScreenMessageV2Validator.validateBaseline(wire);
+          ScreenMessageV3Validator.validateBaseline(wire);
           long mapStartedNanos = System.nanoTime();
           ScreenBaseline baseline;
           CanonicalDictionaryState baselineDictionary;
@@ -1933,9 +1724,8 @@ public final class TerminalSessionRuntime {
             try {
               baselineDictionary =
                   new CanonicalDictionaryState(
-                      wire.getDictionaryGeneration(),
-                      ScreenMessageV2Mapper.mapDictionary(wire.getDictionary()));
-              baseline = ScreenMessageV2Mapper.mapBaseline(wire);
+                      ScreenMessageV3Mapper.mapDictionary(wire.getDictionary()));
+              baseline = ScreenMessageV3Mapper.mapBaseline(wire);
             } catch (BaselineValidationException classified) {
               throw classified;
             } catch (RuntimeException mapperFailure) {
@@ -1964,17 +1754,16 @@ public final class TerminalSessionRuntime {
           recordCapturedModelState(true);
           onAuthoritativeSnapshot("BASELINE");
           completeSynchronization();
-          pumpHistoryRanges();
+          pumpVisibleBodies();
           renderChanged = true;
           break;
         }
         case RESUME_ACCEPTED: {
-          TerminalScreenV2Proto.ResumeAccepted accepted = envelope.getResumeAccepted();
+          TerminalScreenV3Proto.ResumeAccepted accepted = envelope.getResumeAccepted();
           pipelineMetrics.onDecodedScreenRevision(accepted.getScreenRevision());
           if (!accepted.getInstanceId().equals(model.instanceId)
               || accepted.getLayoutEpoch() != model.layoutEpoch
               || accepted.getScreenRevision() != model.screenRevision
-              || accepted.getDictionaryGeneration() != model.dictionaryGeneration()
               || accepted.getHistoryGeneration() != model.historyGeneration()
               || !accepted.hasHistoryExtent()
               || !historyExtent(accepted.getHistoryExtent()).equals(model.displayExtent())) {
@@ -1985,30 +1774,28 @@ public final class TerminalSessionRuntime {
           break;
         }
         case TERMINAL_COMMIT: {
-          TerminalScreenV2Proto.TerminalCommit wire = envelope.getTerminalCommit();
+          TerminalScreenV3Proto.TerminalCommit wire = envelope.getTerminalCommit();
           commitBaseRevision = wire.getBaseRevision();
           commitTargetRevision = wire.getRevision();
           pipelineMetrics.onDecodedScreenRevision(wire.getRevision());
           failureReason = CommitFailure.INVALID_LINE_DATA.name();
-          ScreenMessageV2Validator.validateTerminalCommit(wire, model.rows);
+          ScreenMessageV3Validator.validateTerminalCommit(wire, model.rows);
           long mapStartedNanos = System.nanoTime();
           TerminalCommit commit;
           if (canonicalDictionaryState == null) {
-            throw new CommitValidationException(
-                CommitFailure.DICTIONARY_GENERATION_MISMATCH);
+            throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
           }
           CanonicalDictionaryState stagedDictionary;
           try {
-            stagedDictionary = canonicalDictionaryState.append(
-                wire.getDictionaryGeneration(),
-                ScreenMessageV2Mapper.mapDictionary(wire.getDictionaryAdditions()));
+            stagedDictionary = canonicalDictionaryState.merge(
+                ScreenMessageV3Mapper.mapDictionary(wire.getDictionaryAdditions()));
           } catch (IllegalArgumentException invalidDictionary) {
             throw new CommitValidationException(
-                CommitFailure.DICTIONARY_GENERATION_MISMATCH, invalidDictionary);
+                CommitFailure.DICTIONARY_ID_REDEFINED, invalidDictionary);
           }
           try {
             try {
-              commit = ScreenMessageV2Mapper.mapTerminalCommit(
+              commit = ScreenMessageV3Mapper.mapTerminalCommit(
                   wire, model.rows, model.columns, stagedDictionary.view());
             } catch (RuntimeException invalidLineData) {
               throw new CommitValidationException(
@@ -2027,29 +1814,20 @@ public final class TerminalSessionRuntime {
                 System.nanoTime() - commitApplyStartedNanos);
           }
           canonicalDictionaryState = stagedDictionary;
-          if (commit.history != null) {
-            for (HistoryPush push : commit.history.pushes) {
-              historyLoader.onAuthoritativeBinding(
-                  commit.instanceId,
-                  commit.layoutEpoch,
-                  commit.historyGeneration,
-                  push.historySeq);
-            }
-          }
           com.webterm.terminal.model.capture.TerminalCapture.recordMappedCommit(
               captureStreamIdentity(), commit);
           if (renderChanged) recordCapturedModelState(false);
           completeSynchronization();
-          pumpHistoryRanges();
+          pumpVisibleBodies();
           break;
         }
         case LAYOUT_LEASE:
-          layoutLeaseCoordinator.handleV2(envelope.getLayoutLease());
+          layoutLeaseCoordinator.handleV3(envelope.getLayoutLease());
           break;
         case EFFECT:
           if (model.instanceId != null
               && model.instanceId.equals(envelope.getEffect().getInstanceId())) {
-            handleEffectV2(envelope.getEffect());
+            handleEffectV3(envelope.getEffect());
           }
           break;
         case EXIT:
@@ -2075,7 +1853,7 @@ public final class TerminalSessionRuntime {
           "mailboxBytes", screenMailbox.pendingBytes()));
       if (requiresForceBaselineRecovery(e)) {
         startForceBaselineRecovery(
-            "screen.v2 projection identity recovery: "
+            "screen.v3 projection identity recovery: "
                 + ((CommitValidationException) e).failure.name());
       } else {
         startResyncRecovery("TerminalCommit revision gap");
@@ -2083,7 +1861,7 @@ public final class TerminalSessionRuntime {
       return;
     } catch (Exception e) {
       if (envelope.getPayloadCase()
-          == TerminalScreenV2Proto.ScreenEnvelope.PayloadCase.BASELINE) {
+          == TerminalScreenV3Proto.ScreenEnvelope.PayloadCase.BASELINE) {
         String failureCode = e instanceof BaselineValidationException classified
             ? classified.faultCode.name() : failureReason;
         Diagnostics.warn(
@@ -2104,10 +1882,10 @@ public final class TerminalSessionRuntime {
       }
       if (requiresForceBaselineRecovery(e)
           || envelope.getPayloadCase()
-              == TerminalScreenV2Proto.ScreenEnvelope.PayloadCase.BASELINE) {
-        startForceBaselineRecovery("screen.v2 dictionary recovery: " + e.getClass().getSimpleName());
+              == TerminalScreenV3Proto.ScreenEnvelope.PayloadCase.BASELINE) {
+        startForceBaselineRecovery("screen.v3 dictionary recovery: " + e.getClass().getSimpleName());
       } else {
-        startResyncRecovery("screen.v2 apply failed");
+        startResyncRecovery("screen.v3 apply failed");
       }
       return;
     }
@@ -2117,7 +1895,7 @@ public final class TerminalSessionRuntime {
   }
 
   private void updatePipelineAfterApply(
-      @NonNull TerminalScreenV2Proto.ScreenEnvelope.PayloadCase payloadCase,
+      @NonNull TerminalScreenV3Proto.ScreenEnvelope.PayloadCase payloadCase,
       long publicationBefore,
       long revisionBefore) {
     switch (payloadCase) {
@@ -2225,7 +2003,7 @@ public final class TerminalSessionRuntime {
     current.requestHelloSendFailedReconnect();
   }
 
-  private static HistoryExtent historyExtent(TerminalScreenV2Proto.HistoryExtent extent) {
+  private static HistoryExtent historyExtent(TerminalScreenV3Proto.HistoryExtent extent) {
     return new HistoryExtent(extent.getFirstSeq(), extent.getLastSeq());
   }
 
@@ -2280,7 +2058,7 @@ public final class TerminalSessionRuntime {
   }
 
   private Map<String, Object> baselineFailureFields(
-      TerminalScreenV2Proto.Baseline baseline,
+      TerminalScreenV3Proto.Baseline baseline,
       int baselineBytes,
       String failureStage,
       String failureCode,
@@ -2290,12 +2068,11 @@ public final class TerminalSessionRuntime {
     fields.put("instanceHash", DiagnosticIdHasher.processHash(baseline.getInstanceId()));
     fields.put("layoutEpoch", baseline.getLayoutEpoch());
     fields.put("screenRevision", baseline.getScreenRevision());
-    fields.put("dictionaryGeneration", baseline.getDictionaryGeneration());
     fields.put("historyGeneration", baseline.getHistoryGeneration());
     fields.put("rows", baseline.getGeometry().getRows());
     fields.put("columns", baseline.getGeometry().getCols());
-    fields.put("screenLinesCount", baseline.getScreenLinesCount());
-    fields.put("screenLayoutCount", baseline.getScreenLayout().getLineIdsCount());
+    fields.put("screenRowsCount", baseline.getScreenRowsCount());
+    fields.put("screenBodiesCount", baseline.getScreenBodiesCount());
     long first = baseline.getHistoryExtent().getFirstSeq();
     long last = baseline.getHistoryExtent().getLastSeq();
     fields.put("historyFirstSeq", first);
@@ -2337,7 +2114,7 @@ public final class TerminalSessionRuntime {
     });
   }
 
-  private void handleEffectV2(TerminalScreenV2Proto.TerminalEffect effect) {
+  private void handleEffectV3(TerminalScreenV3Proto.TerminalEffect effect) {
     TerminalScreenEffect screenEffect = null;
     switch (effect.getEffectCase()) {
       case BELL:
@@ -2413,8 +2190,8 @@ public final class TerminalSessionRuntime {
     if (previous == State.LIVE && clearsHistoryDemand(newState)) {
       historyDemandMailbox.invalidatePending();
       modelExecutor.execute(() -> {
-        if (!historyLoader.closed()) {
-          historyLoader.clearDemand();
+        if (!visibleBodyLoader.closed()) {
+          visibleBodyLoader.clearDemand();
           refreshEvictionPins();
         }
       });

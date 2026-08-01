@@ -6,7 +6,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 
-import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 
 import org.junit.Test;
 
@@ -297,24 +297,24 @@ public final class ScreenMailboxTest {
 
   @Test
   public void classifierSeparatesDroppableAndReliableEffects() {
-    TerminalScreenV2Proto.ScreenEnvelope bell =
-        TerminalScreenV2Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
-            .setEffect(TerminalScreenV2Proto.TerminalEffect.newBuilder()
+    TerminalScreenV3Proto.ScreenEnvelope bell =
+        TerminalScreenV3Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
+            .setEffect(TerminalScreenV3Proto.TerminalEffect.newBuilder()
                 .setInstanceId("i")
-                .setBell(TerminalScreenV2Proto.Bell.getDefaultInstance()))
+                .setBell(TerminalScreenV3Proto.Bell.getDefaultInstance()))
             .build();
-    TerminalScreenV2Proto.ScreenEnvelope clipboard =
-        TerminalScreenV2Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
-            .setEffect(TerminalScreenV2Proto.TerminalEffect.newBuilder()
+    TerminalScreenV3Proto.ScreenEnvelope clipboard =
+        TerminalScreenV3Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
+            .setEffect(TerminalScreenV3Proto.TerminalEffect.newBuilder()
                 .setInstanceId("i")
-                .setClipboardRead(TerminalScreenV2Proto.ClipboardReadRequest.newBuilder()
+                .setClipboardRead(TerminalScreenV3Proto.ClipboardReadRequest.newBuilder()
                     .setRequestId("r").setClipboard("c")))
             .build();
-    TerminalScreenV2Proto.ScreenEnvelope clipboardWrite =
-        TerminalScreenV2Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
-            .setEffect(TerminalScreenV2Proto.TerminalEffect.newBuilder()
+    TerminalScreenV3Proto.ScreenEnvelope clipboardWrite =
+        TerminalScreenV3Proto.ScreenEnvelope.newBuilder().setProtocolVersion(2)
+            .setEffect(TerminalScreenV3Proto.TerminalEffect.newBuilder()
                 .setInstanceId("i")
-                .setClipboardWrite(TerminalScreenV2Proto.ClipboardWriteRequest.newBuilder()
+                .setClipboardWrite(TerminalScreenV3Proto.ClipboardWriteRequest.newBuilder()
                     .setRequestId("w").setClipboard("c")))
             .build();
 

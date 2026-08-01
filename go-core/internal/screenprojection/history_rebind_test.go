@@ -11,18 +11,18 @@ import (
 func TestHistoryChangeIndexDetectsSameSeqRebind(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(10, nil)
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 1001, LineVersion: 1,
+		LineID: 1001,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
 	var index HistoryChangeIndex
-	index.sync(sb, 10)
+	index.sync(sb, 10, func(_, _ uint64) uint64 { return 1 })
 
 	sb.Pop()
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 2001, LineVersion: 1,
+		LineID: 2001,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
-	index.sync(sb, 20)
+	index.sync(sb, 20, func(_, _ uint64) uint64 { return 1 })
 
 	if len(index.Changes) != 1 {
 		t.Fatalf("changes=%d, want 1", len(index.Changes))
@@ -37,15 +37,15 @@ func TestHistoryChangeIndexRecordsTrimWatermarkRevision(t *testing.T) {
 	sb := terminalengine.NewTrackedScrollback(1, nil)
 	var index HistoryChangeIndex
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 1, LineVersion: 1,
+		LineID: 1,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
-	index.sync(sb, 10)
+	index.sync(sb, 10, func(_, _ uint64) uint64 { return 1 })
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 2, LineVersion: 1,
+		LineID: 2,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
-	index.sync(sb, 20)
+	index.sync(sb, 20, func(_, _ uint64) uint64 { return 1 })
 	if index.WatermarkChangedRevision != 20 {
 		t.Fatalf("watermark revision=%d, want 20", index.WatermarkChangedRevision)
 	}
@@ -55,16 +55,16 @@ func TestHistoryChangeIndexPureScreenRevisionsDoNotAllocateWithTwentyThousandLin
 	sb := terminalengine.NewTrackedScrollback(20_000, nil)
 	for i := 0; i < 20_000; i++ {
 		sb.Push(headlessterm.ScrollbackLine{
-			LineID: uint64(i + 1), LineVersion: 1,
+			LineID: uint64(i + 1),
 		})
 	}
 	var index HistoryChangeIndex
-	index.sync(sb, 1)
+	index.sync(sb, 1, func(_, _ uint64) uint64 { return 1 })
 
 	revision := uint64(1)
 	allocs := testing.AllocsPerRun(1_000, func() {
 		revision++
-		if index.sync(sb, revision) {
+		if index.sync(sb, revision, func(_, _ uint64) uint64 { return 1 }) {
 			t.Fatal("unchanged history reported a gap")
 		}
 	})
@@ -77,15 +77,15 @@ func BenchmarkHistoryChangeIndexPureScreenRevision20000(b *testing.B) {
 	sb := terminalengine.NewTrackedScrollback(20_000, nil)
 	for i := 0; i < 20_000; i++ {
 		sb.Push(headlessterm.ScrollbackLine{
-			LineID: uint64(i + 1), LineVersion: 1,
+			LineID: uint64(i + 1),
 		})
 	}
 	var index HistoryChangeIndex
-	index.sync(sb, 1)
+	index.sync(sb, 1, func(_, _ uint64) uint64 { return 1 })
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		index.sync(sb, uint64(i+2))
+		index.sync(sb, uint64(i+2), func(_, _ uint64) uint64 { return 1 })
 	}
 }
 
@@ -94,7 +94,7 @@ func BenchmarkDiffToPatchPureScreenRevisionWith20000History(b *testing.B) {
 	for i := range lineage {
 		seq := uint64(i + 1)
 		lineage[i] = terminalengine.HistoryPush{
-			HistorySeq: seq, LineID: seq, LineVersion: 1,
+			HistorySeq: seq, LineID: seq,
 		}
 	}
 	old := terminalengine.ScreenFrame{
@@ -131,10 +131,10 @@ func TestDiffToPatchEmitsFiveThousandRebindings(t *testing.T) {
 	for i := 0; i < 5000; i++ {
 		seq := uint64(i + 1)
 		old.ScrollbackLineage[i] = terminalengine.HistoryPush{
-			HistorySeq: seq, LineID: seq, LineVersion: 1,
+			HistorySeq: seq, LineID: seq,
 		}
 		next.ScrollbackLineage[i] = terminalengine.HistoryPush{
-			HistorySeq: seq, LineID: 10_000 + seq, LineVersion: 1,
+			HistorySeq: seq, LineID: 10_000 + seq,
 		}
 	}
 	patch := diffToPatch(old, next)
@@ -156,15 +156,15 @@ func TestDiffToPatchUsesMutationJournalWithoutLineageScan(t *testing.T) {
 		BaseVersion: 10,
 		Version:     11,
 		Pushes: []terminalengine.HistoryPush{
-			{HistorySeq: 2, LineID: 200, LineVersion: 1},
+			{HistorySeq: 2, LineID: 200},
 		},
 	}
 	second := &terminalengine.HistoryMutationBatch{
 		BaseVersion: 11,
 		Version:     12,
 		Pushes: []terminalengine.HistoryPush{
-			{HistorySeq: 2, LineID: 300, LineVersion: 1},
-			{HistorySeq: 3, LineID: 301, LineVersion: 1},
+			{HistorySeq: 2, LineID: 300},
+			{HistorySeq: 3, LineID: 301},
 		},
 		Previous: first,
 	}
@@ -204,14 +204,14 @@ func TestExportedHistoryLineageViewRemainsImmutableAcrossRebind(t *testing.T) {
 	engine := terminalengine.NewEngine(2, 10, sb)
 	projector := NewProjector(engine, sb, "s1", "i1")
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 100, LineVersion: 1,
+		LineID: 100,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
 	before := projector.ExportState(1, 1)
 
 	sb.Pop()
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 200, LineVersion: 1,
+		LineID: 200,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
 	after := projector.ExportState(1, 2)
@@ -230,19 +230,19 @@ func BenchmarkHistoryChangeIndexTailRebind20000(b *testing.B) {
 	sb := terminalengine.NewTrackedScrollback(20_000, nil)
 	for i := 0; i < 20_000; i++ {
 		sb.Push(headlessterm.ScrollbackLine{
-			LineID: uint64(i + 1), LineVersion: 1,
+			LineID: uint64(i + 1),
 		})
 	}
 	var index HistoryChangeIndex
-	index.sync(sb, 1)
+	index.sync(sb, 1, func(_, _ uint64) uint64 { return 1 })
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sb.Pop()
 		sb.Push(headlessterm.ScrollbackLine{
-			LineID: uint64(100_000 + i), LineVersion: 1,
+			LineID: uint64(100_000 + i),
 		})
-		index.sync(sb, uint64(i+2))
+		index.sync(sb, uint64(i+2), func(_, _ uint64) uint64 { return 1 })
 	}
 }
 

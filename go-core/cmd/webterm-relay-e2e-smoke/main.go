@@ -25,7 +25,7 @@ import (
 	"webterm/go-core/internal/relay"
 	"webterm/go-core/internal/relayapp"
 	"webterm/go-core/internal/relaycore"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 )
 
 func main() {
@@ -488,7 +488,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	for _, probe := range probes {
 		terminalID := "term:" + probe.sessionID
 		hello, err := proto.Marshal(&pb.ScreenEnvelope{
-			ProtocolVersion: 2,
+			ProtocolVersion: 3,
 			Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 				DesiredGeometry: &pb.Geometry{Cols: 80, Rows: 24},
 			}},
@@ -500,7 +500,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 			return err
 		}
 		acquire, err := proto.Marshal(&pb.ScreenEnvelope{
-			ProtocolVersion: 2,
+			ProtocolVersion: 3,
 			Payload: &pb.ScreenEnvelope_AcquireLayout{AcquireLayout: &pb.AcquireLayout{
 				Interactive: true,
 			}},
@@ -536,7 +536,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		terminalID := "term:" + probe.sessionID
 		command := "printf " + probe.marker + "\\n\r"
 		input, err := proto.Marshal(&pb.ScreenEnvelope{
-			ProtocolVersion: 2,
+			ProtocolVersion: 3,
 			Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
 				LeaseId: leaseIDs[terminalID],
 				Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: command}},
@@ -575,7 +575,7 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	historyTerminalID := "term:" + historyProbe.sessionID
 	historyCommand := "i=1; while [ $i -le 40 ]; do printf 'HISTORY_RANGE_%03d\\n' \"$i\"; i=$((i+1)); done\r"
 	historyInput, err := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Payload: &pb.ScreenEnvelope_Input{Input: &pb.TerminalInput{
 			LeaseId: leaseIDs[historyTerminalID],
 			Input:   &pb.TerminalInput_Text{Text: &pb.TextInput{Data: historyCommand}},
@@ -588,8 +588,8 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		return err
 	}
 	var historyInstanceID string
-	var historyLayoutEpoch, historyGeneration, historyFrom, historyTo uint64
-	for historyTo == 0 {
+	var keys []*pb.LineKey
+	for len(keys) == 0 {
 		frame, err := readMuxTunnel(ctx, ws)
 		if err != nil {
 			return err
@@ -607,13 +607,14 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 		}
 		pushes := commit.GetHistory().GetPushes()
 		historyInstanceID = commit.GetInstanceId()
-		historyLayoutEpoch = commit.GetLayoutEpoch()
-		historyGeneration = commit.GetHistoryGeneration()
-		historyFrom = pushes[0].GetHistorySeq()
-		historyTo = pushes[len(pushes)-1].GetHistorySeq()
+		for _, push := range pushes {
+			if key := push.GetKey(); key != nil {
+				keys = append(keys, key)
+			}
+		}
 	}
-	if err := fetchHistoryRange(ctx, baseURL, token, deviceID, historyProbe.sessionID,
-		historyInstanceID, historyLayoutEpoch, historyGeneration, historyFrom, historyTo); err != nil {
+	if err := fetchLineBodyBatch(ctx, baseURL, token, deviceID, historyProbe.sessionID,
+		historyInstanceID, keys); err != nil {
 		return err
 	}
 
@@ -628,19 +629,25 @@ func runMuxDualTerminalProbe(ctx context.Context, baseURL string, token string, 
 	return nil
 }
 
-func fetchHistoryRange(
+func fetchLineBodyBatch(
 	ctx context.Context, baseURL, token, deviceID, sessionID, instanceID string,
-	layoutEpoch, generation, from, to uint64,
+	keys []*pb.LineKey,
 ) error {
-	path := fmt.Sprintf(
-		"/api/sessions/%s/history/range?instanceId=%s&layoutEpoch=%d&generation=%d&from=%d&to=%d",
-		url.PathEscape(sessionID), url.QueryEscape(instanceID), layoutEpoch, generation, from, to)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	reqBody, err := proto.Marshal(&pb.LineBodyBatchRequest{
+		InstanceId: instanceID,
+		Keys:       keys,
+	})
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/api/sessions/%s/line-bodies", url.PathEscape(sessionID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
 	req.AddCookie(&http.Cookie{Name: relaycore.AuthCookieName, Value: token})
 	req.Header.Set("X-Device-Id", deviceID)
+	req.Header.Set("Content-Type", "application/x-protobuf")
 	req.Header.Set("Accept", "application/x-protobuf")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -652,25 +659,17 @@ func fetchHistoryRange(
 		return err
 	}
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("history Range status=%d body=%q", res.StatusCode, body)
+		return fmt.Errorf("line body batch status=%d body=%q", res.StatusCode, body)
 	}
-	var decoded pb.HistoryRangeResponse
+	var decoded pb.LineBodyBatchResponse
 	if err := proto.Unmarshal(body, &decoded); err != nil {
-		return fmt.Errorf("decode history Range: %w", err)
+		return fmt.Errorf("decode line body batch: %w", err)
 	}
-	if decoded.GetStatus() != pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_OK ||
+	if decoded.GetStatus() != pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_OK ||
 		decoded.GetInstanceId() != instanceID ||
-		decoded.GetLayoutEpoch() != layoutEpoch ||
-		decoded.GetHistoryGeneration() != generation ||
-		len(decoded.GetLines()) != int(to-from+1) {
-		return fmt.Errorf("history Range mismatch: status=%s generation=%d lines=%d want=%d",
-			decoded.GetStatus(), decoded.GetHistoryGeneration(), len(decoded.GetLines()), to-from+1)
-	}
-	if decoded.GetLines()[0].GetHistorySeq() != from ||
-		decoded.GetLines()[len(decoded.GetLines())-1].GetHistorySeq() != to {
-		return fmt.Errorf("history Range bounds mismatch: %d..%d want %d..%d",
-			decoded.GetLines()[0].GetHistorySeq(),
-			decoded.GetLines()[len(decoded.GetLines())-1].GetHistorySeq(), from, to)
+		len(decoded.GetBodies()) != len(keys) {
+		return fmt.Errorf("line body batch mismatch: status=%s bodies=%d want=%d",
+			decoded.GetStatus(), len(decoded.GetBodies()), len(keys))
 	}
 	return nil
 }
@@ -680,23 +679,17 @@ func screenEnvelopeContains(data []byte, text string) bool {
 	if err := proto.Unmarshal(data, &envelope); err != nil {
 		return false
 	}
-	var lines []*pb.LineData
+	var lines []*pb.LineBodyRecord
 	switch payload := envelope.Payload.(type) {
 	case *pb.ScreenEnvelope_Baseline:
-		lines = payload.Baseline.ScreenLines
+		lines = payload.Baseline.GetScreenBodies()
 	case *pb.ScreenEnvelope_TerminalCommit:
-		if payload.TerminalCommit.GetScreen() != nil {
-			for _, write := range payload.TerminalCommit.GetScreen().GetWrites() {
-				lines = append(lines, write.GetLine())
-			}
-		}
+		lines = append(lines, payload.TerminalCommit.GetBodyUpserts()...)
 	default:
 		return false
 	}
 	for _, line := range lines {
-		var builder strings.Builder
-		builder.Write(line.Utf8Text)
-		if strings.Contains(builder.String(), text) {
+		if strings.Contains(string(line.GetUtf8Text()), text) {
 			return true
 		}
 	}

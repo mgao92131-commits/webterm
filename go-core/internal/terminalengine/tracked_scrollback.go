@@ -8,11 +8,10 @@ import (
 )
 
 // ScrollbackEntry 只把权威 LineID 绑定到 HistorySeq；Cells 是 Buffer
-// 移交给 scrollback provider 的同一份不可变正文，不创建第二种历史行正文。
+// 移交给 scrollback provider 的源行。远程 LineKey/版本由 LineStore 生成。
 type ScrollbackEntry struct {
 	HistorySeq uint64
 	LineID     uint64
-	Version    uint64
 	Wrapped    bool
 	Cells      []headlessterm.Cell
 	bytes      int
@@ -35,9 +34,8 @@ type ScrollbackIndexWindow struct {
 }
 
 type HistoryIndexEntry struct {
-	HistorySeq  uint64
-	LineID      uint64
-	LineVersion uint64
+	HistorySeq uint64
+	LineID     uint64
 }
 
 // ScrollbackIndexDelta 是 mutationVersion 之间的轻量位置变化。Complete=false
@@ -196,7 +194,6 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 		HistorySeq: t.nextSeq,
 		LineID:     line.LineID,
 		Wrapped:    line.Wrapped,
-		Version:    line.LineVersion,
 		Cells:      line.Cells,
 		bytes:      estimateScrollbackEntryBytes(line.Cells),
 	}
@@ -219,9 +216,8 @@ func (t *TrackedScrollback) Push(line headlessterm.ScrollbackLine) {
 	}
 	t.mutationVersion++
 	t.recordIndexMutationLocked(HistoryIndexEntry{
-		HistorySeq:  historyLine.HistorySeq,
-		LineID:      historyLine.LineID,
-		LineVersion: historyLine.Version,
+		HistorySeq: historyLine.HistorySeq,
+		LineID:     historyLine.LineID,
 	}, true)
 }
 
@@ -244,7 +240,7 @@ func (t *TrackedScrollback) Pop() headlessterm.ScrollbackLine {
 	}
 	t.mutationVersion++
 	t.recordIndexMutationLocked(HistoryIndexEntry{}, false)
-	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID, LineVersion: line.Version}
+	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID}
 }
 
 // Len 返回当前历史行数。
@@ -262,7 +258,7 @@ func (t *TrackedScrollback) Line(index int) headlessterm.ScrollbackLine {
 		return headlessterm.ScrollbackLine{}
 	}
 	line := t.lines[index]
-	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID, LineVersion: line.Version}
+	return headlessterm.ScrollbackLine{Cells: line.Cells, Wrapped: line.Wrapped, LineID: line.LineID}
 }
 
 // LineByID 按稳定逻辑 LineID 返回历史行；历史本身按 HistorySeq 排列，故不能
@@ -348,7 +344,7 @@ func (t *TrackedScrollback) IndexWindowIfChanged(previousVersion uint64) (Scroll
 	}
 	w.Entries = make([]HistoryIndexEntry, len(t.lines))
 	for i := range t.lines {
-		w.Entries[i] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID, LineVersion: t.lines[i].Version}
+		w.Entries[i] = HistoryIndexEntry{HistorySeq: t.lines[i].HistorySeq, LineID: t.lines[i].LineID}
 	}
 	return w, true
 }

@@ -19,6 +19,21 @@ type reliableInputPTY struct {
 	data   bytes.Buffer
 }
 
+func TestLineBodyBatchRejectsMismatchedProjectionIdentity(t *testing.T) {
+	r := NewRuntime("line-body-identity", newReliableInputPTY(), 2, 20)
+	defer r.Close()
+	info := r.Info()
+
+	stale := r.LineBodyBatch("wrong-instance", []terminalengine.LineKey{{ID: 1, Version: 1}})
+	if stale.Status != terminalengine.LineBodyBatchStale || len(stale.Lines) != 0 {
+		t.Fatalf("stale projection returned body: %+v", stale)
+	}
+	if stale.InstanceID != info.InstanceID || stale.LayoutEpoch != info.LayoutEpoch {
+		t.Fatalf("response identity=%q/%d, want %q/%d",
+			stale.InstanceID, stale.LayoutEpoch, info.InstanceID, info.LayoutEpoch)
+	}
+}
+
 func TestHistoryRangeRejectsMismatchedProjectionIdentity(t *testing.T) {
 	r := NewRuntime("history-identity", newReliableInputPTY(), 2, 20)
 	defer r.Close()

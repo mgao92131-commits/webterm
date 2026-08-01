@@ -1,4 +1,4 @@
-package screenprotocolv2
+package screenprotocolv3
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/proto"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -88,13 +88,13 @@ func TestEncodeBaselineCarriesIndependentHistoryExtentAndGeneration(t *testing.T
 		t.Fatal(err)
 	}
 	baseline := env.GetBaseline()
-	if env.GetProtocolVersion() != 2 || baseline.GetDictionaryGeneration() != 5 || baseline.GetHistoryGeneration() != 7 {
-		t.Fatalf("version/dictionary/history generation = %d/%d/%d", env.GetProtocolVersion(), baseline.GetDictionaryGeneration(), baseline.GetHistoryGeneration())
+	if env.GetProtocolVersion() != 3 || baseline.GetHistoryGeneration() != 7 {
+		t.Fatalf("version/history generation = %d/%d", env.GetProtocolVersion(), baseline.GetHistoryGeneration())
 	}
 	if got := baseline.GetHistoryExtent(); got.GetFirstSeq() != 4 || got.GetLastSeq() != 3 {
 		t.Fatalf("empty extent = %d..%d, want 4..3", got.GetFirstSeq(), got.GetLastSeq())
 	}
-	if string(baseline.GetScreenLines()[0].GetUtf8Text()) != "x" {
+	if string(baseline.GetScreenBodies()[0].GetUtf8Text()) != "x" {
 		t.Fatal("default trailing blank was not trimmed")
 	}
 }
@@ -175,8 +175,8 @@ func TestEncodeBaselineNeverCarriesHistoryBodies(t *testing.T) {
 	for index, binding := range baseline.GetHistoryBindings() {
 		wantSeq := uint64(index + 1)
 		if binding.GetHistorySeq() != wantSeq ||
-			binding.GetLineId() != wantSeq+1000 ||
-			binding.GetLineVersion() != 1 {
+			binding.GetKey().GetLineId() != wantSeq+1000 ||
+			binding.GetKey().GetBodyVersion() != 1 {
 			t.Fatalf("binding[%d]=%+v", index, binding)
 		}
 	}
@@ -196,7 +196,7 @@ func TestEncodeLineTrimsOnlySemanticallyDefaultTrailingCells(t *testing.T) {
 			{Text: " ", Width: 1},
 		}}},
 	}
-	wire := encodeLine(line)
+	wire := encodeLineBodyRecord(line)
 	if got := string(wire.GetUtf8Text()); got != "a b" {
 		t.Fatalf("trimmed text=%q, want internal blank preserved", got)
 	}
@@ -205,7 +205,7 @@ func TestEncodeLineTrimsOnlySemanticallyDefaultTrailingCells(t *testing.T) {
 	}
 
 	line.Runs[0].Cells[4].StyleID = 1
-	styled := encodeLine(line)
+	styled := encodeLineBodyRecord(line)
 	if got := string(styled.GetUtf8Text()); got != "a b  " {
 		t.Fatalf("styled trailing blank was trimmed: %q", got)
 	}
@@ -217,7 +217,7 @@ func TestEncodeLineTrimsOnlySemanticallyDefaultTrailingCells(t *testing.T) {
 
 	line.Runs[0].Cells[4].StyleID = 0
 	line.Runs[0].Cells[4].LinkID = 1
-	linked := encodeLine(line)
+	linked := encodeLineBodyRecord(line)
 	if got := string(linked.GetUtf8Text()); got != "a b  " {
 		t.Fatalf("linked trailing blank was trimmed: %q", got)
 	}
@@ -236,7 +236,7 @@ func TestEncodeLinePreservesWideEmojiCombiningAndColumnHoles(t *testing.T) {
 			}},
 		},
 	}
-	wire := encodeLine(line)
+	wire := encodeLineBodyRecord(line)
 	if got := string(wire.GetUtf8Text()); got != "你 e\u0301👩‍💻" {
 		t.Fatalf("wide/hole/combining text=%q", got)
 	}
@@ -247,10 +247,10 @@ func TestEncodeLinePreservesWideEmojiCombiningAndColumnHoles(t *testing.T) {
 
 func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {
 	env := &pb.ScreenEnvelope{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 			Resume: &pb.ResumeToken{InstanceId: "i1", LayoutEpoch: 1, ScreenRevision: 2,
-				DictionaryGeneration: 1, HistoryGeneration: 1, ActiveBuffer: pb.BufferKind_BUFFER_KIND_MAIN},
+				HistoryGeneration: 1, ActiveBuffer: pb.BufferKind_BUFFER_KIND_MAIN},
 			DesiredGeometry: &pb.Geometry{Rows: 24, Cols: 80},
 		}},
 	}
@@ -383,7 +383,7 @@ func TestEncodeTerminalCommitCarriesScreenAndHistoryAtomically(t *testing.T) {
 		t.Fatalf("history mutation missing: %+v", commit.GetHistory())
 	}
 	push := commit.GetHistory().GetPushes()[0]
-	if push.GetHistorySeq() != 1000 || push.GetLineId() != 8 || push.GetLineVersion() != 1 {
+	if push.GetHistorySeq() != 1000 || push.GetKey().GetLineId() != 8 || push.GetKey().GetBodyVersion() != 1 {
 		t.Fatalf("history push=%+v", push)
 	}
 }
@@ -467,7 +467,7 @@ func TestEncodeTerminalCommitCarriesAllHistoryPushesWithoutBodies(t *testing.T) 
 	}
 }
 
-func TestEncodeHistoryRangeHasIdentityPhysicalColumnsAndNoByteLimit(t *testing.T) {
+func TestEncodeLineBodyBatchHasIdentityPhysicalColumnsAndNoByteLimit(t *testing.T) {
 	lines := make([]terminalengine.Line, 5000)
 	for i := range lines {
 		lines[i] = terminalengine.Line{
@@ -478,12 +478,12 @@ func TestEncodeHistoryRangeHasIdentityPhysicalColumnsAndNoByteLimit(t *testing.T
 			}}}},
 		}
 	}
-	wire, err := EncodeHistoryRangeResponse(
-		pb.HistoryRangeStatus_HISTORY_RANGE_STATUS_OK,
-		terminalengine.HistoryRangeData{
-			Status: terminalengine.HistoryRangeOK, InstanceID: "i1", LayoutEpoch: 7,
-			HistoryGeneration: 3, Extent: terminalengine.HistoryExtent{FirstSeq: 1, LastSeq: 5000},
-			Lines: lines,
+	wire, err := EncodeLineBodyBatchResponse(
+		pb.LineBodyBatchStatus_LINE_BODY_BATCH_STATUS_OK,
+		terminalengine.LineBodyBatchData{
+			Status: terminalengine.LineBodyBatchOK, InstanceID: "i1", LayoutEpoch: 7,
+			HistoryGeneration: 3,
+			Lines:             lines,
 		},
 	)
 	if err != nil {
@@ -492,15 +492,15 @@ func TestEncodeHistoryRangeHasIdentityPhysicalColumnsAndNoByteLimit(t *testing.T
 	if len(wire) <= 1<<20 {
 		t.Fatalf("wire=%d, want >1MiB", len(wire))
 	}
-	var response pb.HistoryRangeResponse
+	var response pb.LineBodyBatchResponse
 	if err := proto.Unmarshal(wire, &response); err != nil {
 		t.Fatal(err)
 	}
 	if response.GetInstanceId() != "i1" || response.GetLayoutEpoch() != 7 ||
-		len(response.GetLines()) != 5000 ||
-		response.GetLines()[0].GetPhysicalColumns() != 200 {
+		len(response.GetBodies()) != 5000 ||
+		response.GetBodies()[0].GetPhysicalColumns() != 200 {
 		t.Fatalf("response identity/lines mismatch: instance=%q epoch=%d lines=%d columns=%d",
-			response.GetInstanceId(), response.GetLayoutEpoch(), len(response.GetLines()),
-			response.GetLines()[0].GetPhysicalColumns())
+			response.GetInstanceId(), response.GetLayoutEpoch(), len(response.GetBodies()),
+			response.GetBodies()[0].GetPhysicalColumns())
 	}
 }

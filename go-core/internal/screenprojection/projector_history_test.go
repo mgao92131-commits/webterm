@@ -13,7 +13,7 @@ import (
 func TestHistoryRangeDoesNotWaitForProjectorProjectionLock(t *testing.T) {
 	_, sb, projector := newHistoryRig(t, 1, 8)
 	sb.Push(headlessterm.ScrollbackLine{
-		LineID: 1, LineVersion: 1,
+		LineID: 1,
 		Cells: []headlessterm.Cell{headlessterm.NewCell()},
 	})
 
@@ -141,7 +141,7 @@ func TestProjector_HistoryRangeExportsExactArbitraryBounds(t *testing.T) {
 	_, scrollback, projector := newHistoryRig(t, 5, 20)
 	for seq := 1; seq <= 1100; seq++ {
 		scrollback.Push(headlessterm.ScrollbackLine{
-			LineID: uint64(10_000 + seq), LineVersion: 3,
+			LineID: uint64(10_000 + seq),
 			Cells: []headlessterm.Cell{headlessterm.NewCell()},
 		})
 	}

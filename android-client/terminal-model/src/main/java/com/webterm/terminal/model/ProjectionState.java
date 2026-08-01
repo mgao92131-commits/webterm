@@ -4,7 +4,6 @@ package com.webterm.terminal.model;
 public final class ProjectionState {
   public final ProjectionIdentity identity;
   public final long screenRevision;
-  public final long dictionaryGeneration;
   public final int rows;
   public final int columns;
   public final TerminalBufferKind activeBuffer;
@@ -17,7 +16,6 @@ public final class ProjectionState {
   public ProjectionState(
       ProjectionIdentity identity,
       long screenRevision,
-      long dictionaryGeneration,
       int rows,
       int columns,
       TerminalBufferKind activeBuffer,
@@ -28,7 +26,6 @@ public final class ProjectionState {
       TerminalPalette palette) {
     this.identity = identity;
     this.screenRevision = screenRevision;
-    this.dictionaryGeneration = dictionaryGeneration;
     this.rows = rows;
     this.columns = columns;
     this.activeBuffer = activeBuffer;

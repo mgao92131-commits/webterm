@@ -5,14 +5,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** HistoryPush 晋升复用与 Range 请求 miss 归因的进程级指标。 */
+/** HistoryBinding 晋升复用与 BodyBatch miss 归因的进程级指标。 */
 public final class HistoryPromotionMetrics {
   private static final int MAX_RECENT_MISS_REASONS = 512;
 
   private static final AtomicLong PROMOTION_EXACT_REUSE = new AtomicLong();
-  private static final AtomicLong PROMOTION_VERSION_MISMATCH = new AtomicLong();
-  private static final AtomicLong PROMOTION_BODY_ABSENT = new AtomicLong();
-  private static final AtomicLong BODY_PRESENT_NOT_RESIDENT = new AtomicLong();
+  private static final AtomicLong PROMOTION_BODY_INVARIANT_FAILURE = new AtomicLong();
 
   private static final AtomicLong[] HISTORY_REQUEST_BY_MISS_REASON =
       new AtomicLong[HistoryBodyMissReason.values().length];
@@ -38,15 +36,10 @@ public final class HistoryPromotionMetrics {
     PROMOTION_EXACT_REUSE.incrementAndGet();
   }
 
-  public static void recordVersionMismatch(
-      long historySeq, long previousVersion, long pushVersion) {
-    PROMOTION_VERSION_MISMATCH.incrementAndGet();
-    RECENT_MISS_REASONS.put(historySeq, HistoryBodyMissReason.PROMOTION_VERSION_MISMATCH);
-  }
-
-  public static void recordBodyAbsent(long historySeq) {
-    PROMOTION_BODY_ABSENT.incrementAndGet();
-    RECENT_MISS_REASONS.put(historySeq, HistoryBodyMissReason.PROMOTION_BODY_ABSENT);
+  public static void recordBodyInvariantFailure(long historySeq) {
+    PROMOTION_BODY_INVARIANT_FAILURE.incrementAndGet();
+    RECENT_MISS_REASONS.put(
+        historySeq, HistoryBodyMissReason.PROMOTION_BODY_INVARIANT_FAILURE);
   }
 
   public static HistoryBodyMissReason reasonFor(long historySeq) {
@@ -62,9 +55,7 @@ public final class HistoryPromotionMetrics {
   public static Map<String, Object> snapshot() {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("promotionExactReuseCount", PROMOTION_EXACT_REUSE.get());
-    out.put("promotionVersionMismatchCount", PROMOTION_VERSION_MISMATCH.get());
-    out.put("promotionBodyAbsentCount", PROMOTION_BODY_ABSENT.get());
-    out.put("bodyPresentNotResidentCount", BODY_PRESENT_NOT_RESIDENT.get());
+    out.put("promotionBodyInvariantFailureCount", PROMOTION_BODY_INVARIANT_FAILURE.get());
     Map<String, Long> byReason = new LinkedHashMap<>();
     for (HistoryBodyMissReason reason : HistoryBodyMissReason.values()) {
       byReason.put(reason.name(), HISTORY_REQUEST_BY_MISS_REASON[reason.ordinal()].get());
@@ -75,9 +66,7 @@ public final class HistoryPromotionMetrics {
 
   public static void resetForTest() {
     PROMOTION_EXACT_REUSE.set(0);
-    PROMOTION_VERSION_MISMATCH.set(0);
-    PROMOTION_BODY_ABSENT.set(0);
-    BODY_PRESENT_NOT_RESIDENT.set(0);
+    PROMOTION_BODY_INVARIANT_FAILURE.set(0);
     for (AtomicLong counter : HISTORY_REQUEST_BY_MISS_REASON) {
       counter.set(0);
     }

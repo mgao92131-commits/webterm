@@ -2,19 +2,18 @@ package com.webterm.terminal.protocol;
 
 import com.webterm.terminal.model.CommitFailure;
 import com.webterm.terminal.model.CommitValidationException;
-import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 
-/** screen.v2 结构与资源边界校验；Mapper 只负责 wire -> immutable domain 转换。 */
-public final class ScreenMessageV2Validator {
-  private ScreenMessageV2Validator() {}
+/** screen.v3 结构与资源边界校验；Mapper 只负责 wire -> immutable domain 转换。 */
+public final class ScreenMessageV3Validator {
+  private ScreenMessageV3Validator() {}
 
-  public static void validateBaseline(TerminalScreenV2Proto.Baseline baseline) {
+  public static void validateBaseline(TerminalScreenV3Proto.Baseline baseline) {
     if (baseline == null || baseline.getInstanceId().isEmpty()
         || baseline.getLayoutEpoch() < 1) {
       throw baselineFault(BaselineFaultCode.INVALID_IDENTITY);
     }
-    if (baseline.getScreenRevision() < 1 || baseline.getDictionaryGeneration() < 1
-        || baseline.getHistoryGeneration() < 1) {
+    if (baseline.getScreenRevision() < 1 || baseline.getHistoryGeneration() < 1) {
       throw baselineFault(BaselineFaultCode.INVALID_GENERATION);
     }
     int rows = baseline.getGeometry().getRows();
@@ -22,11 +21,8 @@ public final class ScreenMessageV2Validator {
     if (rows < 1 || rows > 200 || cols < 1 || cols > 500) {
       throw baselineFault(BaselineFaultCode.INVALID_GEOMETRY);
     }
-    if (baseline.getScreenLinesCount() != rows) {
+    if (baseline.getScreenRowsCount() != rows) {
       throw baselineFault(BaselineFaultCode.SCREEN_LINE_COUNT_MISMATCH);
-    }
-    if (baseline.getScreenLayout().getLineIdsCount() != rows) {
-      throw baselineFault(BaselineFaultCode.SCREEN_LAYOUT_COUNT_MISMATCH);
     }
     try {
       validateExtent(baseline.getHistoryExtent());
@@ -42,7 +38,7 @@ public final class ScreenMessageV2Validator {
     }
     long previousHistorySeq = 0;
     java.util.HashSet<String> historyKeys = new java.util.HashSet<>();
-    for (TerminalScreenV2Proto.HistoryPush binding :
+    for (TerminalScreenV3Proto.HistoryBinding binding :
         baseline.getHistoryBindingsList()) {
       if (binding.getHistorySeq() <= previousHistorySeq) {
         throw baselineFault(BaselineFaultCode.HISTORY_SEQ_OUT_OF_ORDER);
@@ -51,10 +47,10 @@ public final class ScreenMessageV2Validator {
           || binding.getHistorySeq() > historyLast) {
         throw baselineFault(BaselineFaultCode.HISTORY_SEQ_OUT_OF_EXTENT);
       }
-      if (binding.getLineId() <= 0 || binding.getLineVersion() <= 0) {
+      if (binding.getKey().getLineId() <= 0 || binding.getKey().getBodyVersion() <= 0) {
         throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
-      String key = binding.getLineId() + ":" + binding.getLineVersion();
+      String key = binding.getKey().getLineId() + ":" + binding.getKey().getBodyVersion();
       if (!historyKeys.add(key)) {
         throw baselineFault(BaselineFaultCode.DUPLICATE_HISTORY_KEY);
       }
@@ -64,13 +60,13 @@ public final class ScreenMessageV2Validator {
     java.util.HashSet<Integer> linkIds = new java.util.HashSet<>();
     try {
       validateDictionary(baseline.getDictionary());
-      for (TerminalScreenV2Proto.TerminalStyle style :
+      for (TerminalScreenV3Proto.TerminalStyle style :
           baseline.getDictionary().getStylesList()) {
         if (style.getId() <= 0 || !styleIds.add(style.getId())) {
           throw new IllegalArgumentException("invalid style dictionary");
         }
       }
-      for (TerminalScreenV2Proto.Hyperlink link :
+      for (TerminalScreenV3Proto.Hyperlink link :
           baseline.getDictionary().getLinksList()) {
         if (link.getId() <= 0 || !linkIds.add(link.getId())) {
           throw new IllegalArgumentException("invalid link dictionary");
@@ -82,41 +78,49 @@ public final class ScreenMessageV2Validator {
     }
     java.util.HashSet<String> activeKeys = new java.util.HashSet<>();
     java.util.HashSet<Long> activeLineIds = new java.util.HashSet<>();
-    for (TerminalScreenV2Proto.LineData line : baseline.getScreenLinesList()) {
-      if (line.getPhysicalColumns() != cols || line.getHistorySeq() != 0) {
-        throw baselineFault(BaselineFaultCode.LINE_COLUMN_COUNT_MISMATCH);
+    for (TerminalScreenV3Proto.LineKey rowKey : baseline.getScreenRowsList()) {
+      if (rowKey.getLineId() <= 0 || rowKey.getBodyVersion() <= 0) {
+        throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
-      try {
-        validateLineData(line, cols);
-      } catch (IllegalArgumentException invalidLine) {
-        throw new BaselineValidationException(
-            BaselineFaultCode.INVALID_LINE_BODY, invalidLine);
-      }
-      for (TerminalScreenV2Proto.StyleSpan span : line.getStyleSpansList()) {
-        if ((span.getStyleId() != 0 && !styleIds.contains(span.getStyleId()))
-            || (span.getLinkId() != 0 && !linkIds.contains(span.getLinkId()))) {
-          throw baselineFault(BaselineFaultCode.INVALID_DICTIONARY);
-        }
-      }
-      String key = line.getLineId() + ":" + line.getLineVersion();
-      if (!activeKeys.add(key) || !activeLineIds.add(line.getLineId())) {
+      String key = rowKey.getLineId() + ":" + rowKey.getBodyVersion();
+      if (!activeKeys.add(key) || !activeLineIds.add(rowKey.getLineId())) {
         throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
       }
       if (historyKeys.contains(key)) {
         throw baselineFault(BaselineFaultCode.ACTIVE_HISTORY_KEY_CONFLICT);
       }
     }
-    java.util.HashSet<Long> layoutLineIds = new java.util.HashSet<>();
-    for (long lineId : baseline.getScreenLayout().getLineIdsList()) {
-      if (!layoutLineIds.add(lineId)) {
+    java.util.HashSet<String> bodyKeys = new java.util.HashSet<>();
+    for (TerminalScreenV3Proto.LineBodyRecord line : baseline.getScreenBodiesList()) {
+      if (line.getPhysicalColumns() != cols) {
+        throw baselineFault(BaselineFaultCode.LINE_COLUMN_COUNT_MISMATCH);
+      }
+      try {
+        validateLineBodyRecord(line, cols);
+      } catch (IllegalArgumentException invalidLine) {
+        throw new BaselineValidationException(
+            BaselineFaultCode.INVALID_LINE_BODY, invalidLine);
+      }
+      for (TerminalScreenV3Proto.StyleSpan span : line.getStyleSpansList()) {
+        if ((span.getStyleId() != 0 && !styleIds.contains(span.getStyleId()))
+            || (span.getLinkId() != 0 && !linkIds.contains(span.getLinkId()))) {
+          throw baselineFault(BaselineFaultCode.INVALID_DICTIONARY);
+        }
+      }
+      String key = line.getKey().getLineId() + ":" + line.getKey().getBodyVersion();
+      if (!bodyKeys.add(key)) {
         throw baselineFault(BaselineFaultCode.DUPLICATE_ACTIVE_KEY);
       }
-      if (!activeLineIds.contains(lineId)) {
-        throw baselineFault(BaselineFaultCode.SCREEN_LAYOUT_COUNT_MISMATCH);
+    }
+    for (String activeKey : activeKeys) {
+      if (!bodyKeys.contains(activeKey)) {
+        throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
       }
     }
-    if (layoutLineIds.size() != activeLineIds.size()) {
-      throw baselineFault(BaselineFaultCode.SCREEN_LAYOUT_COUNT_MISMATCH);
+    for (String historyKey : historyKeys) {
+      if (!bodyKeys.contains(historyKey)) {
+        throw baselineFault(BaselineFaultCode.INVALID_LINE_BODY);
+      }
     }
   }
 
@@ -125,40 +129,46 @@ public final class ScreenMessageV2Validator {
   }
 
   public static void validateTerminalCommit(
-      TerminalScreenV2Proto.TerminalCommit commit, int rows)
+      TerminalScreenV3Proto.TerminalCommit commit, int rows)
       throws CommitValidationException {
     try {
       requireIdentity(commit.getInstanceId(), commit.getLayoutEpoch());
     } catch (IllegalArgumentException invalidIdentity) {
       throw new CommitValidationException(CommitFailure.IDENTITY_MISMATCH, invalidIdentity);
     }
-    if (rows < 1 || rows > 200 || commit.getDictionaryGeneration() < 1
-        || commit.getHistoryGeneration() < 1
+    if (rows < 1 || rows > 200 || commit.getHistoryGeneration() < 1
         || commit.getBaseRevision() < 1 || commit.getRevision() <= commit.getBaseRevision()) {
       throw new CommitValidationException(CommitFailure.REVISION_GAP);
     }
     boolean observable = commit.hasScreen() || commit.hasHistory() || commit.hasCursor()
         || commit.hasModes() || commit.hasPalette() || commit.hasActiveBuffer()
+        || commit.getBodyUpsertsCount() > 0
         || commit.getDictionaryAdditions().getStylesCount() > 0
         || commit.getDictionaryAdditions().getLinksCount() > 0;
     if (!observable) throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
+    for (TerminalScreenV3Proto.LineBodyRecord upsert : commit.getBodyUpsertsList()) {
+      try {
+        validateLineBodyRecord(upsert, 500);
+      } catch (IllegalArgumentException invalidLine) {
+        throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA, invalidLine);
+      }
+    }
     if (commit.hasScreen()) {
       if (commit.getScreen().getWritesCount() > rows) {
         throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA);
       }
       boolean[] seen = new boolean[rows];
-      for (TerminalScreenV2Proto.ScreenRowWrite write : commit.getScreen().getWritesList()) {
+      for (TerminalScreenV3Proto.ScreenRowWrite write : commit.getScreen().getWritesList()) {
         int row = write.getRow();
-        if (!write.hasLine() || row < 0 || row >= rows || seen[row]
-            || write.getLine().getHistorySeq() != 0) {
+        if (write.getKey().getLineId() <= 0 || write.getKey().getBodyVersion() <= 0
+            || row < 0 || row >= rows || seen[row]) {
           throw new CommitValidationException(row >= 0 && row < rows && seen[row]
               ? CommitFailure.DUPLICATE_SCREEN_ROW : CommitFailure.INVALID_LINE_DATA);
         }
         seen[row] = true;
-        validateCommitLineData(write.getLine(), 500);
       }
       if (commit.getScreen().hasScroll()) {
-        TerminalScreenV2Proto.ScreenScroll scroll = commit.getScreen().getScroll();
+        TerminalScreenV3Proto.ScreenScroll scroll = commit.getScreen().getScroll();
         int height = scroll.getBottomRowExclusive() - scroll.getTopRow();
         long magnitude = Math.abs((long) scroll.getDeltaRows());
         if (scroll.getTopRow() != 0 || scroll.getBottomRowExclusive() != rows
@@ -180,13 +190,13 @@ public final class ScreenMessageV2Validator {
       long previous = 0;
       long first = commit.getHistory().getFinalExtent().getFirstSeq();
       long last = commit.getHistory().getFinalExtent().getLastSeq();
-      for (TerminalScreenV2Proto.HistoryPush push : commit.getHistory().getPushesList()) {
+      for (TerminalScreenV3Proto.HistoryBinding push : commit.getHistory().getPushesList()) {
         long seq = push.getHistorySeq();
         if (seq == 0 || seq <= previous || seq < first || seq > last) {
           throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
         }
         previous = seq;
-        if (push.getLineId() == 0 || push.getLineVersion() == 0) {
+        if (push.getKey().getLineId() == 0 || push.getKey().getBodyVersion() == 0) {
           throw new CommitValidationException(CommitFailure.INVALID_HISTORY_SEQUENCE);
         }
       }
@@ -198,23 +208,13 @@ public final class ScreenMessageV2Validator {
     }
   }
 
-  private static void validateCommitLineData(
-      TerminalScreenV2Proto.LineData line, int columns)
-      throws CommitValidationException {
-    try {
-      validateLineData(line, columns);
-    } catch (IllegalArgumentException invalidLine) {
-      throw new CommitValidationException(CommitFailure.INVALID_LINE_DATA, invalidLine);
-    }
-  }
-
-  /** HTTP Range 历史正文与 WS LineData 共用的结构校验入口。 */
-  public static void validateHistoryLineData(TerminalScreenV2Proto.LineData line) {
-    if (line == null || line.getHistorySeq() <= 0
+  public static void validateLineBodyRecord(TerminalScreenV3Proto.LineBodyRecord line) {
+    if (line == null || line.getKey().getLineId() <= 0
+        || line.getKey().getBodyVersion() <= 0
         || line.getPhysicalColumns() < 1 || line.getPhysicalColumns() > 500) {
-      throw new IllegalArgumentException("invalid history LineData identity or geometry");
+      throw new IllegalArgumentException("invalid LineBodyRecord identity or geometry");
     }
-    validateLineData(line, line.getPhysicalColumns());
+    validateLineBodyRecord(line, line.getPhysicalColumns());
   }
 
   private static void requireIdentity(String instanceId, long layoutEpoch) {
@@ -223,28 +223,29 @@ public final class ScreenMessageV2Validator {
     }
   }
 
-  private static void validateExtent(TerminalScreenV2Proto.HistoryExtent extent) {
+  private static void validateExtent(TerminalScreenV3Proto.HistoryExtent extent) {
     long first = extent.getFirstSeq();
     long last = extent.getLastSeq();
-    if (first == 0 && last == 0) return; // 宽容 proto3 默认空值，Mapper 规范化为 1..0。
+    if (first == 0 && last == 0) return;
     if (first < 1 || last < 0 || last == Long.MAX_VALUE || first > last + 1) {
       throw new IllegalArgumentException("invalid history extent");
     }
   }
 
-  private static void validateDictionary(TerminalScreenV2Proto.Dictionary dictionary) {
+  private static void validateDictionary(TerminalScreenV3Proto.Dictionary dictionary) {
     if (dictionary.getStylesCount() > 4096 || dictionary.getLinksCount() > 4096) {
       throw new IllegalArgumentException("dictionary exceeds limit");
     }
   }
 
-  private static void validateLineData(TerminalScreenV2Proto.LineData line, int columns) {
-    if (line.getLineId() == 0 || line.getLineVersion() == 0
+  private static void validateLineBodyRecord(
+      TerminalScreenV3Proto.LineBodyRecord line, int columns) {
+    if (line.getKey().getLineId() == 0 || line.getKey().getBodyVersion() == 0
         || line.getUtf8Text().size() > (1 << 20) || line.getGlyphMeta().size() > (1 << 16)) {
-      throw new IllegalArgumentException("invalid LineData bounds");
+      throw new IllegalArgumentException("invalid LineBodyRecord bounds");
     }
     int previousEnd = 0;
-    for (TerminalScreenV2Proto.StyleSpan span : line.getStyleSpansList()) {
+    for (TerminalScreenV3Proto.StyleSpan span : line.getStyleSpansList()) {
       if (span.getStartCol() < previousEnd || span.getStartCol() < 0
           || span.getEndCol() <= span.getStartCol() || span.getEndCol() > columns) {
         throw new IllegalArgumentException("invalid style span");

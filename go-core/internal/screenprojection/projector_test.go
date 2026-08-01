@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
-	"webterm/go-core/internal/screenprotocolv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
+	"webterm/go-core/internal/screenprotocolv3"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -77,7 +77,7 @@ func TestProjector_BlankSnapshotThenPromptProducesLinePatch(t *testing.T) {
 	if len(patch.Screen) != 1 || patch.Screen[0].ID != promptID || !strings.Contains(exportLineText(patch.Screen[0]), "user@host:~$") {
 		t.Fatalf("prompt LineData missing or wrong: %+v", patch.Screen)
 	}
-	encoded, err := screenprotocolv2.EncodeTerminalCommit(patch, 1)
+	encoded, err := screenprotocolv3.EncodeTerminalCommit(patch, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

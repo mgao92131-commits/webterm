@@ -785,7 +785,7 @@ public class DeviceConnectionRecoveryTest {
         manager.start();
         transport.simulateOpen();
 
-        String missingChannelId = "term:missing:webterm.screen.v2";
+        String missingChannelId = "term:missing:webterm.screen.v3";
         transport.simulateText(wsConnected(missingChannelId));
         transport.simulateText(wsClose(missingChannelId, 1001, "going away"));
         transport.simulateText(wsError(missingChannelId, 404, "session not found"));
@@ -874,9 +874,9 @@ public class DeviceConnectionRecoveryTest {
         assertEquals("Pixel 9", registration.getString("client_name"));
         assertEquals("file_receive", registration.getJSONArray("capabilities").getString(0));
         JSONObject channelOpen = new JSONObject(transport.sentTexts.get(connectIndex));
-        assertEquals("term:s1:webterm.screen.v2", channelOpen.getString("channelRouteKey"));
+        assertEquals("term:s1:webterm.screen.v3", channelOpen.getString("channelRouteKey"));
         assertTrue(channelOpen.getString("channelOwnerKey")
-            .endsWith(":term:s1:webterm.screen.v2"));
+            .endsWith(":term:s1:webterm.screen.v3"));
     }
 
     @Test

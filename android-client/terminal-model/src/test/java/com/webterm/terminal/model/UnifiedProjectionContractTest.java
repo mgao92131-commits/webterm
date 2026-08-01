@@ -92,7 +92,7 @@ public final class UnifiedProjectionContractTest {
   public void baselineBuildsCompleteWsCatalogBeforeAnyRange() {
     ScreenProjectionReducer reducer =
         new ScreenProjectionReducer(HistoryBudget.defaults());
-    ScreenBaseline baseline = new ScreenBaseline(
+    ScreenBaseline baseline = SemanticTestData.baselineLegacy(
         "s", "i", 1, 10, 1, 1,
         1, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(5, 6),
@@ -109,7 +109,10 @@ public final class UnifiedProjectionContractTest {
     assertEquals(new LineKey(50, 1), state.mainSurface.historyCatalog.key(5));
     assertEquals(new LineKey(60, 2), state.mainSurface.historyCatalog.key(6));
     assertEquals(new LineKey(70, 1), state.mainSurface.activeRows.keyAt(0));
-    assertNull(state.mainSurface.bodyCache.body(new LineKey(50, 1)));
+    assertNotNull(state.mainSurface.bodyCache.body(new LineKey(50, 1)));
+    assertEquals(
+        SlotState.UNLOADED,
+        state.mainSurface.bodyCache.historyResidency().slotState(5));
   }
 
   @Test
@@ -168,7 +171,7 @@ public final class UnifiedProjectionContractTest {
   public void onlyScreenReducerCanReportRevisionGapNeedsBaseline() {
     ScreenProjectionReducer reducer =
         new ScreenProjectionReducer(HistoryBudget.defaults());
-    ProjectionResult baseline = reducer.applyBaseline(new ScreenBaseline(
+    ProjectionResult baseline = reducer.applyBaseline(SemanticTestData.baselineLegacy(
         "s", "i", 1, 10, 1, 1,
         1, 1, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
@@ -177,7 +180,7 @@ public final class UnifiedProjectionContractTest {
             new LineKey(1, 1), body("x"))),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     ProjectionState state = ((ProjectionResult.Applied) baseline).state();
-    ProjectionResult result = reducer.applyCommit(state, new TerminalCommit(
+    ProjectionResult result = reducer.applyCommit(state, SemanticTestData.commitLegacy(
         "i", 1, 8, 11, 1, 1,
         null, null, null, null, null, null));
     assertTrue(result instanceof ProjectionResult.NeedsBaseline);
@@ -190,7 +193,7 @@ public final class UnifiedProjectionContractTest {
   public void metadataOnlyCommitReusesBothTerminalSurfaces() {
     ScreenProjectionReducer reducer =
         new ScreenProjectionReducer(HistoryBudget.defaults());
-    ProjectionResult baseline = reducer.applyBaseline(new ScreenBaseline(
+    ProjectionResult baseline = reducer.applyBaseline(SemanticTestData.baselineLegacy(
         "s", "i", 1, 10, 1, 1,
         1, 1, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
@@ -200,7 +203,7 @@ public final class UnifiedProjectionContractTest {
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults()));
     ProjectionState before = ((ProjectionResult.Applied) baseline).state();
 
-    ProjectionResult result = reducer.applyCommit(before, new TerminalCommit(
+    ProjectionResult result = reducer.applyCommit(before, SemanticTestData.commitLegacy(
         "i", 1, 10, 11, 1, 1,
         null, null, null,
         new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, false),
@@ -221,7 +224,7 @@ public final class UnifiedProjectionContractTest {
       bindings.add(new HistoryPush(seq, new LineKey(seq, 1)));
     }
     ProjectionState state = ((ProjectionResult.Applied) reducer.applyBaseline(
-        new ScreenBaseline(
+        SemanticTestData.baselineLegacy(
             "s", "i", 1, 1, 1, 1,
             1, 1, TerminalBufferKind.MAIN,
             new HistoryExtent(1, 20_000), bindings,
@@ -233,7 +236,7 @@ public final class UnifiedProjectionContractTest {
     TerminalSurfaceState originalAlternate = state.alternateSurface;
 
     for (int i = 0; i < 1_000; i++) {
-      ProjectionResult result = reducer.applyCommit(state, new TerminalCommit(
+      ProjectionResult result = reducer.applyCommit(state, SemanticTestData.commitLegacy(
           "i", 1, state.screenRevision, state.screenRevision + 1, 1, 1,
           null, null, null,
           new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, (i & 1) == 0),

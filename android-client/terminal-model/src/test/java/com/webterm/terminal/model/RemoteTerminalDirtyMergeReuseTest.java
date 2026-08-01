@@ -24,15 +24,17 @@ public final class RemoteTerminalDirtyMergeReuseTest {
         1, 2,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 1),
-            Collections.singletonList(new ScreenRowWrite(
-                ROWS - 1, line(200, 1, "new-tail"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(
+                ROWS - 1, line(200, 1, "new-tail")))),
+        line(200, 1, "new-tail")));
     assertTrue(model.renderPublicationPendingForTest());
 
     model.applyTerminalCommit(commit(
         2, 3,
         new ScreenMutation(
             null,
-            Collections.singletonList(new ScreenRowWrite(1, line(101, 2, "mid"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(1, line(101, 2, "mid")))),
+        line(101, 2, "mid")));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -55,17 +57,19 @@ public final class RemoteTerminalDirtyMergeReuseTest {
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 3),
             List.of(
-                new ScreenRowWrite(1, line(201, 1, "e1")),
-                new ScreenRowWrite(2, line(202, 1, "e2")),
-                new ScreenRowWrite(3, line(203, 1, "e3"))))));
+                ScreenRowWrite.fromLine(1, line(201, 1, "e1")),
+                ScreenRowWrite.fromLine(2, line(202, 1, "e2")),
+                ScreenRowWrite.fromLine(3, line(203, 1, "e3")))),
+        line(201, 1, "e1"), line(202, 1, "e2"), line(203, 1, "e3")));
     model.applyTerminalCommit(commit(
         2, 3,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 3),
             List.of(
-                new ScreenRowWrite(1, line(211, 1, "f1")),
-                new ScreenRowWrite(2, line(212, 1, "f2")),
-                new ScreenRowWrite(3, line(213, 1, "f3"))))));
+                ScreenRowWrite.fromLine(1, line(211, 1, "f1")),
+                ScreenRowWrite.fromLine(2, line(212, 1, "f2")),
+                ScreenRowWrite.fromLine(3, line(213, 1, "f3")))),
+        line(211, 1, "f1"), line(212, 1, "f2"), line(213, 1, "f3")));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -109,14 +113,16 @@ public final class RemoteTerminalDirtyMergeReuseTest {
         1, 2,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 1),
-            Collections.singletonList(new ScreenRowWrite(
-                ROWS - 1, line(200, 1, "up-tail"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(
+                ROWS - 1, line(200, 1, "up-tail")))),
+        line(200, 1, "up-tail")));
     model.applyTerminalCommit(commit(
         2, 3,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, -1),
-            Collections.singletonList(new ScreenRowWrite(
-                0, line(201, 1, "down-head"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(
+                0, line(201, 1, "down-head")))),
+        line(201, 1, "down-head")));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -135,17 +141,19 @@ public final class RemoteTerminalDirtyMergeReuseTest {
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 3),
             List.of(
-                new ScreenRowWrite(1, line(201, 1, "e1")),
-                new ScreenRowWrite(2, line(202, 1, "e2")),
-                new ScreenRowWrite(3, line(203, 1, "e3"))))));
+                ScreenRowWrite.fromLine(1, line(201, 1, "e1")),
+                ScreenRowWrite.fromLine(2, line(202, 1, "e2")),
+                ScreenRowWrite.fromLine(3, line(203, 1, "e3")))),
+        line(201, 1, "e1"), line(202, 1, "e2"), line(203, 1, "e3")));
     model.applyTerminalCommit(commit(
         2, 3,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 3),
             List.of(
-                new ScreenRowWrite(1, line(211, 1, "f1")),
-                new ScreenRowWrite(2, line(212, 1, "f2")),
-                new ScreenRowWrite(3, line(213, 1, "f3"))))));
+                ScreenRowWrite.fromLine(1, line(211, 1, "f1")),
+                ScreenRowWrite.fromLine(2, line(212, 1, "f2")),
+                ScreenRowWrite.fromLine(3, line(213, 1, "f3")))),
+        line(211, 1, "f1"), line(212, 1, "f2"), line(213, 1, "f3")));
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
     assertTrue(update.dirty.screenRegionInvalidate);
@@ -168,7 +176,7 @@ public final class RemoteTerminalDirtyMergeReuseTest {
     for (int row = 0; row < ROWS; row++) {
       screen.add(line(100 + row, 1, "row-" + row));
     }
-    model.applyBaseline(new ScreenBaseline(
+    model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1, ROWS, 1,
         TerminalBufferKind.MAIN,
         extent,
@@ -182,10 +190,11 @@ public final class RemoteTerminalDirtyMergeReuseTest {
   }
 
   private static TerminalCommit commit(
-      long baseRevision, long revision, ScreenMutation mutation) {
+      long baseRevision, long revision, ScreenMutation mutation,
+      ScreenLineContent... bodyUpserts) {
     return new TerminalCommit(
-        "i1", 1, baseRevision, revision, 1, 1,
-        TerminalBufferKind.MAIN, mutation, null, null, null, null);
+        "i1", 1, baseRevision, revision, 1, TerminalBufferKind.MAIN,
+        SemanticTestData.upserts(bodyUpserts), mutation, null, null, null, null);
   }
 
   private static ScreenLineContent line(long id, long version, String text) {

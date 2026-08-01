@@ -12,8 +12,8 @@ import com.webterm.core.session.DeviceConnection;
 import com.webterm.core.session.DeviceConnectionRegistry;
 import com.webterm.core.session.MuxOutboundQueue;
 import com.webterm.core.session.TransportReconnectTrigger;
-import com.webterm.terminal.protocol.ScreenMessageV2Builder;
-import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.ScreenMessageV3Builder;
+import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 
 import dagger.assisted.Assisted;
 import dagger.assisted.AssistedFactory;
@@ -23,7 +23,7 @@ import java.util.UUID;
 import java.nio.ByteBuffer;
 
 /**
- * 通过 device connection 建立 webterm.screen.v2 通道的 ScreenConnection 实现。
+ * 通过 device connection 建立 webterm.screen.v3 通道的 ScreenConnection 实现。
  */
 public final class TerminalChannel implements TerminalSessionRuntime.ScreenConnection {
 
@@ -87,12 +87,12 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   }
 
   @Override
-  public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+  public boolean beginSync(@Nullable TerminalScreenV3Proto.ResumeToken resume) {
     return beginSync(resume, false);
   }
 
   @Override
-  public boolean beginSync(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+  public boolean beginSync(@Nullable TerminalScreenV3Proto.ResumeToken resume,
                            boolean forceBaseline) {
     return sendHello(resume, forceBaseline);
   }
@@ -106,18 +106,18 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
 
   @Override
   public boolean sendTextInput(@NonNull String text) {
-    return sendInputFrame(ScreenMessageV2Builder.textInput(layoutLeaseId, text));
+    return sendInputFrame(ScreenMessageV3Builder.textInput(layoutLeaseId, text));
   }
 
   @Override
   public boolean sendPasteInput(@NonNull String text) {
-    return sendInputFrame(ScreenMessageV2Builder.pasteInput(layoutLeaseId, text));
+    return sendInputFrame(ScreenMessageV3Builder.pasteInput(layoutLeaseId, text));
   }
 
   @Override
   public boolean sendKeyInput(@NonNull String key, boolean shift, boolean alt, boolean ctrl,
                            boolean meta, boolean pressed) {
-    return sendInputFrame(ScreenMessageV2Builder.keyInput(
+    return sendInputFrame(ScreenMessageV3Builder.keyInput(
         layoutLeaseId, key, shift, alt, ctrl, meta, pressed));
   }
 
@@ -125,15 +125,15 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   public boolean sendMouseInput(int row, int col, @NonNull String button, int wheelDelta,
                              boolean shift, boolean alt, boolean ctrl, boolean meta,
                              boolean pressed) {
-    TerminalScreenV2Proto.MouseButton protoButton = mouseButtonFromString(button);
-    return sendInputFrame(ScreenMessageV2Builder.mouseInput(
+    TerminalScreenV3Proto.MouseButton protoButton = mouseButtonFromString(button);
+    return sendInputFrame(ScreenMessageV3Builder.mouseInput(
         layoutLeaseId, row, col, protoButton, wheelDelta, shift, alt, ctrl, meta, pressed));
   }
 
   @Override
   public void sendFocusInput(boolean focused) {
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return;
-    sendFrame(ScreenMessageV2Builder.focusInput(layoutLeaseId, focused),
+    sendFrame(ScreenMessageV3Builder.focusInput(layoutLeaseId, focused),
         MuxOutboundQueue.FrameKind.INPUT, null);
   }
 
@@ -143,7 +143,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     this.columns = clamp(cols, 10, 500);
     this.rows = clamp(rows, 5, 200);
     if (deviceConnection == null || channelId == null || layoutLeaseId.isEmpty()) return false;
-    return sendFrame(ScreenMessageV2Builder.resize(layoutLeaseId, this.columns, this.rows),
+    return sendFrame(ScreenMessageV3Builder.resize(layoutLeaseId, this.columns, this.rows),
         MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 
@@ -155,7 +155,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   @Override
   public void acquireLayout(@NonNull String requestId, boolean interactive) {
     if (deviceConnection == null || channelId == null) return;
-    sendFrame(ScreenMessageV2Builder.acquireLayout(requestId, interactive),
+    sendFrame(ScreenMessageV3Builder.acquireLayout(requestId, interactive),
         MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 
@@ -165,7 +165,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     layoutLeaseId = "";
     if (deviceConnection == null || channelId == null) return;
     if (!releasedLeaseId.isEmpty()) {
-      sendFrame(ScreenMessageV2Builder.releaseLayout(releasedLeaseId),
+      sendFrame(ScreenMessageV3Builder.releaseLayout(releasedLeaseId),
           MuxOutboundQueue.FrameKind.CONTROL, null);
     }
   }
@@ -173,7 +173,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   @Override
   public void sendClipboardResponse(@NonNull String requestId, boolean allowed, boolean timeout, @Nullable byte[] data) {
     if (deviceConnection == null || channelId == null) return;
-    sendFrame(ScreenMessageV2Builder.clipboardResponse(requestId, allowed, timeout, data),
+    sendFrame(ScreenMessageV3Builder.clipboardResponse(requestId, allowed, timeout, data),
         MuxOutboundQueue.FrameKind.CONTROL, null);
   }
 
@@ -181,7 +181,7 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
   public boolean requestResync(
       long layoutEpoch, long screenRevision, @NonNull String reason) {
     return sendFrame(
-        ScreenMessageV2Builder.resync(layoutEpoch, screenRevision),
+        ScreenMessageV3Builder.resync(layoutEpoch, screenRevision),
         MuxOutboundQueue.FrameKind.CONTROL,
         null);
   }
@@ -333,17 +333,17 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
         && currentChannelId.equals(callbackChannelId);
   }
 
-  private boolean sendHello(@Nullable TerminalScreenV2Proto.ResumeToken resume) {
+  private boolean sendHello(@Nullable TerminalScreenV3Proto.ResumeToken resume) {
     return sendHello(resume, false);
   }
 
-  private boolean sendHello(@Nullable TerminalScreenV2Proto.ResumeToken resume,
+  private boolean sendHello(@Nullable TerminalScreenV3Proto.ResumeToken resume,
                             boolean forceBaseline) {
     if (deviceConnection == null || channelId == null) return false;
-    TerminalScreenV2Proto.InitialSyncMode mode = forceBaseline
-        ? TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE
-        : TerminalScreenV2Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO;
-    return sendFrame(ScreenMessageV2Builder.hello(
+    TerminalScreenV3Proto.InitialSyncMode mode = forceBaseline
+        ? TerminalScreenV3Proto.InitialSyncMode.INITIAL_SYNC_MODE_FORCE_BASELINE
+        : TerminalScreenV3Proto.InitialSyncMode.INITIAL_SYNC_MODE_AUTO;
+    return sendFrame(ScreenMessageV3Builder.hello(
             columns, rows, resume, mode),
         MuxOutboundQueue.FrameKind.CONTROL, null);
   }
@@ -378,20 +378,20 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     return SessionIds.agentLocal(sessionId, relayDeviceId);
   }
 
-  private static TerminalScreenV2Proto.MouseButton mouseButtonFromString(@NonNull String button) {
+  private static TerminalScreenV3Proto.MouseButton mouseButtonFromString(@NonNull String button) {
     switch (button) {
       case "left":
-        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_LEFT;
+        return TerminalScreenV3Proto.MouseButton.MOUSE_BUTTON_LEFT;
       case "middle":
-        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_MIDDLE;
+        return TerminalScreenV3Proto.MouseButton.MOUSE_BUTTON_MIDDLE;
       case "right":
-        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_RIGHT;
+        return TerminalScreenV3Proto.MouseButton.MOUSE_BUTTON_RIGHT;
       case "wheel":
-        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_WHEEL;
+        return TerminalScreenV3Proto.MouseButton.MOUSE_BUTTON_WHEEL;
       case "move":
-        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_MOVE;
+        return TerminalScreenV3Proto.MouseButton.MOUSE_BUTTON_MOVE;
       default:
-        return TerminalScreenV2Proto.MouseButton.MOUSE_BUTTON_UNSPECIFIED;
+        return TerminalScreenV3Proto.MouseButton.MOUSE_BUTTON_UNSPECIFIED;
     }
   }
 

@@ -211,7 +211,7 @@ func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request) {
 //     而不是把路由错误折叠成 502。
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if isUploadRequest(r.Method, path) || strings.HasPrefix(path, "/api/file-send/") || isHistoryRangeRequest(r.Method, path) {
+	if isUploadRequest(r.Method, path) || strings.HasPrefix(path, "/api/file-send/") || isLineBodyBatchRequest(r.Method, path) {
 		rawPath := path
 		if r.URL.RawQuery != "" {
 			rawPath += "?" + r.URL.RawQuery
@@ -256,11 +256,11 @@ func isUploadRequest(method, path string) bool {
 		strings.HasSuffix(path, "/upload")
 }
 
-// isHistoryRangeRequest 判断是否为历史范围查询（与 application 解析一致）。
-func isHistoryRangeRequest(method, path string) bool {
-	return method == http.MethodGet &&
-		strings.HasPrefix(path, "/api/sessions/") &&
-		strings.HasSuffix(path, "/history/range")
+// isLineBodyBatchRequest 判断是否为历史正文批量查询（与 application 解析一致）。
+func isLineBodyBatchRequest(method, path string) bool {
+	return strings.HasPrefix(path, "/api/sessions/") &&
+		strings.HasSuffix(path, "/line-bodies") &&
+		method == http.MethodPost
 }
 
 // handleSessionsWS 处理 GET /ws/sessions：验证 Cookie（requireAuth 已完成）后

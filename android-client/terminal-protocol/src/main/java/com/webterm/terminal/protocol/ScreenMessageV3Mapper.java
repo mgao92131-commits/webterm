@@ -1,52 +1,52 @@
 package com.webterm.terminal.protocol;
 
 import com.webterm.terminal.model.*;
-import com.webterm.terminal.protocol.generated.TerminalScreenV2Proto;
+import com.webterm.terminal.protocol.generated.TerminalScreenV3Proto;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** screen.v2 wire dictionary is resolved at this boundary. */
-public final class ScreenMessageV2Mapper {
+/** screen.v3 wire dictionary is resolved at this boundary. */
+public final class ScreenMessageV3Mapper {
   private static final LineBodyDecoder LINE_DECODER = new LineBodyDecoder();
 
-  private ScreenMessageV2Mapper() {}
+  private ScreenMessageV3Mapper() {}
 
-  public static ScreenBaseline mapBaseline(TerminalScreenV2Proto.Baseline pb) {
+  public static ScreenBaseline mapBaseline(TerminalScreenV3Proto.Baseline pb) {
     WireDictionary dictionary = wireDictionary(pb.getDictionary());
     int columns = pb.getGeometry().getCols();
-    Map<Long, ScreenLineContent> screenLines = new HashMap<>();
-    for (TerminalScreenV2Proto.LineData line : pb.getScreenLinesList()) {
-      if (line.getPhysicalColumns() != columns || line.getHistorySeq() != 0) {
-        throw new IllegalArgumentException("screen line geometry or position mismatch");
-      }
-      DecodedLine decoded = LINE_DECODER.decode(wireLine(line), dictionary);
-      ScreenLineContent content = new ScreenLineContent(decoded.key(), decoded.body());
-      if (screenLines.put(decoded.key().lineId(), content) != null) {
-        throw new IllegalArgumentException("duplicate screen LineID");
-      }
+    List<LineBodyRecord> bodies = new ArrayList<>(pb.getScreenBodiesCount());
+    for (TerminalScreenV3Proto.LineBodyRecord record : pb.getScreenBodiesList()) {
+      DecodedLine decoded = decodeRecord(record, dictionary);
+      bodies.add(new LineBodyRecord(decoded.key(), decoded.body()));
     }
-    List<ScreenLineContent> screen = new ArrayList<>();
-    for (long id : pb.getScreenLayout().getLineIdsList()) {
-      ScreenLineContent line = screenLines.get(id);
-      if (line == null) throw new IllegalArgumentException("baseline layout line missing");
-      screen.add(line);
+    List<LineKey> screenRows = new ArrayList<>(pb.getScreenRowsCount());
+    for (TerminalScreenV3Proto.LineKey key : pb.getScreenRowsList()) {
+      screenRows.add(mapLineKey(key));
     }
     HistoryExtent historyExtent = extent(pb.getHistoryExtent());
     List<HistoryPush> bindings = mapHistoryBindings(
         pb.getHistoryBindingsList(), historyExtent);
     return new ScreenBaseline(
         pb.getSessionId(), pb.getInstanceId(), pb.getLayoutEpoch(),
-        pb.getScreenRevision(), pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
+        pb.getScreenRevision(), pb.getHistoryGeneration(),
         pb.getGeometry().getRows(), columns, buffer(pb.getActiveBuffer()),
-        historyExtent, bindings, screen,
+        historyExtent, bindings, screenRows, bodies,
         cursor(pb.getCursor()), modes(pb.getModes()), palette(pb.getPalette()));
   }
 
   public static TerminalCommit mapTerminalCommit(
-      TerminalScreenV2Proto.TerminalCommit pb, int rows, int columns,
-      WireDictionary canonicalDictionary) {
+      TerminalScreenV3Proto.TerminalCommit pb, int rows, int columns,
+      WireDictionary dictionary) {
+    List<LineBodyRecord> upserts = new ArrayList<>(pb.getBodyUpsertsCount());
+    for (TerminalScreenV3Proto.LineBodyRecord record : pb.getBodyUpsertsList()) {
+      DecodedLine decoded = decodeRecord(record, dictionary);
+      if (decoded.body().physicalColumns != columns) {
+        throw new IllegalArgumentException("body upsert column mismatch");
+      }
+      upserts.add(new LineBodyRecord(decoded.key(), decoded.body()));
+    }
     ScreenMutation screen = null;
     if (pb.hasScreen()) {
       ScreenScroll scroll = pb.getScreen().hasScroll()
@@ -55,21 +55,12 @@ public final class ScreenMessageV2Mapper {
               pb.getScreen().getScroll().getDeltaRows()) : null;
       List<ScreenRowWrite> writes = new ArrayList<>(pb.getScreen().getWritesCount());
       boolean[] seenRows = new boolean[Math.max(0, rows)];
-      for (TerminalScreenV2Proto.ScreenRowWrite write : pb.getScreen().getWritesList()) {
+      for (TerminalScreenV3Proto.ScreenRowWrite write : pb.getScreen().getWritesList()) {
         if (write.getRow() < 0 || write.getRow() >= rows || seenRows[write.getRow()]) {
           throw new IllegalArgumentException("invalid or duplicate screen row write");
         }
-        if (write.getLine().getPhysicalColumns() != columns) {
-          throw new IllegalArgumentException("screen line physical columns mismatch");
-        }
         seenRows[write.getRow()] = true;
-        DecodedLine mapped = LINE_DECODER.decode(
-            wireLine(write.getLine()), canonicalDictionary);
-        if (mapped.historySeq() != 0) {
-          throw new IllegalArgumentException("screen line has history sequence");
-        }
-        writes.add(new ScreenRowWrite(
-            write.getRow(), new ScreenLineContent(mapped.key(), mapped.body())));
+        writes.add(new ScreenRowWrite(write.getRow(), mapLineKey(write.getKey())));
       }
       screen = new ScreenMutation(scroll, writes);
     }
@@ -78,53 +69,55 @@ public final class ScreenMessageV2Mapper {
       HistoryExtent finalExtent = extent(pb.getHistory().getFinalExtent());
       List<HistoryPush> pushes = new ArrayList<>();
       long previous = 0;
-      for (TerminalScreenV2Proto.HistoryPush push : pb.getHistory().getPushesList()) {
-        if (push.getHistorySeq() <= previous || !finalExtent.contains(push.getHistorySeq())
-            || push.getLineId() == 0 || push.getLineVersion() == 0) {
+      for (TerminalScreenV3Proto.HistoryBinding push : pb.getHistory().getPushesList()) {
+        LineKey key = mapLineKey(push.getKey());
+        if (push.getHistorySeq() <= previous || !finalExtent.contains(push.getHistorySeq())) {
           throw new IllegalArgumentException("invalid history push");
         }
         previous = push.getHistorySeq();
-        pushes.add(new HistoryPush(
-            push.getHistorySeq(), new LineKey(push.getLineId(), push.getLineVersion())));
+        pushes.add(new HistoryPush(push.getHistorySeq(), key));
       }
       history = new HistoryMutation(finalExtent, pushes);
     }
     return new TerminalCommit(
         pb.getInstanceId(), pb.getLayoutEpoch(), pb.getBaseRevision(), pb.getRevision(),
-        pb.getDictionaryGeneration(), pb.getHistoryGeneration(),
-        pb.hasActiveBuffer() ? buffer(pb.getActiveBuffer()) : null, screen, history,
+        pb.getHistoryGeneration(),
+        pb.hasActiveBuffer() ? buffer(pb.getActiveBuffer()) : null,
+        upserts, screen, history,
         pb.hasCursor() ? cursor(pb.getCursor()) : null,
         pb.hasModes() ? modes(pb.getModes()) : null,
         pb.hasPalette() ? palette(pb.getPalette()) : null);
   }
 
-  /** 将 HTTP Range 中的单行解码成与位置分离的纯正文。 */
-  public static HistoryBodyEntry mapHistoryLine(
-      TerminalScreenV2Proto.LineData pb,
-      WireDictionary dictionary) {
-    DecodedLine decoded = LINE_DECODER.decode(
-        wireLine(pb), dictionary);
-    return new HistoryBodyEntry(decoded.historySeq(), decoded.key(), decoded.body());
+  public static LineBodyRecord mapLineBodyRecord(
+      TerminalScreenV3Proto.LineBodyRecord pb, WireDictionary dictionary) {
+    DecodedLine decoded = decodeRecord(pb, dictionary);
+    return new LineBodyRecord(decoded.key(), decoded.body());
   }
 
-  public static WireDictionary mapDictionary(TerminalScreenV2Proto.Dictionary pb) {
+  public static LineKey mapLineKey(TerminalScreenV3Proto.LineKey pb) {
+    if (pb == null || pb.getLineId() <= 0 || pb.getBodyVersion() <= 0) {
+      throw new IllegalArgumentException("invalid line key");
+    }
+    return new LineKey(pb.getLineId(), pb.getBodyVersion());
+  }
+
+  public static WireDictionary mapDictionary(TerminalScreenV3Proto.Dictionary pb) {
     return wireDictionary(pb);
   }
 
   private static List<HistoryPush> mapHistoryBindings(
-      List<TerminalScreenV2Proto.HistoryPush> wireBindings,
+      List<TerminalScreenV3Proto.HistoryBinding> wireBindings,
       HistoryExtent extent) {
     List<HistoryPush> bindings = new ArrayList<>(wireBindings.size());
     long previousSeq = 0;
-    for (TerminalScreenV2Proto.HistoryPush binding : wireBindings) {
+    for (TerminalScreenV3Proto.HistoryBinding binding : wireBindings) {
+      LineKey key = mapLineKey(binding.getKey());
       if (binding.getHistorySeq() <= previousSeq
-          || !extent.contains(binding.getHistorySeq())
-          || binding.getLineId() <= 0 || binding.getLineVersion() <= 0) {
+          || !extent.contains(binding.getHistorySeq())) {
         throw new IllegalArgumentException("invalid baseline history binding");
       }
-      bindings.add(new HistoryPush(
-          binding.getHistorySeq(),
-          new LineKey(binding.getLineId(), binding.getLineVersion())));
+      bindings.add(new HistoryPush(binding.getHistorySeq(), key));
       previousSeq = binding.getHistorySeq();
     }
     if (extent.logicalSize() != bindings.size()) {
@@ -133,24 +126,31 @@ public final class ScreenMessageV2Mapper {
     return bindings;
   }
 
-  private static WireLineData wireLine(TerminalScreenV2Proto.LineData pb) {
+  private static DecodedLine decodeRecord(
+      TerminalScreenV3Proto.LineBodyRecord pb, WireDictionary dictionary) {
+    LineKey key = mapLineKey(pb.getKey());
+    return LINE_DECODER.decode(wireLineRecord(pb, key), dictionary);
+  }
+
+  private static WireLineData wireLineRecord(
+      TerminalScreenV3Proto.LineBodyRecord pb, LineKey key) {
     List<WireLineData.Span> spans = new ArrayList<>(pb.getStyleSpansCount());
-    for (TerminalScreenV2Proto.StyleSpan span : pb.getStyleSpansList()) {
+    for (TerminalScreenV3Proto.StyleSpan span : pb.getStyleSpansList()) {
       spans.add(new WireLineData.Span(
           span.getStartCol(), span.getEndCol(), span.getStyleId(), span.getLinkId()));
     }
     return new WireLineData(
-        pb.getLineId(), pb.getLineVersion(), pb.getHistorySeq(),
+        key.lineId(), key.lineVersion(), 0,
         pb.getPhysicalColumns(), pb.getWrapped(),
         pb.getUtf8Text(), pb.getGlyphMeta(), spans);
   }
 
-  private static WireDictionary wireDictionary(TerminalScreenV2Proto.Dictionary pb) {
+  private static WireDictionary wireDictionary(TerminalScreenV3Proto.Dictionary pb) {
     Map<Integer, StyleValue> styles = new HashMap<>();
     if (pb.getStylesCount() > 4096 || pb.getLinksCount() > 4096) {
       throw new IllegalArgumentException("dictionary exceeds limit");
     }
-    for (TerminalScreenV2Proto.TerminalStyle style : pb.getStylesList()) {
+    for (TerminalScreenV3Proto.TerminalStyle style : pb.getStylesList()) {
       if (style.getId() == 0) continue;
       StyleValue previous = styles.put(style.getId(), new StyleValue(
           color(style.getFg()), color(style.getBg()), color(style.getUnderlineColor()),
@@ -158,7 +158,7 @@ public final class ScreenMessageV2Mapper {
       if (previous != null) throw new IllegalArgumentException("duplicate style id");
     }
     Map<Integer, LinkValue> links = new HashMap<>();
-    for (TerminalScreenV2Proto.Hyperlink link : pb.getLinksList()) {
+    for (TerminalScreenV3Proto.Hyperlink link : pb.getLinksList()) {
       if (link.getId() == 0) continue;
       LinkValue previous = links.put(link.getId(), new LinkValue(link.getUri()));
       if (previous != null) throw new IllegalArgumentException("duplicate link id");
@@ -166,27 +166,27 @@ public final class ScreenMessageV2Mapper {
     return new WireDictionary(styles, links);
   }
 
-  private static HistoryExtent extent(TerminalScreenV2Proto.HistoryExtent pb) {
+  private static HistoryExtent extent(TerminalScreenV3Proto.HistoryExtent pb) {
     if (pb.getFirstSeq() == 0 && pb.getLastSeq() == 0) return HistoryExtent.INITIAL_EMPTY;
     return new HistoryExtent(pb.getFirstSeq(), pb.getLastSeq());
   }
 
-  private static TerminalBufferKind buffer(TerminalScreenV2Proto.BufferKind kind) {
-    return kind == TerminalScreenV2Proto.BufferKind.BUFFER_KIND_ALTERNATE
+  private static TerminalBufferKind buffer(TerminalScreenV3Proto.BufferKind kind) {
+    return kind == TerminalScreenV3Proto.BufferKind.BUFFER_KIND_ALTERNATE
         ? TerminalBufferKind.ALTERNATE : TerminalBufferKind.MAIN;
   }
 
-  private static TerminalCursor cursor(TerminalScreenV2Proto.Cursor pb) {
+  private static TerminalCursor cursor(TerminalScreenV3Proto.Cursor pb) {
     TerminalCursor.Shape shape = TerminalCursor.Shape.BLOCK;
-    if (pb.getShape() == TerminalScreenV2Proto.CursorShape.CURSOR_SHAPE_BAR) {
+    if (pb.getShape() == TerminalScreenV3Proto.CursorShape.CURSOR_SHAPE_BAR) {
       shape = TerminalCursor.Shape.BAR;
-    } else if (pb.getShape() == TerminalScreenV2Proto.CursorShape.CURSOR_SHAPE_UNDERLINE) {
+    } else if (pb.getShape() == TerminalScreenV3Proto.CursorShape.CURSOR_SHAPE_UNDERLINE) {
       shape = TerminalCursor.Shape.UNDERLINE;
     }
     return new TerminalCursor(pb.getRow(), pb.getCol(), pb.getVisible(), shape, pb.getBlink());
   }
 
-  private static TerminalModes modes(TerminalScreenV2Proto.Modes pb) {
+  private static TerminalModes modes(TerminalScreenV3Proto.Modes pb) {
     TerminalModes.MouseTracking tracking;
     switch (pb.getMouseTracking()) {
       case MOUSE_TRACKING_X10: tracking = TerminalModes.MouseTracking.X10; break;
@@ -209,9 +209,9 @@ public final class ScreenMessageV2Mapper {
         tracking, encoding, pb.getFocusReporting());
   }
 
-  private static TerminalPalette palette(TerminalScreenV2Proto.TerminalPalette pb) {
+  private static TerminalPalette palette(TerminalScreenV3Proto.TerminalPalette pb) {
     Map<Integer, Integer> indexed = new HashMap<>();
-    for (TerminalScreenV2Proto.IndexedPaletteColor entry : pb.getIndexedColorsList()) {
+    for (TerminalScreenV3Proto.IndexedPaletteColor entry : pb.getIndexedColorsList()) {
       if (entry.getIndex() >= 0 && entry.getIndex() < 256) {
         indexed.put(entry.getIndex(), entry.getRgb());
       }
@@ -221,7 +221,7 @@ public final class ScreenMessageV2Mapper {
         pb.getReverseVideo(), indexed, pb.getGeneration());
   }
 
-  private static TerminalColor color(TerminalScreenV2Proto.Color pb) {
+  private static TerminalColor color(TerminalScreenV3Proto.Color pb) {
     switch (pb.getKind()) {
       case COLOR_KIND_DEFAULT_BG: return TerminalColor.DEFAULT_BG;
       case COLOR_KIND_CURSOR: return TerminalColor.CURSOR;
@@ -231,7 +231,7 @@ public final class ScreenMessageV2Mapper {
     }
   }
 
-  private static int attrs(TerminalScreenV2Proto.CellAttrs pb) {
+  private static int attrs(TerminalScreenV3Proto.CellAttrs pb) {
     int bits = 0;
     if (pb.getBold()) bits |= 1;
     if (pb.getDim()) bits |= 1 << 1;
@@ -248,5 +248,4 @@ public final class ScreenMessageV2Mapper {
     if (pb.getStrike()) bits |= 1 << 12;
     return bits;
   }
-
 }

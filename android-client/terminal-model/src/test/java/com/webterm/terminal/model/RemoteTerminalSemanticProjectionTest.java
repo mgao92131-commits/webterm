@@ -16,7 +16,7 @@ public final class RemoteTerminalSemanticProjectionTest {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));
     assertTrue(model.renderSnapshot().history instanceof SemanticHistoryRenderView);
-    assertEquals(1, model.bodyCache().bodyCount());
+    assertEquals(3, model.bodyCache().bodyCount());
 
     HistoryBodyResult result = model.applyHistoryBody(
         range(1, 101, "history"),
@@ -27,7 +27,7 @@ public final class RemoteTerminalSemanticProjectionTest {
     assertEquals(
         "history",
         model.renderSnapshot().history.renderLineAt(index).at(0).text());
-    assertEquals(2, model.bodyCache().bodyCount());
+    assertEquals(3, model.bodyCache().bodyCount());
     assertEquals(new LineKey(101, 1), model.historyCatalog().key(1));
     assertEquals(new HistoryExtent(1, 2), model.projectionReadView().mainHistoryExtent);
   }
@@ -36,8 +36,11 @@ public final class RemoteTerminalSemanticProjectionTest {
   public void staleHttpBodyCannotReplaceWsAuthoritativeRebind() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));
-    assertTrue(model.applyTerminalCommit(new TerminalCommit(
-        "i1", 1, 1, 2, 1, 1, null, null,
+    assertTrue(model.applyTerminalCommit(SemanticTestData.commitLegacy(
+        "i1", 1, 1, 2, 1, 1, TerminalBufferKind.MAIN,
+        SemanticTestData.upserts(new ScreenLineContent(
+            new LineKey(201, 1), body("ws"))),
+        null,
         new HistoryMutation(
             new HistoryExtent(1, 2),
             Collections.singletonList(new HistoryPush(1, new LineKey(201, 1)))),
@@ -49,7 +52,7 @@ public final class RemoteTerminalSemanticProjectionTest {
 
     assertTrue(stale instanceof HistoryBodyResult.StaleIgnored);
     assertEquals(
-        SlotState.UNLOADED,
+        SlotState.LOADED,
         model.renderSnapshot().history.slotStateAt(0));
   }
 
@@ -87,7 +90,7 @@ public final class RemoteTerminalSemanticProjectionTest {
     Arrays.fill(replacementCells, CellValue.EMPTY);
     replacementCells[0] = new CellValue("replacement", (byte) 1, null, null);
 
-    assertTrue(model.applyBaseline(new ScreenBaseline(
+    assertTrue(model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 9, 1, 1, 1, 80,
         TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
@@ -107,7 +110,7 @@ public final class RemoteTerminalSemanticProjectionTest {
   @Test
   public void commitAppliesFiveThousandHistoryPushesWithoutBatchLimit() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(new ScreenBaseline(
+    assertTrue(model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1, 1, 1,
         TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY,
@@ -118,12 +121,15 @@ public final class RemoteTerminalSemanticProjectionTest {
         TerminalModes.defaults(),
         TerminalPalette.defaults())));
     List<HistoryPush> pushes = new ArrayList<>(5000);
+    List<LineBodyRecord> upserts = new ArrayList<>(5000);
     for (int seq = 1; seq <= 5000; seq++) {
-      pushes.add(new HistoryPush(seq, new LineKey(10_000L + seq, 1)));
+      LineKey key = new LineKey(10_000L + seq, 1);
+      pushes.add(new HistoryPush(seq, key));
+      upserts.add(new LineBodyRecord(key, body("h")));
     }
 
-    assertTrue(model.applyTerminalCommit(new TerminalCommit(
-        "i1", 1, 1, 2, 1, 1, null, null,
+    assertTrue(model.applyTerminalCommit(SemanticTestData.commitLegacy(
+        "i1", 1, 1, 2, 1, 1, TerminalBufferKind.MAIN, upserts, null,
         new HistoryMutation(new HistoryExtent(1, 5000), pushes),
         null, null, null)));
 
@@ -143,7 +149,7 @@ public final class RemoteTerminalSemanticProjectionTest {
       bindings.add(new HistoryPush(seq, key));
       bodies.add(new HistoryBodyEntry(seq, key, body("x")));
     }
-    assertTrue(model.applyBaseline(new ScreenBaseline(
+    assertTrue(model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1, 1, 1,
         TerminalBufferKind.MAIN,
         new HistoryExtent(1, 5000), bindings,
@@ -172,7 +178,7 @@ public final class RemoteTerminalSemanticProjectionTest {
     CellValue[] screenCells = new CellValue[columns];
     Arrays.fill(screenCells, CellValue.EMPTY);
     screenCells[0] = new CellValue("screen", (byte) 1, null, null);
-    return new ScreenBaseline(
+    return SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1, 1, columns,
         TerminalBufferKind.MAIN,
         new HistoryExtent(1, 2),

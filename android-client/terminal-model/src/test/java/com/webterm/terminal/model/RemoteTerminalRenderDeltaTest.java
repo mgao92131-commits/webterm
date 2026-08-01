@@ -23,7 +23,8 @@ public final class RemoteTerminalRenderDeltaTest {
         1, 2,
         new ScreenMutation(
             null,
-            Collections.singletonList(new ScreenRowWrite(2, line(102, 2, "changed"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(2, line(102, 2, "changed")))),
+        line(102, 2, "changed")));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -41,8 +42,9 @@ public final class RemoteTerminalRenderDeltaTest {
         1, 2,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 1),
-            Collections.singletonList(new ScreenRowWrite(
-                ROWS - 1, line(200, 1, "new-tail"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(
+                ROWS - 1, line(200, 1, "new-tail")))),
+        line(200, 1, "new-tail")));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -61,8 +63,9 @@ public final class RemoteTerminalRenderDeltaTest {
         new ScreenMutation(
             new ScreenScroll(0, ROWS, -2),
             List.of(
-                new ScreenRowWrite(0, line(300, 1, "new-head-0")),
-                new ScreenRowWrite(1, line(301, 1, "new-head-1"))))));
+                ScreenRowWrite.fromLine(0, line(300, 1, "new-head-0")),
+                ScreenRowWrite.fromLine(1, line(301, 1, "new-head-1")))),
+        line(300, 1, "new-head-0"), line(301, 1, "new-head-1")));
 
     RenderUpdate update = model.consumeRenderUpdate();
     assertNotNull(update);
@@ -81,8 +84,9 @@ public final class RemoteTerminalRenderDeltaTest {
         1, 2,
         new ScreenMutation(
             new ScreenScroll(0, ROWS, 1),
-            Collections.singletonList(new ScreenRowWrite(
-                ROWS - 1, line(200, 1, "new-tail"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(
+                ROWS - 1, line(200, 1, "new-tail")))),
+        line(200, 1, "new-tail")));
 
     RemoteTerminalModel.RenderSnapshot after = model.renderSnapshot();
     for (int row = 0; row < ROWS - 1; row++) {
@@ -97,7 +101,7 @@ public final class RemoteTerminalRenderDeltaTest {
     RemoteTerminalModel model = initializedModel();
     RemoteTerminalModel.RenderSnapshot before = model.renderSnapshot();
 
-    model.applyTerminalCommit(new TerminalCommit(
+    model.applyTerminalCommit(SemanticTestData.commitLegacy(
         "i1", 1, 1, 2, 1, 1, TerminalBufferKind.MAIN,
         null, null, new TerminalCursor(1, 0, true, TerminalCursor.Shape.BLOCK, false),
         null, null));
@@ -119,7 +123,8 @@ public final class RemoteTerminalRenderDeltaTest {
         1, 2,
         new ScreenMutation(
             null,
-            Collections.singletonList(new ScreenRowWrite(2, line(102, 2, "changed"))))));
+            Collections.singletonList(ScreenRowWrite.fromLine(2, line(102, 2, "changed")))),
+        line(102, 2, "changed")));
 
     RemoteTerminalModel.RenderSnapshot after = model.renderSnapshot();
     assertNotSame(before.screenView, after.screenView);
@@ -146,7 +151,7 @@ public final class RemoteTerminalRenderDeltaTest {
     for (int row = 0; row < ROWS; row++) {
       screen.add(line(100 + row, 1, "row-" + row));
     }
-    model.applyBaseline(new ScreenBaseline(
+    model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1, ROWS, 1,
         TerminalBufferKind.MAIN,
         extent,
@@ -160,10 +165,11 @@ public final class RemoteTerminalRenderDeltaTest {
   }
 
   private static TerminalCommit commit(
-      long baseRevision, long revision, ScreenMutation mutation) {
+      long baseRevision, long revision, ScreenMutation mutation,
+      ScreenLineContent... bodyUpserts) {
     return new TerminalCommit(
-        "i1", 1, baseRevision, revision, 1, 1,
-        TerminalBufferKind.MAIN, mutation, null, null, null, null);
+        "i1", 1, baseRevision, revision, 1, TerminalBufferKind.MAIN,
+        SemanticTestData.upserts(bodyUpserts), mutation, null, null, null, null);
   }
 
   private static ScreenLineContent line(long id, long version, String text) {

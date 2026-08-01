@@ -107,7 +107,7 @@ public final class UnifiedContentAxisIncrementalTest {
               new CellValue("r" + row, (byte) 1, null, null)
           })));
     }
-    return new ScreenBaseline(
+    return SemanticTestData.baselineLegacy(
         "s1", "i1", layoutEpoch, 1, 1, 1, 4, 1,
         TerminalBufferKind.MAIN,
         new HistoryExtent(1, historyRows),

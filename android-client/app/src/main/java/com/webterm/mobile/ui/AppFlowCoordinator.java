@@ -320,7 +320,7 @@ public final class AppFlowCoordinator implements
     }
 
     private void detachCurrentTerminalView() {
-        // webterm.screen.v2 owns a separate controller/connection lifecycle.
+        // webterm.screen.v3 owns a separate controller/connection lifecycle.
         // Do not leave its old View listener and mux channel alive after a
         // terminal page is popped; reopening must start from a fresh snapshot.
         terminalAuthRecoveryGeneration++;

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 	"webterm/go-core/internal/terminalsession"
 )
 
@@ -66,12 +66,14 @@ func resumeHello(hasProjection bool, instanceID string, epoch, revision uint64) 
 	var resume *pb.ResumeToken
 	if hasProjection {
 		resume = &pb.ResumeToken{InstanceId: instanceID, LayoutEpoch: epoch,
-			ScreenRevision: revision, DictionaryGeneration: 1, HistoryGeneration: 1,
+			ScreenRevision: revision, HistoryGeneration: 1,
 			ActiveBuffer: pb.BufferKind_BUFFER_KIND_MAIN,
-			ActiveRows:   []*pb.ResumeScreenLine{{LineId: 1, LineVersion: 1}}}
+			ActiveRows: []*pb.ResumeScreenLine{{
+				Key: &pb.LineKey{LineId: 1, BodyVersion: 1},
+			}}}
 	}
 	wire, _ := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 			Resume: resume,
 		}},

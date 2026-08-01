@@ -1,10 +1,10 @@
-package screenprotocolv2
+package screenprotocolv3
 
 import (
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 )
 
 const (
@@ -59,11 +59,11 @@ func NewHandler(options ...HandlerOption) *Handler {
 
 func (h *Handler) HandleMessage(data []byte) error {
 	if len(data) == 0 || len(data) > maxEnvelopeBytes {
-		return fmt.Errorf("invalid screen.v2 envelope size: %d", len(data))
+		return fmt.Errorf("invalid screen.v3 envelope size: %d", len(data))
 	}
 	var env pb.ScreenEnvelope
 	if err := proto.Unmarshal(data, &env); err != nil {
-		return fmt.Errorf("unmarshal screen.v2 envelope: %w", err)
+		return fmt.Errorf("unmarshal screen.v3 envelope: %w", err)
 	}
 	if env.ProtocolVersion != ProtocolVersion {
 		return fmt.Errorf("unsupported screen protocol version: %d", env.ProtocolVersion)
@@ -112,18 +112,18 @@ func (h *Handler) HandleMessage(data []byte) error {
 			h.onPing(payload.Ping.GetScreenRevision())
 		}
 	default:
-		return fmt.Errorf("unsupported screen.v2 payload %T", env.Payload)
+		return fmt.Errorf("unsupported screen.v3 payload %T", env.Payload)
 	}
 	return nil
 }
 
 func validateHello(hello *pb.Hello) error {
 	if hello == nil {
-		return fmt.Errorf("invalid screen.v2 hello")
+		return fmt.Errorf("invalid screen.v3 hello")
 	}
 	if resume := hello.GetResume(); resume != nil {
 		if resume.GetInstanceId() == "" || resume.GetLayoutEpoch() < 1 ||
-			resume.GetScreenRevision() < 1 || resume.GetDictionaryGeneration() < 1 ||
+			resume.GetScreenRevision() < 1 ||
 			resume.GetHistoryGeneration() < 1 ||
 			resume.GetActiveBuffer() == pb.BufferKind_BUFFER_KIND_UNSPECIFIED ||
 			len(resume.GetActiveRows()) == 0 {
@@ -131,13 +131,14 @@ func validateHello(hello *pb.Hello) error {
 		}
 		seen := make(map[uint64]struct{}, len(resume.GetActiveRows()))
 		for _, line := range resume.GetActiveRows() {
-			if line.GetLineId() == 0 || line.GetLineVersion() == 0 {
+			key := line.GetKey()
+			if key == nil || key.GetLineId() == 0 || key.GetBodyVersion() == 0 {
 				return fmt.Errorf("invalid resume active row")
 			}
-			if _, exists := seen[line.GetLineId()]; exists {
+			if _, exists := seen[key.GetLineId()]; exists {
 				return fmt.Errorf("duplicate resume active row")
 			}
-			seen[line.GetLineId()] = struct{}{}
+			seen[key.GetLineId()] = struct{}{}
 		}
 	}
 	if geometry := hello.GetDesiredGeometry(); geometry != nil &&

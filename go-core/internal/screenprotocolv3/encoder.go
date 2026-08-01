@@ -1,4 +1,4 @@
-package screenprotocolv2
+package screenprotocolv3
 
 import (
 	"encoding/binary"
@@ -6,11 +6,11 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 	"webterm/go-core/internal/terminalengine"
 )
 
-const ProtocolVersion uint32 = 2
+const ProtocolVersion uint32 = 3
 
 func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint32) ([]byte, error) {
 	if len(frame.ScrollbackLineage) == 0 && frame.HistoryLineageView != nil {
@@ -19,34 +19,44 @@ func EncodeBaseline(frame terminalengine.ScreenFrame, _ uint32) ([]byte, error) 
 	if err := validateBaselineFrame(frame); err != nil {
 		return nil, err
 	}
-	screen := encodeLines(screenLines(frame.Screen))
+	screen := screenLines(frame.Screen)
+	rows := make([]*pb.LineKey, len(frame.Screen))
+	bodySeen := make(map[lineKey]struct{}, len(screen))
+	var bodies []*pb.LineBodyRecord
+	for i, line := range frame.Screen {
+		rows[i] = encodeLineKey(line)
+		if line.ID == 0 || line.HistorySeq != 0 {
+			continue
+		}
+		key := lineKey{id: line.ID, version: line.Version}
+		if _, exists := bodySeen[key]; exists {
+			continue
+		}
+		bodySeen[key] = struct{}{}
+		bodies = append(bodies, encodeLineBodyRecord(line))
+	}
 	baseline := &pb.Baseline{
-		SessionId:            frame.SessionID,
-		InstanceId:           frame.InstanceID,
-		LayoutEpoch:          frame.Epoch,
-		ScreenRevision:       frame.Seq,
-		Geometry:             &pb.Geometry{Rows: int32(frame.Rows), Cols: int32(frame.Cols)},
-		ActiveBuffer:         encodeBuffer(frame.ActiveBuffer),
-		HistoryExtent:        encodeHistoryWindowExtent(frame.History),
-		ScreenLayout:         &pb.ScreenLayout{LineIds: lineIDs(frame.Screen)},
-		ScreenLines:          screen,
-		Cursor:               encodeCursor(frame.Cursor),
-		Modes:                encodeModes(frame.Modes),
-		Palette:              encodePalette(frame),
-		Dictionary:           encodeDictionary(frame.Styles, frame.Links),
-		DictionaryGeneration: frame.DictionaryGeneration,
-		HistoryGeneration:    frame.HistoryGeneration,
+		SessionId:         frame.SessionID,
+		InstanceId:        frame.InstanceID,
+		LayoutEpoch:       frame.Epoch,
+		ScreenRevision:    frame.Seq,
+		Geometry:          &pb.Geometry{Rows: int32(frame.Rows), Cols: int32(frame.Cols)},
+		ActiveBuffer:      encodeBuffer(frame.ActiveBuffer),
+		HistoryExtent:     encodeHistoryWindowExtent(frame.History),
+		ScreenRows:        rows,
+		ScreenBodies:      bodies,
+		Cursor:            encodeCursor(frame.Cursor),
+		Modes:             encodeModes(frame.Modes),
+		Palette:           encodePalette(frame),
+		Dictionary:        encodeDictionary(frame.Styles, frame.Links),
+		HistoryGeneration: frame.HistoryGeneration,
 	}
 	for _, binding := range frame.ScrollbackLineage {
 		if binding.HistorySeq < baseline.HistoryExtent.FirstSeq ||
 			binding.HistorySeq > baseline.HistoryExtent.LastSeq {
 			continue
 		}
-		baseline.HistoryBindings = append(baseline.HistoryBindings, &pb.HistoryPush{
-			HistorySeq:  binding.HistorySeq,
-			LineId:      binding.LineID,
-			LineVersion: binding.LineVersion,
-		})
+		baseline.HistoryBindings = append(baseline.HistoryBindings, encodeHistoryBinding(binding))
 	}
 	expectedBindings := uint64(0)
 	if baseline.HistoryExtent.LastSeq >= baseline.HistoryExtent.FirstSeq {
@@ -65,12 +75,23 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, e
 		return nil, fmt.Errorf("terminal commit requires patch frame")
 	}
 	commit := &pb.TerminalCommit{
-		InstanceId:           frame.InstanceID,
-		LayoutEpoch:          frame.Epoch,
-		BaseRevision:         frame.BaseRevision,
-		Revision:             frame.Seq,
-		DictionaryGeneration: frame.DictionaryGeneration,
-		HistoryGeneration:    frame.HistoryGeneration,
+		InstanceId:        frame.InstanceID,
+		LayoutEpoch:       frame.Epoch,
+		BaseRevision:      frame.BaseRevision,
+		Revision:          frame.Seq,
+		HistoryGeneration: frame.HistoryGeneration,
+	}
+	bodySeen := make(map[lineKey]struct{})
+	addBody := func(line terminalengine.Line) {
+		if line.ID == 0 || line.HistorySeq != 0 {
+			return
+		}
+		key := lineKey{id: line.ID, version: line.Version}
+		if _, exists := bodySeen[key]; exists {
+			return
+		}
+		bodySeen[key] = struct{}{}
+		commit.BodyUpserts = append(commit.BodyUpserts, encodeLineBodyRecord(line))
 	}
 	if frame.ScreenScroll != nil || len(frame.Screen) > 0 {
 		mutation := &pb.ScreenMutation{}
@@ -86,10 +107,15 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, e
 				return nil, fmt.Errorf("invalid commit screen row")
 			}
 			mutation.Writes = append(mutation.Writes, &pb.ScreenRowWrite{
-				Row: int32(line.Row), Line: encodeLines([]terminalengine.Line{line})[0],
+				Row: int32(line.Row),
+				Key: encodeLineKey(line),
 			})
+			addBody(line)
 		}
 		commit.Screen = mutation
+	}
+	for _, line := range frame.BodyUpserts {
+		addBody(line)
 	}
 	if frame.FirstAvailableHistorySeqChanged || len(frame.HistoryPushes) > 0 {
 		commit.History = &pb.HistoryMutation{
@@ -99,10 +125,7 @@ func EncodeTerminalCommit(frame terminalengine.ScreenFrame, _ uint64) ([]byte, e
 			},
 		}
 		for _, push := range frame.HistoryPushes {
-			commit.History.Pushes = append(commit.History.Pushes, &pb.HistoryPush{
-				HistorySeq: push.HistorySeq, LineId: push.LineID,
-				LineVersion: push.LineVersion,
-			})
+			commit.History.Pushes = append(commit.History.Pushes, encodeHistoryBinding(push))
 		}
 	}
 	if frame.CursorChanged {
@@ -135,14 +158,14 @@ func EncodePong(revision uint64) ([]byte, error) {
 
 func EncodeResumeAccepted(frame terminalengine.ScreenFrame) ([]byte, error) {
 	return marshalPayload(&pb.ScreenEnvelope_ResumeAccepted{ResumeAccepted: &pb.ResumeAccepted{
-		InstanceId: frame.InstanceID, LayoutEpoch: frame.Epoch, ScreenRevision: frame.Seq,
-		DictionaryGeneration: frame.DictionaryGeneration,
-		HistoryGeneration:    frame.HistoryGeneration,
-		HistoryExtent:        encodeHistoryWindowExtent(frame.History),
+		InstanceId:        frame.InstanceID,
+		LayoutEpoch:       frame.Epoch,
+		ScreenRevision:    frame.Seq,
+		HistoryGeneration: frame.HistoryGeneration,
+		HistoryExtent:     encodeHistoryWindowExtent(frame.History),
 	}})
 }
 
-// oneof 包装类型不能直接实现本地接口，下面的 marshalPayload 负责类型分派。
 func marshalPayload(payload any) ([]byte, error) {
 	env := &pb.ScreenEnvelope{ProtocolVersion: ProtocolVersion}
 	switch p := payload.(type) {
@@ -157,7 +180,7 @@ func marshalPayload(payload any) ([]byte, error) {
 	case *pb.ScreenEnvelope_Effect:
 		env.Payload = p
 	default:
-		return nil, fmt.Errorf("unsupported v2 payload %T", payload)
+		return nil, fmt.Errorf("unsupported v3 payload %T", payload)
 	}
 	return proto.Marshal(env)
 }
@@ -190,8 +213,11 @@ func encodeHistoryWindowExtent(window terminalengine.HistoryWindow) *pb.HistoryE
 	return &pb.HistoryExtent{FirstSeq: first, LastSeq: last}
 }
 
-func encodeExtent(extent terminalengine.HistoryExtent) *pb.HistoryExtent {
-	return &pb.HistoryExtent{FirstSeq: extent.FirstSeq, LastSeq: extent.LastSeq}
+func encodeHistoryBinding(push terminalengine.HistoryPush) *pb.HistoryBinding {
+	return &pb.HistoryBinding{
+		HistorySeq: push.HistorySeq,
+		Key:        &pb.LineKey{LineId: push.LineID, BodyVersion: push.LineVersion},
+	}
 }
 
 func screenLines(lines []terminalengine.Line) []terminalengine.Line {
@@ -204,18 +230,26 @@ func screenLines(lines []terminalengine.Line) []terminalengine.Line {
 	return out
 }
 
-func encodeLines(lines []terminalengine.Line) []*pb.LineData {
-	out := make([]*pb.LineData, len(lines))
-	for i, line := range lines {
-		out[i] = encodeLine(line)
-	}
-	return out
+type lineKey struct {
+	id      uint64
+	version uint64
 }
 
-func encodeLine(line terminalengine.Line) *pb.LineData {
-	wire := &pb.LineData{LineId: line.ID, LineVersion: line.Version,
-		Wrapped: line.Wrapped, HistorySeq: line.HistorySeq,
-		PhysicalColumns: uint32(line.PhysicalColumns)}
+func encodeLineKey(line terminalengine.Line) *pb.LineKey {
+	return &pb.LineKey{LineId: line.ID, BodyVersion: line.Version}
+}
+
+func encodeLineBodyRecord(line terminalengine.Line) *pb.LineBodyRecord {
+	wire := encodeLineBodyFields(line)
+	wire.Key = encodeLineKey(line)
+	return wire
+}
+
+func encodeLineBodyFields(line terminalengine.Line) *pb.LineBodyRecord {
+	wire := &pb.LineBodyRecord{
+		Wrapped:         line.Wrapped,
+		PhysicalColumns: uint32(line.PhysicalColumns),
+	}
 	type positionedCell struct {
 		col  int
 		cell terminalengine.Cell
@@ -280,14 +314,6 @@ func isDefaultTrailingCell(cell terminalengine.Cell) bool {
 		cell.StyleID == 0 && cell.LinkID == 0
 }
 
-func lineIDs(lines []terminalengine.Line) []uint64 {
-	out := make([]uint64, len(lines))
-	for i, line := range lines {
-		out[i] = line.ID
-	}
-	return out
-}
-
 func encodeDictionary(styles []terminalengine.TerminalStyle, links []terminalengine.Hyperlink) *pb.Dictionary {
 	dict := &pb.Dictionary{}
 	for _, style := range styles {
@@ -302,8 +328,6 @@ func encodeDictionary(styles []terminalengine.TerminalStyle, links []terminaleng
 	return dict
 }
 
-// v2 的每个携带 LineData 的消息都必须能独立解析，不能依赖前一帧字典。
-// 这里只复制本消息实际引用的条目，避免把整个会话字典重复塞进每个 Patch。
 func encodeDictionaryForLines(
 	lines []terminalengine.Line,
 	styles []terminalengine.TerminalStyle,

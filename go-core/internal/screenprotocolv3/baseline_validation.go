@@ -1,4 +1,4 @@
-package screenprotocolv2
+package screenprotocolv3
 
 import "webterm/go-core/internal/terminalengine"
 
@@ -86,8 +86,6 @@ func validateBaselineFrame(frame terminalengine.ScreenFrame) error {
 
 	first := frame.History.FirstAvailableHistorySeq
 	last := frame.History.LastIncludedHistorySeq
-	// 备用屏没有 scrollback，零值窗口会在线上编码为 proto3 的 0..0；
-	// 主屏空历史使用规范化的 1..0。
 	zeroExtent := first == 0 && last == 0
 	if (!zeroExtent && first == 0) || last == ^uint64(0) || (!zeroExtent && first > last+1) {
 		return baselineFault("HISTORY_BINDING_COUNT_MISMATCH")

@@ -2,7 +2,6 @@ package com.webterm.terminal.model;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -32,52 +31,26 @@ public final class HistoryPromotionMetricsTest {
     assertSame(before, model.bodyCache().body(new LineKey(10, 1)));
     assertEquals(new LineKey(10, 1), model.bodyCache().historyResidency().key(101));
     assertEquals(1L, HistoryPromotionMetrics.snapshot().get("promotionExactReuseCount"));
-    assertEquals(0L, HistoryPromotionMetrics.snapshot().get("promotionVersionMismatchCount"));
-    assertEquals(0L, HistoryPromotionMetrics.snapshot().get("promotionBodyAbsentCount"));
+    assertEquals(0L, HistoryPromotionMetrics.snapshot().get("promotionBodyInvariantFailureCount"));
   }
 
   @Test
-  public void versionMismatchIncrementsCountAndDoesNotMarkResidentUnderWrongKey()
-      throws Exception {
-    RemoteTerminalModel model = modelWithScreenLine(new LineKey(10, 2), "a");
-    LineBody bodyV2 = model.bodyCache().body(new LineKey(10, 2));
-    assertNotNull(bodyV2);
-
-    assertTrue(model.applyTerminalCommit(scrollPushCommit(
-        SemanticTestData.screen(12, 1, "c"),
-        new HistoryPush(101, new LineKey(10, 1)))));
-
-    assertEquals(1L, HistoryPromotionMetrics.snapshot().get("promotionVersionMismatchCount"));
-    assertEquals(0L, HistoryPromotionMetrics.snapshot().get("promotionExactReuseCount"));
-    // 禁止 lineId-only 复用：catalog 绑定 push key，但不得把 (10,2) 升为 resident。
-    assertEquals(new LineKey(10, 1), model.historyCatalog().key(101));
-    assertNull(model.bodyCache().historyResidency().key(101));
-    assertNull(model.bodyCache().body(new LineKey(10, 1)));
-    assertNotNull(bodyV2);
-    assertEquals(
-        HistoryBodyMissReason.PROMOTION_VERSION_MISMATCH,
-        HistoryPromotionMetrics.reasonFor(101));
-  }
-
-  @Test
-  public void bodyAbsentIncrementsCountForUnknownLineId() throws Exception {
+  public void missingBodyKeyFailsCommitAsInvariantFailure() throws Exception {
     RemoteTerminalModel model = modelWithScreenLine(new LineKey(10, 1), "a");
-
-    assertTrue(model.applyTerminalCommit(scrollPushCommit(
-        SemanticTestData.screen(12, 1, "c"),
-        new HistoryPush(101, new LineKey(999, 1)))));
-
-    assertEquals(1L, HistoryPromotionMetrics.snapshot().get("promotionBodyAbsentCount"));
-    assertEquals(0L, HistoryPromotionMetrics.snapshot().get("promotionExactReuseCount"));
-    assertNull(model.bodyCache().historyResidency().key(101));
-    assertEquals(
-        HistoryBodyMissReason.PROMOTION_BODY_ABSENT,
-        HistoryPromotionMetrics.reasonFor(101));
+    try {
+      model.applyTerminalCommit(scrollPushCommit(
+          SemanticTestData.screen(12, 1, "c"),
+          new HistoryPush(101, new LineKey(999, 1))));
+      org.junit.Assert.fail("expected commit failure");
+    } catch (CommitValidationException expected) {
+      assertEquals(1L,
+          HistoryPromotionMetrics.snapshot().get("promotionBodyInvariantFailureCount"));
+    }
   }
 
   @Test
   public void recordHistoryRequestMissReasonAppearsInSnapshot() {
-    HistoryPromotionMetrics.recordVersionMismatch(42, 2, 1);
+    HistoryPromotionMetrics.recordBodyInvariantFailure(42);
     HistoryPromotionMetrics.recordHistoryRequestMissReason(
         HistoryPromotionMetrics.reasonFor(42));
     HistoryPromotionMetrics.recordHistoryRequestMissReason(null);
@@ -85,9 +58,8 @@ public final class HistoryPromotionMetricsTest {
     @SuppressWarnings("unchecked")
     Map<String, Long> byReason =
         (Map<String, Long>) HistoryPromotionMetrics.snapshot().get("historyRequestByMissReason");
-    assertEquals(Long.valueOf(1L), byReason.get("PROMOTION_VERSION_MISMATCH"));
+    assertEquals(Long.valueOf(1L), byReason.get("PROMOTION_BODY_INVARIANT_FAILURE"));
     assertEquals(Long.valueOf(1L), byReason.get("UNKNOWN"));
-    assertEquals(Long.valueOf(0L), byReason.get("PROMOTION_BODY_ABSENT"));
   }
 
   private static RemoteTerminalModel modelWithScreenLine(LineKey screenKey, String text) {
@@ -96,7 +68,7 @@ public final class HistoryPromotionMetricsTest {
       bindings.add(new HistoryPush(seq, new LineKey(100 + seq, 1)));
     }
     RemoteTerminalModel model = new RemoteTerminalModel();
-    assertTrue(model.applyBaseline(new ScreenBaseline(
+    assertTrue(model.applyBaseline(SemanticTestData.baselineLegacy(
         "s1", "i1", 1, 1, 1, 1,
         2, 1, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 100), bindings,
@@ -110,9 +82,10 @@ public final class HistoryPromotionMetricsTest {
   private static TerminalCommit scrollPushCommit(
       ScreenLineContent exposed, HistoryPush push) {
     return new TerminalCommit(
-        "i1", 1, 1, 2, 1, 1, null,
+        "i1", 1, 1, 2, 1, null,
+        SemanticTestData.upserts(exposed),
         new ScreenMutation(new ScreenScroll(0, 2, 1),
-            Collections.singletonList(new ScreenRowWrite(1, exposed))),
+            Collections.singletonList(ScreenRowWrite.fromLine(1, exposed))),
         new HistoryMutation(new HistoryExtent(1, 101),
             Collections.singletonList(push)),
         null, null, null);

@@ -43,19 +43,16 @@ type projectedLineUpdate struct {
 }
 
 // rebuild 用完整投影（Full）重建全部行与元数据。
-func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter) {
-	previous := s.screen
-	// 屏内容是权威；index 在冲突后可能已残缺，仅在 valid 时复用。
-	previousIndex := s.rowByLineID
-	if previousIndex == nil || !s.valid {
-		previousIndex = indexRowsByLineID(previous)
-	}
+func (s *projectedState) rebuild(
+	proj headlessterm.ProjectionRead,
+	exp *exporter,
+	commit commitProjectionRowFn,
+) {
 	screen := make([]terminalengine.Line, proj.Rows)
 	newIndex := make(map[uint64]int, proj.Rows)
 	for _, row := range proj.DirtyRows {
 		if row.Index >= 0 && row.Index < len(screen) {
-			candidate := exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
-			line := reconcileFromSnapshot(previous, previousIndex, candidate)
+			line := commit(exp, row, proj.Cursor.Row, proj.Cursor.Col)
 			screen[row.Index] = line
 			if line.ID != 0 {
 				newIndex[line.ID] = row.Index
@@ -70,14 +67,20 @@ func (s *projectedState) rebuild(proj headlessterm.ProjectionRead, exp *exporter
 	s.valid = true
 }
 
+type commitProjectionRowFn func(
+	exp *exporter,
+	row headlessterm.ProjectionRow,
+	cursorRow, cursorCol int,
+) terminalengine.Line
+
 // rebuildSafely 在 LineID 冲突时基于未提交前的完整旧屏与新建索引回退。
 // 成功则原子替换；发现重复候选则返回 false，由调用方将 Projector 标为无效。
 func (s *projectedState) rebuildSafely(
 	proj headlessterm.ProjectionRead,
 	exp *exporter,
+	commit commitProjectionRowFn,
 ) bool {
 	previousScreen := s.screen
-	previousIndex := indexRowsByLineID(previousScreen)
 
 	nextScreen := make([]terminalengine.Line, proj.Rows)
 	if len(previousScreen) == proj.Rows {
@@ -93,15 +96,7 @@ func (s *projectedState) rebuildSafely(
 		if row.Index < 0 || row.Index >= len(nextScreen) {
 			continue
 		}
-		candidate := exp.exportProjectionRow(
-			row,
-			proj.Cursor.Row,
-			proj.Cursor.Col)
-		line := reconcileFromSnapshot(
-			previousScreen,
-			previousIndex,
-			candidate)
-		nextScreen[row.Index] = line
+		nextScreen[row.Index] = commit(exp, row, proj.Cursor.Row, proj.Cursor.Col)
 	}
 	for row, line := range nextScreen {
 		if line.ID == 0 {
@@ -125,7 +120,11 @@ func (s *projectedState) rebuildSafely(
 // merge 只把 dirty 行重新转换为 Line 并替换缓存中对应下标；未变化行复用
 // 旧 Line 对象。渲染元数据总是采用投影中的当前值，因此纯模式、光标变化
 // 在无 dirty 行时也能反映到导出状态。
-func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) {
+func (s *projectedState) merge(
+	proj headlessterm.ProjectionRead,
+	exp *exporter,
+	commit commitProjectionRowFn,
+) {
 	if s.rowByLineID == nil {
 		s.rowByLineID = indexRowsByLineID(s.screen)
 	}
@@ -134,10 +133,9 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 		if row.Index < 0 || row.Index >= len(s.screen) {
 			continue
 		}
-		candidate := exp.exportProjectionRow(row, proj.Cursor.Row, proj.Cursor.Col)
 		s.updateScratch = append(s.updateScratch, projectedLineUpdate{
 			row:  row.Index,
-			line: s.reconcileExportLine(candidate),
+			line: commit(exp, row, proj.Cursor.Row, proj.Cursor.Col),
 		})
 	}
 	for _, update := range s.updateScratch {
@@ -154,7 +152,7 @@ func (s *projectedState) merge(proj headlessterm.ProjectionRead, exp *exporter) 
 			continue
 		}
 		if existing, ok := s.rowByLineID[update.line.ID]; ok && existing != update.row {
-			if !s.rebuildSafely(proj, exp) {
+			if !s.rebuildSafely(proj, exp, commit) {
 				s.valid = false
 			}
 			s.clearUpdateScratch()
@@ -176,47 +174,6 @@ func (s *projectedState) clearUpdateScratch() {
 		s.updateScratch[i] = projectedLineUpdate{}
 	}
 	s.updateScratch = s.updateScratch[:0]
-}
-
-// reconcileExportLine gives Line.Version wire semantics: it is the version of
-// the final exported representation, not merely Buffer's physical cell
-// version.  The exporter suppresses stale software cursors based on the live
-// cursor position, so a cursor move can alter Runs without touching a Cell.
-// Conversely, a projection-dirty cursor row whose output is unchanged must
-// retain its previous version and not create a needless LineData update.
-func (s *projectedState) reconcileExportLine(candidate terminalengine.Line) terminalengine.Line {
-	return reconcileFromSnapshot(s.screen, s.rowByLineID, candidate)
-}
-
-// reconcileFromSnapshot 基于完整旧屏快照与对应索引协调版本，不依赖可能已
-// 被部分修改的持久索引。
-func reconcileFromSnapshot(
-	screen []terminalengine.Line,
-	index map[uint64]int,
-	candidate terminalengine.Line,
-) terminalengine.Line {
-	if candidate.ID == 0 || index == nil {
-		if candidate.Version == 0 {
-			candidate.Version = 1
-		}
-		return candidate
-	}
-	row, ok := index[candidate.ID]
-	if !ok || row < 0 || row >= len(screen) {
-		if candidate.Version == 0 {
-			candidate.Version = 1
-		}
-		return candidate
-	}
-	prior := screen[row]
-	if linesEqual(prior, candidate) {
-		candidate.Version = prior.Version
-		return candidate
-	}
-	if candidate.Version <= prior.Version {
-		candidate.Version = prior.Version + 1
-	}
-	return candidate
 }
 
 func indexRowsByLineID(lines []terminalengine.Line) map[uint64]int {
@@ -309,6 +266,9 @@ type Projector struct {
 	exporter    *exporter
 	exportEpoch uint64
 	projected   projectedState
+	// canonical 持有 LineStore 与 screen/history 对 LineKey 的权威引用。
+	// 正文版本只在 LineStore.Commit 生成。
+	canonical *terminalengine.CanonicalTerminalState
 	// dictGeneration increments every time the style/link exporter is rebuilt
 	// (layout epoch change or >4096 dictionary rotation). It is stamped onto
 	// every exported state so per-client FrameDerivers can detect a baseline
@@ -329,6 +289,8 @@ type Projector struct {
 	// changeIndexReady 标记首次导出已完成：NewProjector 后的首次导出视为
 	// “projector 整体重建”事件，把 barrier 初始化到首次导出 revision。
 	changeIndexReady bool
+	// pendingBodyUpserts 收集本 revision 新建的正文，供 Commit body_upserts 编码。
+	pendingBodyUpserts []terminalengine.Line
 }
 
 // SnapshotBarrierRevision 返回当前 epoch 内最近的快照屏障。
@@ -387,12 +349,22 @@ func NewProjector(engine *terminalengine.Engine, scrollback *terminalengine.Trac
 		sessionID:         sessionID,
 		instanceID:        instanceID,
 		exporter:          newExporter(terminalengine.Color{Kind: terminalengine.ColorDefaultFG}, terminalengine.Color{Kind: terminalengine.ColorDefaultBG}),
+		canonical:         terminalengine.NewCanonicalTerminalState(),
 		dictGeneration:    1,
 		historyGeneration: 1,
 	}
 }
 
+// LineStore 返回权威正文仓库（供 BodyBatch 等路径复用）。
+func (p *Projector) LineStore() *terminalengine.LineStore {
+	if p == nil || p.canonical == nil {
+		return nil
+	}
+	return p.canonical.LineStore
+}
+
 // HistoryRange 导出同一权威快照中的闭区间历史与 message-local 字典。
+// 正文版本来自 LineStore（历史规范化 Present=false），不再按 seq 重新发明版本。
 func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRangeData {
 	result := p.scrollback.Range(fromSeq, toSeq)
 	exp := newExporter(
@@ -401,7 +373,8 @@ func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRa
 	)
 	lines := make([]terminalengine.Line, len(result.Lines))
 	for i, line := range result.Lines {
-		lines[i] = exp.exportScrollbackEntry(line)
+		version := p.commitHistoryEntry(line)
+		lines[i] = exp.exportScrollbackEntry(line, version)
 	}
 	return terminalengine.HistoryRangeData{
 		Status:            result.Status,
@@ -411,6 +384,95 @@ func (p *Projector) HistoryRange(fromSeq, toSeq uint64) terminalengine.HistoryRa
 		Links:             exp.linkTable.Links(),
 		HistoryGeneration: result.Generation,
 	}
+}
+
+// LineBodyBatch 按 LineKey 批量导出正文与 message-local 字典。
+func (p *Projector) LineBodyBatch(keys []terminalengine.LineKey) terminalengine.LineBodyBatchData {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	store := p.LineStore()
+	if store == nil {
+		return terminalengine.LineBodyBatchData{
+			MissingKeys:       append([]terminalengine.LineKey(nil), keys...),
+			HistoryGeneration: p.historyGeneration,
+		}
+	}
+	records, missing := store.GetMany(keys)
+	lines := make([]terminalengine.Line, 0, len(records))
+	for _, record := range records {
+		lines = append(lines, p.exporter.exportLineRecord(record))
+	}
+	return terminalengine.LineBodyBatchData{
+		Status:            terminalengine.LineBodyBatchOK,
+		Lines:             lines,
+		MissingKeys:       missing,
+		Styles:            p.exporter.styleTable.Styles(),
+		Links:             p.exporter.linkTable.Links(),
+		HistoryGeneration: p.historyGeneration,
+	}
+}
+
+func (p *Projector) commitHistoryEntry(entry terminalengine.ScrollbackEntry) uint64 {
+	if p == nil || p.canonical == nil || p.canonical.LineStore == nil || entry.LineID == 0 {
+		return 1
+	}
+	body := terminalengine.BuildCanonicalLine(
+		entry.LineID, entry.Cells, entry.Wrapped, terminalengine.CursorContext{})
+	record, created := p.canonical.LineStore.Commit(terminalengine.LineID(entry.LineID), body)
+	if record == nil {
+		return 1
+	}
+	if created {
+		p.pendingBodyUpserts = append(p.pendingBodyUpserts, p.exporter.exportLineRecord(record))
+	}
+	p.canonical.BindHistory(entry.HistorySeq, record.Key)
+	return uint64(record.Key.Version)
+}
+
+func (p *Projector) resolveHistoryLineVersion(historySeq, lineID uint64) uint64 {
+	if p.scrollback == nil {
+		return 1
+	}
+	entry, ok := p.scrollback.LineByHistorySeq(historySeq)
+	if !ok || entry.LineID == 0 {
+		entry = terminalengine.ScrollbackEntry{HistorySeq: historySeq, LineID: lineID}
+	}
+	return p.commitHistoryEntry(entry)
+}
+
+func (p *Projector) commitProjectionRow(
+	exp *exporter,
+	row headlessterm.ProjectionRow,
+	cursorRow, cursorCol int,
+) terminalengine.Line {
+	line := exp.exportProjectionRow(row, cursorRow, cursorCol)
+	if p.canonical == nil || p.canonical.LineStore == nil || row.LineID == 0 {
+		if line.Version == 0 {
+			line.Version = 1
+		}
+		return line
+	}
+	body := terminalengine.BuildCanonicalLineAtRow(
+		row.LineID,
+		row.Index,
+		row.Cells,
+		row.Wrapped,
+		terminalengine.CursorContext{
+			Present: true,
+			Row:     cursorRow,
+			Col:     cursorCol,
+		},
+	)
+	record, created := p.canonical.LineStore.Commit(terminalengine.LineID(row.LineID), body)
+	if record != nil {
+		line.Version = uint64(record.Key.Version)
+		if created {
+			p.pendingBodyUpserts = append(p.pendingBodyUpserts, line)
+		}
+	} else if line.Version == 0 {
+		line.Version = 1
+	}
+	return line
 }
 
 // HistoryGeneration returns the identity of the currently published history
@@ -454,7 +516,7 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 		p.changeIndex.resetForEpoch(seq)
 	}
 	if p.scrollback != nil {
-		gap := p.historyChangeIndex.sync(p.scrollback, seq)
+		gap := p.historyChangeIndex.sync(p.scrollback, seq, p.resolveHistoryLineVersion)
 		generation := p.historyChangeIndex.generation
 		if generation == 0 {
 			generation = 1
@@ -469,7 +531,7 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 			// 并确保在线客户端也收到同 revision snapshot。
 			p.changeIndex.advanceBarrier(seq)
 		}
-	} else if p.historyChangeIndex.sync(nil, seq) {
+	} else if p.historyChangeIndex.sync(nil, seq, p.resolveHistoryLineVersion) {
 		// LineID 跳号或索引遗漏意味着旧投影无法准确修复。推进持久 barrier，
 		// 并确保在线客户端也收到同 revision snapshot。
 		p.changeIndex.advanceBarrier(seq)
@@ -494,6 +556,10 @@ func (p *Projector) exportStateLocked(epoch, seq uint64) terminalengine.ScreenFr
 	}
 	frame.DictionaryGeneration = p.dictGeneration
 	frame.HistoryGeneration = p.historyGeneration
+	if len(p.pendingBodyUpserts) > 0 {
+		frame.BodyUpserts = append([]terminalengine.Line(nil), p.pendingBodyUpserts...)
+		p.pendingBodyUpserts = nil
+	}
 	return frame
 }
 
@@ -517,16 +583,39 @@ func (p *Projector) mergeAndExport(epoch, seq uint64) terminalengine.ScreenFrame
 		// 但终端未标全脏：dirty 行不足以重建，改取完整投影。
 		proj = p.engine.ReadFullProjection()
 	}
+	commit := p.commitProjectionRow
 	if proj.Full {
-		s.rebuild(proj, p.exporter)
+		s.rebuild(proj, p.exporter, commit)
 	} else {
-		s.merge(proj, p.exporter)
+		s.merge(proj, p.exporter, commit)
 	}
+	p.syncCanonicalScreenLocked()
 	p.engine.ConsumeProjectionDirty(proj)
 	p.updateChangeIndexScreenLocked(seq, prev, proj)
 	frame := p.assembleFrame(epoch, seq)
 	p.updateChangeIndexDictionaryLocked(seq)
 	return frame
+}
+
+func (p *Projector) syncCanonicalScreenLocked() {
+	if p.canonical == nil {
+		return
+	}
+	s := &p.projected
+	p.canonical.ActiveBuffer = s.activeBuffer
+	p.canonical.Cursor = s.cursor
+	p.canonical.Modes = s.modes
+	keys := make([]terminalengine.LineKey, len(s.screen))
+	for i, line := range s.screen {
+		if line.ID == 0 {
+			continue
+		}
+		keys[i] = terminalengine.LineKey{
+			ID:      terminalengine.LineID(line.ID),
+			Version: terminalengine.BodyVersion(line.Version),
+		}
+	}
+	p.canonical.SetActiveScreen(keys)
 }
 
 // assembleFrame 从全屏缓存组装完整 State。历史只导出 extent 与位置谱系，
@@ -761,6 +850,7 @@ func diffToPatchWithIndex(
 		FirstAvailableHistorySeqChanged: activeBufferChanged || len(pushes) > 0 ||
 			old.History.FirstAvailableHistorySeq != new.History.FirstAvailableHistorySeq ||
 			old.History.LastIncludedHistorySeq != new.History.LastIncludedHistorySeq,
+		BodyUpserts: append([]terminalengine.Line(nil), new.BodyUpserts...),
 	}
 }
 

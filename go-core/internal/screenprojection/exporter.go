@@ -103,11 +103,11 @@ func (exp *exporter) exportScreenRow(engine *terminalengine.Engine, row, cols, c
 }
 
 // exportProjectionRow 把投影中的一行（已是不可变拷贝）转换为导出 Line。
+// Version 必须由调用方通过 LineStore.Commit 填入，不得使用物理版本。
 func (exp *exporter) exportProjectionRow(row headlessterm.ProjectionRow, cursorRow, cursorCol int) terminalengine.Line {
 	return terminalengine.Line{
 		Row:             row.Index,
 		ID:              row.LineID,
-		Version:         row.LineVersion,
 		PhysicalColumns: len(row.Cells),
 		Wrapped:         row.Wrapped,
 		Runs:            exp.exportCells(row.Cells, row.Index, cursorRow, cursorCol),
@@ -226,6 +226,63 @@ func cellsSameStyle(a, b terminalengine.Cell) bool {
 	return a.StyleID == b.StyleID && a.LinkID == b.LinkID
 }
 
+func (exp *exporter) exportLineRecord(record *terminalengine.LineRecord) terminalengine.Line {
+	if record == nil || record.Body == nil {
+		return terminalengine.Line{}
+	}
+	body := record.Body
+	runs := exp.exportCanonicalCells(body.Cells)
+	return terminalengine.Line{
+		ID:              uint64(record.Key.ID),
+		Version:         uint64(record.Key.Version),
+		PhysicalColumns: body.PhysicalColumns,
+		Wrapped:         body.Wrapped,
+		Runs:            runs,
+	}
+}
+
+func (exp *exporter) exportCanonicalCells(cells []terminalengine.CanonicalCell) []terminalengine.CellRun {
+	var runs []terminalengine.CellRun
+	var current *terminalengine.CellRun
+	for col := 0; col < len(cells); {
+		exported := exp.exportCanonicalCell(cells[col])
+		if exported.Width == 0 {
+			col++
+			continue
+		}
+		if current != nil && cellsSameStyle(current.Cells[len(current.Cells)-1], exported) {
+			current.Cells = append(current.Cells, exported)
+		} else {
+			run := terminalengine.CellRun{Col: col, Cells: []terminalengine.Cell{exported}}
+			runs = append(runs, run)
+			current = &runs[len(runs)-1]
+		}
+		width := int(exported.Width)
+		if width != 2 {
+			width = 1
+		}
+		col += width
+	}
+	return runs
+}
+
+func (exp *exporter) exportCanonicalCell(cell terminalengine.CanonicalCell) terminalengine.Cell {
+	styleID := exp.styleTable.Lookup(cell.Style.FG, cell.Style.BG, cell.Style.ULColor, cell.Style.Attrs)
+	linkID := uint32(0)
+	if cell.Link != "" {
+		linkID = exp.linkTable.Lookup(cell.Link)
+	}
+	width := cell.Width
+	if width == 0 {
+		width = 1
+	}
+	text := cell.Text
+	if text == "" {
+		text = " "
+	}
+	return terminalengine.Cell{Text: text, Width: width, StyleID: styleID, LinkID: linkID}
+}
+
 func historyExtentWindow(scrollback *terminalengine.TrackedScrollback) terminalengine.HistoryWindow {
 	if scrollback == nil {
 		return terminalengine.HistoryWindow{
@@ -243,10 +300,10 @@ func historyExtentWindow(scrollback *terminalengine.TrackedScrollback) terminale
 	}
 }
 
-func (exp *exporter) exportScrollbackEntry(hl terminalengine.ScrollbackEntry) terminalengine.Line {
+func (exp *exporter) exportScrollbackEntry(hl terminalengine.ScrollbackEntry, version uint64) terminalengine.Line {
 	return terminalengine.Line{
 		ID:              hl.LineID,
-		Version:         hl.Version,
+		Version:         version,
 		PhysicalColumns: len(hl.Cells),
 		HistorySeq:      hl.HistorySeq,
 		Row:             -1,

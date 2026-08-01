@@ -15,7 +15,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.LifecycleOwner;
 
-import com.webterm.feature.terminal.TerminalFragment;
+import com.webterm.feature.terminal.domain.OkHttpLineBodyBatchSource;
+import com.webterm.feature.terminal.domain.TerminalSessionRuntime;
 import com.webterm.feature.terminal.TerminalScreenBuilder;
 import com.webterm.feature.terminal.TerminalConnectionStatusView;
 import com.webterm.feature.terminal.TerminalViewModel;
@@ -31,7 +32,7 @@ import dagger.hilt.android.scopes.ActivityScoped;
 import okhttp3.OkHttpClient;
 
 /**
- * webterm.screen.v2 终端集成 facade。
+ * webterm.screen.v3 终端集成 facade。
  * 把 RuntimeRegistry、Connection、Controller、Renderer 和 Activity 级行为封装在一起。
  */
 @ActivityScoped
@@ -121,7 +122,7 @@ public final class RemoteTerminalIntegration {
           args.baseUrl, args.cookie, args.sessionId,
           args.serverConfigId, args.directDevice, args.relayDeviceId);
       runtime.attachConnection(connection);
-      installHistoryRangeSource(args);
+      installLineBodyBatchSource(args);
     } else {
       connection = null; // live channel is retained and owned by runtime
     }
@@ -361,16 +362,16 @@ public final class RemoteTerminalIntegration {
           currentArgs.baseUrl, currentArgs.cookie, currentArgs.sessionId,
           currentArgs.serverConfigId, currentArgs.directDevice, currentArgs.relayDeviceId);
       runtime.attachConnection(connection);
-      installHistoryRangeSource(currentArgs);
+      installLineBodyBatchSource(currentArgs);
       connection.connect(80, 24);
     }
   }
 
   /** Cookie/会话身份变化后必须换新 Source，避免冷历史仍带旧凭据。 */
-  private void installHistoryRangeSource(
+  private void installLineBodyBatchSource(
       @NonNull TerminalViewModel.TerminalSessionArgs args) {
     if (runtime == null) return;
-    runtime.setHistoryRangeSource(new OkHttpHistoryRangeSource(
+    runtime.setLineBodyBatchSource(new OkHttpLineBodyBatchSource(
         historyHttpClient,
         command -> new android.os.Handler(android.os.Looper.getMainLooper()).post(command),
         args.baseUrl, args.cookie, args.sessionId,

@@ -2,14 +2,14 @@ package com.webterm.feature.terminal.domain;
 
 import androidx.annotation.NonNull;
 
-import com.webterm.terminal.model.HistoryExtent;
-import com.webterm.terminal.model.HistoryBodyEntry;
+import com.webterm.terminal.model.LineBodyRecord;
+import com.webterm.terminal.model.LineKey;
 
 import java.util.List;
 import java.util.Map;
 
-/** Direct/Relay 共用的 HTTP History Range 抽象。 */
-public interface HistoryRangeSource {
+/** Direct/Relay 共用的 HTTP LineBodyBatch 抽象。 */
+public interface LineBodyBatchSource {
   interface RequestHandle { void cancel(); }
 
   enum FailureKind {
@@ -26,27 +26,22 @@ public interface HistoryRangeSource {
     public final String instanceId;
     public final long layoutEpoch;
     public final long historyGeneration;
-    public final HistoryExtent currentExtent;
-    public final List<HistoryBodyEntry> lines;
-    /** HTTP 响应完成解析并准备派发 callback 的单调时钟时间。 */
+    public final List<LineBodyRecord> bodies;
+    public final List<LineKey> missingKeys;
     public final long completedAtNanos;
 
-    public Result(@NonNull String instanceId, long layoutEpoch, long historyGeneration,
-                  @NonNull HistoryExtent currentExtent,
-                  @NonNull List<HistoryBodyEntry> lines) {
-      this(instanceId, layoutEpoch, historyGeneration, currentExtent, lines,
-          System.nanoTime());
-    }
-
-    public Result(@NonNull String instanceId, long layoutEpoch, long historyGeneration,
-                  @NonNull HistoryExtent currentExtent,
-                  @NonNull List<HistoryBodyEntry> lines,
-                  long completedAtNanos) {
+    public Result(
+        @NonNull String instanceId,
+        long layoutEpoch,
+        long historyGeneration,
+        @NonNull List<LineBodyRecord> bodies,
+        @NonNull List<LineKey> missingKeys,
+        long completedAtNanos) {
       this.instanceId = instanceId;
       this.layoutEpoch = layoutEpoch;
       this.historyGeneration = historyGeneration;
-      this.currentExtent = currentExtent;
-      this.lines = lines;
+      this.bodies = bodies;
+      this.missingKeys = missingKeys;
       this.completedAtNanos = completedAtNanos;
     }
   }
@@ -55,15 +50,15 @@ public interface HistoryRangeSource {
     public final FailureKind kind;
     public final long retryAfterMs;
     public final long historyGeneration;
-    /** HTTP 失败已确定并准备派发 callback 的单调时钟时间。 */
     public final long completedAtNanos;
 
     public Failure(@NonNull FailureKind kind, long retryAfterMs, long historyGeneration) {
       this(kind, retryAfterMs, historyGeneration, System.nanoTime());
     }
 
-    public Failure(@NonNull FailureKind kind, long retryAfterMs, long historyGeneration,
-                   long completedAtNanos) {
+    public Failure(
+        @NonNull FailureKind kind, long retryAfterMs, long historyGeneration,
+        long completedAtNanos) {
       this.kind = kind;
       this.retryAfterMs = Math.max(0, retryAfterMs);
       this.historyGeneration = historyGeneration;
@@ -76,10 +71,8 @@ public interface HistoryRangeSource {
     void onFailure(@NonNull Failure failure);
   }
 
-  @NonNull RequestHandle fetch(
-      @NonNull HistoryRangeLoader.Range range, @NonNull Callback callback);
+  @NonNull RequestHandle fetch(@NonNull VisibleBodyLoader.Batch batch, @NonNull Callback callback);
 
-  /** 当前 Source 的无敏感信息 HTTP 指标快照。 */
   @NonNull default Map<String, Object> diagnosticsSnapshot() { return Map.of(); }
 
   void close();

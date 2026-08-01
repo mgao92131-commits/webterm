@@ -1,16 +1,16 @@
 syntax = "proto3";
 
-package webterm.terminal.screen.v2;
+package webterm.terminal.screen.v3;
 
-option go_package = "webterm/go-core/internal/screenprotocol/generatedv2";
+option go_package = "webterm/go-core/internal/screenprotocol/generatedv3";
 option java_package = "com.webterm.terminal.protocol.generated";
-option java_outer_classname = "TerminalScreenV2Proto";
+option java_outer_classname = "TerminalScreenV3Proto";
 
-// webterm.screen.v2 是 Android 远程终端渲染逻辑通道协议。
+// webterm.screen.v3 是 Android 远程终端渲染逻辑通道协议（line-key 正文模型）。
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
 message ScreenEnvelope {
-  uint32 protocol_version = 1; // 固定为 2
-  // 6/7 曾为 WS HistoryRange request/response；历史正文统一走 HTTP Range。
+  uint32 protocol_version = 1; // 固定为 3
+  // 6/7 曾为 WS HistoryRange request/response；历史正文统一走 HTTP batch。
   reserved 4, 5, 6, 7, 8, 9, 15;
 
   oneof payload {
@@ -52,16 +52,39 @@ message ResyncRequest {
   uint64 screen_revision = 2;
 }
 
-message ResumeScreenLine {
+message LineKey {
   uint64 line_id = 1;
-  uint64 line_version = 2;
+  uint64 body_version = 2;
+}
+
+message LineBodyRecord {
+  LineKey key = 1;
+  uint32 physical_columns = 2;
+  bool wrapped = 3;
+  bytes utf8_text = 4;
+  repeated StyleSpan style_spans = 5;
+  bytes glyph_meta = 6;
+}
+
+message HistoryBinding {
+  uint64 history_seq = 1;
+  LineKey key = 2;
+}
+
+message ScreenRowSet {
+  uint32 row = 1;
+  LineKey key = 2;
+}
+
+message ResumeScreenLine {
+  LineKey key = 1;
 }
 
 message ResumeToken {
   string instance_id = 1;
   uint64 layout_epoch = 2;
   uint64 screen_revision = 3;
-  uint64 dictionary_generation = 4;
+  reserved 4;
   uint64 history_generation = 5;
   reserved 6, 9;
   BufferKind active_buffer = 7;
@@ -72,7 +95,7 @@ message ResumeAccepted {
   string instance_id = 1;
   uint64 layout_epoch = 2;
   uint64 screen_revision = 3;
-  uint64 dictionary_generation = 4;
+  reserved 4;
   uint64 history_generation = 5;
   HistoryExtent history_extent = 6;
 }
@@ -109,16 +132,17 @@ message Baseline {
   BufferKind active_buffer = 7;
   HistoryExtent history_extent = 8;
   reserved 9, 19;
-  ScreenLayout screen_layout = 10;
-  repeated LineData screen_lines = 11;
+  // screen_rows[i] 对应物理行 i 的 line-key；缺失行表示空行。
+  repeated LineKey screen_rows = 10;
+  repeated LineBodyRecord screen_bodies = 11;
   Cursor cursor = 12;
   Modes modes = 13;
   TerminalPalette palette = 14;
   Dictionary dictionary = 15;
-  uint64 dictionary_generation = 16;
+  reserved 16; // 曾为 dictionary_generation
   uint64 history_generation = 17;
   // Baseline 必须完整声明当前历史位置目录。这里只携带位置身份，不携带正文。
-  repeated HistoryPush history_bindings = 18;
+  repeated HistoryBinding history_bindings = 18;
 }
 
 // TerminalCommit 原子描述一个投影聚合窗口结束时的全部可观察变化。
@@ -135,8 +159,9 @@ message TerminalCommit {
   TerminalPalette palette = 10;
   Dictionary dictionary_additions = 11;
   optional BufferKind active_buffer = 12;
-  uint64 dictionary_generation = 13;
+  reserved 13; // 曾为 dictionary_generation
   uint64 history_generation = 14;
+  repeated LineBodyRecord body_upserts = 15;
 }
 
 message ScreenMutation {
@@ -152,35 +177,13 @@ message ScreenScroll {
 
 message ScreenRowWrite {
   int32 row = 1;
-  LineData line = 2;
+  LineKey key = 2;
 }
 
 message HistoryMutation {
   HistoryExtent final_extent = 1;
-  repeated HistoryPush pushes = 2;
+  repeated HistoryBinding pushes = 2;
   reserved 3, 4;
-}
-
-message HistoryPush {
-  uint64 history_seq = 1;
-  uint64 line_id = 2;
-  uint64 line_version = 3;
-}
-
-message ScreenLayout {
-  repeated uint64 line_ids = 1;
-}
-
-message LineData {
-  uint64 line_id = 1;
-  uint64 line_version = 2;
-  bool wrapped = 3;
-  bytes utf8_text = 4;
-  repeated StyleSpan style_spans = 5;
-  reserved 6;
-  uint64 history_seq = 7;
-  bytes glyph_meta = 8;
-  uint32 physical_columns = 9;
 }
 
 message StyleSpan {

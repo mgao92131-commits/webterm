@@ -1,33 +1,34 @@
 syntax = "proto3";
 
-package webterm.terminal.screen.v2;
+package webterm.terminal.screen.v3;
 
-option go_package = "webterm/go-core/internal/screenprotocol/generatedv2";
+option go_package = "webterm/go-core/internal/screenprotocol/generatedv3";
 option java_package = "com.webterm.terminal.protocol.generated";
 option java_outer_classname = "TerminalHistoryProto";
 
-import "shared/proto/terminal_screen_v2.proto";
+import "shared/proto/terminal_screen_v3.proto";
 
-// HTTP 历史范围协议（不经 ScreenEnvelope）。
-// GET /api/sessions/{id}/history/range
-//   ?instanceId={instanceId}&layoutEpoch={layoutEpoch}
-//   &generation={generation}&from={fromSeq}&to={toSeq}
-
-enum HistoryRangeStatus {
-  HISTORY_RANGE_STATUS_UNSPECIFIED = 0;
-  HISTORY_RANGE_STATUS_OK = 1;
-  HISTORY_RANGE_STATUS_STALE_PROJECTION = 2;
-  HISTORY_RANGE_STATUS_SESSION_GONE = 3;
-  HISTORY_RANGE_STATUS_RETRYABLE = 4;
+// HTTP 历史正文批量拉取（不经 ScreenEnvelope）。
+message LineBodyBatchRequest {
+  string instance_id = 1;
+  repeated LineKey keys = 2;
 }
 
-message HistoryRangeResponse {
-  HistoryRangeStatus status = 1;
-  string instance_id = 2;
-  uint64 layout_epoch = 3;
-  uint64 history_generation = 4;
-  HistoryExtent current_extent = 5;
-  repeated LineData lines = 6;
-  Dictionary dictionary = 7;
+enum LineBodyBatchStatus {
+  LINE_BODY_BATCH_STATUS_UNSPECIFIED = 0;
+  LINE_BODY_BATCH_STATUS_OK = 1;
+  LINE_BODY_BATCH_STATUS_STALE = 2;
+  LINE_BODY_BATCH_STATUS_SESSION_GONE = 3;
+  LINE_BODY_BATCH_STATUS_RETRYABLE = 4;
+}
+
+message LineBodyBatchResponse {
+  string instance_id = 1;
+  repeated LineBodyRecord bodies = 2;
+  repeated LineKey missing_keys = 3;
+  Dictionary dictionary = 4;
+  LineBodyBatchStatus status = 5;
+  uint64 layout_epoch = 6;
+  uint64 history_generation = 7;
   uint32 retry_after_ms = 8;
 }

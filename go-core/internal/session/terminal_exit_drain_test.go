@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	pb "webterm/go-core/internal/screenprotocol/generatedv2"
+	pb "webterm/go-core/internal/screenprotocol/generatedv3"
 )
 
 // exitOrderSocket 按写入顺序记录全部出站帧的测试 Socket。
@@ -30,7 +30,7 @@ func (socket *exitOrderSocket) Write(_ context.Context, _ MessageType, data []by
 }
 
 func (socket *exitOrderSocket) Close() error        { return nil }
-func (socket *exitOrderSocket) Subprotocol() string { return "webterm.screen.v2" }
+func (socket *exitOrderSocket) Subprotocol() string { return "webterm.screen.v3" }
 
 func (socket *exitOrderSocket) snapshot() [][]byte {
 	socket.mu.Lock()
@@ -61,7 +61,7 @@ func TestTerminalExitDeliversFinalOutputBeforeExit(t *testing.T) {
 	go client.run(ctx)
 
 	helloBytes, err := proto.Marshal(&pb.ScreenEnvelope{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Payload: &pb.ScreenEnvelope_Hello{Hello: &pb.Hello{
 			DesiredGeometry: &pb.Geometry{Cols: 100, Rows: 30},
 		}},
@@ -118,16 +118,12 @@ func TestTerminalExitDeliversFinalOutputBeforeExit(t *testing.T) {
 }
 
 func envelopeContainsText(envelope *pb.ScreenEnvelope, needle string) bool {
-	var lines []*pb.LineData
+	var lines []*pb.LineBodyRecord
 	if baseline := envelope.GetBaseline(); baseline != nil {
-		lines = append(lines, baseline.GetScreenLines()...)
+		lines = append(lines, baseline.GetScreenBodies()...)
 	}
 	if commit := envelope.GetTerminalCommit(); commit != nil {
-		if commit.GetScreen() != nil {
-			for _, write := range commit.GetScreen().GetWrites() {
-				lines = append(lines, write.GetLine())
-			}
-		}
+		lines = append(lines, commit.GetBodyUpserts()...)
 	}
 	for _, line := range lines {
 		if strings.Contains(string(line.GetUtf8Text()), needle) {

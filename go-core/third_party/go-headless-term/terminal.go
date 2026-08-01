@@ -543,7 +543,7 @@ func (t *Terminal) Resize(rows, cols int) {
 
 				// Copy popped lines to the top of the buffer
 				for i, line := range lines {
-					t.primaryBuffer.RestoreRow(i, line.Cells, line.Wrapped, line.LineID, line.LineVersion)
+					t.primaryBuffer.RestoreRow(i, line.Cells, line.Wrapped, line.LineID)
 				}
 
 				// Adjust cursor position to account for the shift

@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 发布渲染快照和维护 Runtime 所需的轻量只读状态。</p>
  */
 public final class RemoteTerminalModel {
-  public static final long SCHEMA_GENERATION = 2L;
+  public static final long SCHEMA_GENERATION = 3L;
 
   public String instanceId;
   public long layoutEpoch;
@@ -27,7 +27,6 @@ public final class RemoteTerminalModel {
   private final ScreenProjectionReducer projectionReducer;
   private final HistoryBodyReducer historyBodyReducer = new HistoryBodyReducer();
   private ProjectionState state;
-  private long dictionaryGeneration;
   private long historyGeneration;
   private EvictionPins evictionPins = EvictionPins.NONE;
 
@@ -212,9 +211,40 @@ public final class RemoteTerminalModel {
     }
   }
 
-  /**
-   * HTTP Range 只补充主屏正文。任何拒绝结果都留在缓存域，不产生 Baseline 请求。
-   */
+  public synchronized HistoryBodyResult applyLineBodyBatch(
+      LineBodyBatchResult batch, BodyBatchRequestContext request) {
+    if (state == null) {
+      return new HistoryBodyResult.Rejected(HistoryBodyFault.STALE_PROJECTION);
+    }
+    HistoryBodyResult result = historyBodyReducer.apply(
+        batch, request, state.mainSurface, currentEvictionPins(0));
+    if (!(result instanceof HistoryBodyResult.Applied applied)) return result;
+    state = new ProjectionState(
+        state.identity,
+        state.screenRevision,
+        state.rows,
+        state.columns,
+        state.activeBuffer,
+        applied.state(),
+        state.alternateSurface,
+        state.cursor,
+        state.modes,
+        state.palette);
+    if (activeBuffer == TerminalBufferKind.MAIN) {
+      if (applied.changedFromSeq() > 0 && applied.changedToSeq() >= applied.changedFromSeq()) {
+        pendingRenderDirty.mergeHistoryRange(
+            applied.changedFromSeq(), applied.changedToSeq(), false);
+      }
+      pendingTerminalState.merge(false, true, false, false, 0, 0);
+      publishPendingRenderUpdate();
+    } else {
+      publishProjectionReadView();
+    }
+    return result;
+  }
+
+  /** @deprecated 测试与旧 seq-range 兼容；运行时使用 {@link #applyLineBodyBatch} */
+  @Deprecated
   public synchronized HistoryBodyResult applyHistoryBody(
       HistoryRangeResult range, HistoryRequestContext request) {
     if (state == null) {
@@ -226,7 +256,6 @@ public final class RemoteTerminalModel {
     state = new ProjectionState(
         state.identity,
         state.screenRevision,
-        state.dictionaryGeneration,
         state.rows,
         state.columns,
         state.activeBuffer,
@@ -253,10 +282,6 @@ public final class RemoteTerminalModel {
   private EvictionPins currentEvictionPins(long fallbackAnchor) {
     return evictionPins == EvictionPins.NONE
         ? EvictionPins.forAnchor(fallbackAnchor) : evictionPins;
-  }
-
-  public synchronized long dictionaryGeneration() {
-    return dictionaryGeneration;
   }
 
   public synchronized long historyGeneration() {
@@ -393,7 +418,6 @@ public final class RemoteTerminalModel {
     layoutEpoch = next.identity.layoutEpoch();
     historyGeneration = next.identity.historyGeneration();
     screenRevision = next.screenRevision;
-    dictionaryGeneration = next.dictionaryGeneration;
     rows = next.rows;
     columns = next.columns;
     activeBuffer = next.activeBuffer;
@@ -573,8 +597,8 @@ public final class RemoteTerminalModel {
       case IDENTITY_MISMATCH -> CommitFailure.IDENTITY_MISMATCH;
       case LAYOUT_EPOCH_MISMATCH -> CommitFailure.LAYOUT_EPOCH_MISMATCH;
       case REVISION_GAP -> CommitFailure.REVISION_GAP;
-      case DICTIONARY_GENERATION_MISMATCH ->
-          CommitFailure.DICTIONARY_GENERATION_MISMATCH;
+      case PROMOTION_BODY_INVARIANT_FAILURE ->
+          CommitFailure.HISTORY_PROMOTION_MISSING_LINE;
       case HISTORY_GENERATION_MISMATCH ->
           CommitFailure.HISTORY_GENERATION_MISMATCH;
       case INVALID_HISTORY_MUTATION ->
