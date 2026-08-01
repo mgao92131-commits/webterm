@@ -146,6 +146,7 @@ public final class VisibleBodyLoader {
       latestDemand = new Demand(
           visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
           nextDemandEpoch++, createdAtNanos);
+      HistoryDemandMetrics.fetchPlanReused();
       return latestDemand;
     }
     if (activeRequest != null
@@ -156,6 +157,7 @@ public final class VisibleBodyLoader {
       latestDemand = new Demand(
           visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
           activeRequest.batch.demandEpoch, createdAtNanos);
+      HistoryDemandMetrics.fetchCoveredByActive();
       return latestDemand;
     }
     if (activeRequest != null
@@ -168,10 +170,12 @@ public final class VisibleBodyLoader {
       previous.cancel();
       previous.handle.cancel();
       activeRequest = null;
+      HistoryDemandMetrics.fetchCancelledForDistance();
     }
     latestDemand = new Demand(
         visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
         nextDemandEpoch++, createdAtNanos);
+    HistoryDemandMetrics.fetchPlanCreated();
     return latestDemand;
   }
 

@@ -22,6 +22,7 @@ import com.webterm.feature.terminal.domain.HistoryHttpMetrics;
 import com.webterm.feature.terminal.domain.HistoryDemandMetrics;
 import com.webterm.feature.terminal.domain.TerminalResumeMetrics;
 import com.webterm.mobile.BuildConfig;
+import com.webterm.terminal.model.BaselineBodyReuseMetrics;
 import com.webterm.terminal.model.HistoryPromotionMetrics;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.transport.api.MuxTransport;
@@ -210,6 +211,7 @@ public final class DiagnosticLogExporter {
         json.put("historyHttp", mapToJson(HistoryHttpMetrics.processSnapshot()));
         json.put("historyDemand", longMapJson(HistoryDemandMetrics.snapshot()));
         json.put("historyPromotion", mapToJson(HistoryPromotionMetrics.snapshot()));
+        json.put("baselineBodyReuse", longMapJson(BaselineBodyReuseMetrics.snapshot()));
 
         TerminalRenderMetrics.Snapshot screen = TerminalRenderMetrics.snapshot();
         JSONObject render = new JSONObject();

@@ -1014,6 +1014,8 @@ public final class TerminalSessionRuntime {
     }
     refreshEvictionPins();
     VisibleBodyLoader.ActiveRequest active = visibleBodyLoader.activeRequest();
+    HistoryDemandMetrics.batchRequested(
+        target.keys.size(), target.visibleKeyCount, target.prefetchKeyCount);
     emitHistoryRangeInfo("history_body_batch_requested",
         "requestId", active.callId,
         "keyCount", target.keys.size(),

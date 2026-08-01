@@ -126,6 +126,7 @@ public final class RemoteTerminalModel {
     ProjectionState next = applied.state();
     BaselineBodyReuse.Outcome reuse = BaselineBodyReuse.reuse(
         previous, next, baseline, evictionPins);
+    BaselineBodyReuseMetrics.record(reuse);
     if (reuse instanceof BaselineBodyReuse.Outcome.Conflict) {
       return new ProjectionResult.NeedsBaseline(ProjectionFault.BASELINE_BODY_CONFLICT);
     }

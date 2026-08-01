@@ -23,3 +23,9 @@ func TestParseLineBodyBatchPathRejectsGet(t *testing.T) {
 		t.Fatal("GET must not match line body batch route")
 	}
 }
+
+func TestLineBodyBatchMaxKeysConstant(t *testing.T) {
+	if lineBodyBatchMaxKeys != 512 {
+		t.Fatalf("lineBodyBatchMaxKeys=%d, want 512", lineBodyBatchMaxKeys)
+	}
+}

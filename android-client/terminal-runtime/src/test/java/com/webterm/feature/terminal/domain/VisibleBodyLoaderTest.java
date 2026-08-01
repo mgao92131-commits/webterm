@@ -112,6 +112,21 @@ public final class VisibleBodyLoaderTest {
   }
 
   @Test
+  public void fillsFromOppositeDirectionWhenPrimarySideExhausted() throws Exception {
+    VisibleBodyLoader loader = new VisibleBodyLoader();
+    // 可见区贴着历史头部，direction=-1 主方向无可扩展，应向更新侧补齐。
+    Fixture fixture = fixture(200);
+    VisibleBodyLoader.Demand demand = new VisibleBodyLoader.Demand(
+        1, 20, 1, -1, 20, 1, 0L);
+    VisibleBodyLoader.Batch batch = loader.planMissingBatch(
+        demand, "i1", 1, 1, fixture.extent, fixture.history, fixture.cache, fixture.catalog);
+    assertNotNull(batch);
+    assertEquals(128, batch.keys.size());
+    assertEquals(1, batch.plannedFromSeq);
+    assertEquals(128, batch.plannedToSeq);
+  }
+
+  @Test
   public void closeCancelsInFlightRequest() {
     VisibleBodyLoader loader = new VisibleBodyLoader();
     AtomicBoolean cancelled = new AtomicBoolean();
