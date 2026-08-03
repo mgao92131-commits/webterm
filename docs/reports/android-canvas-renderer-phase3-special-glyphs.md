@@ -17,6 +17,7 @@
 
 - `2c9edce2` `feat(renderer): add canvas special terminal glyph painters`
 - `993a16a8` `test(renderer): verify special glyph rendernode parity`
+- `ce8d0e08` `fix(renderer): correct special glyph masks and phase`
 
 改动只涉及 `terminal-renderer` 的特殊字符绘制、测试和本报告；没有修改
 `terminal-model`、`CellValue`、`StyleValue`、服务端协议、历史加载、滚动逻辑或
@@ -45,7 +46,9 @@ fallback。
 ### Box Drawing
 
 `BoxDrawingGlyphPainter` 使用静态 descriptor 表描述四个方向的 light、heavy、double
-stroke 及 horizontal/vertical dash pattern，绘制算法统一复用。已覆盖：
+stroke 及 horizontal/vertical dash pattern，绘制算法统一复用。虚线按完整 cell 轴生成后
+裁切到左右或上下连接方向，避免因半 cell 分段导致段数翻倍；水平相位使用终端 X，竖直
+相位使用行内局部 Y。已覆盖：
 
 - light、heavy、double 线；
 - mixed light/heavy junction；
@@ -53,15 +56,15 @@ stroke 及 horizontal/vertical dash pattern，绘制算法统一复用。已覆�
 - rounded corner；
 - diagonal、half-line 和 transition glyph。
 
-线宽基于实际 cell 像素尺寸计算，连续 cell 使用累计整数 edge；虚线按绝对 Canvas
-坐标取相位，不在每个 cell 边界重启。
+线宽基于实际 cell 像素尺寸计算，连续 cell 使用累计整数 edge；虚线不在半 cell 边界
+重启，并按稳定的终端 X / 行内 Y 相位绘制。
 
 ### Block Elements
 
 `BlockElementGlyphPainter` 使用整数 cell rect 和累计取整的 1/8 edge，覆盖完整
 U+2580–U+259F，包括半块、八分之一块、左右块、四象限组合和 `░▒▓`。shade 使用
-绝对像素锚定的 2×2 ordered pattern，并复用 `Path`，不在逐像素路径中调用独立
-`drawRect()`。
+终端 X 与行内 Y 相位锚定的 2×2 `BitmapShader`，复用 shader 和 `Matrix`，不再为每个
+物理像素向 `Path` 添加 1×1 矩形。
 
 ### Braille Patterns
 
@@ -131,7 +134,7 @@ cd android-client
 
 | 检查 | 结果 |
 | --- | --- |
-| JVM/Robolectric | 97/97 通过，0 skipped，0 failed，0 error |
+| JVM/Robolectric | 103/103 通过，0 skipped，0 failed，0 error |
 | `assembleDebug` | 通过 |
 | API 36 `connectedDebugAndroidTest` | 23/23 通过，0 skipped，0 failed |
 | API 29 | 未验证 |
@@ -141,8 +144,8 @@ cd android-client
 新增 JVM 覆盖包括：
 
 - 完整三类 Unicode 范围和 Powerline allowlist 分类；
-- Box descriptor 完整性、边界、double band、rounded/diagonal、fractional edge；
-- Block 比例、四象限、shade absolute phase；
+- Box descriptor 完整性、边界、double band、rounded/diagonal、fractional edge、2/3/4 段水平与垂直虚线；
+- Block 比例、全部十种四象限拓扑、shade terminal-X/line-local-Y phase；
 - Braille 八个单点、U+2800 空点和 U+28FF 全点；
 - Powerline fallback、clip 和 renderer resolved style；
 - hidden、reverse、dim、block cursor、wide span、decoration 和 selection overlay。
@@ -159,10 +162,10 @@ cd android-client
 | --- | --- |
 | 8 × 80 首帧 | `baseline_records=8`，`baseline_cache_misses=8` |
 | 单行 patch | `patch_records=1`，`patch_cache_hits=7`，`patch_cache_misses=1` |
-| 同画面第二帧 | `records_delta=0`，`cache_hits_delta=8`，`row_cache_miss_delta=0`，render duration 增量 `69,250 ns` |
+| 同画面第二帧 | `records_delta=0`，`cache_hits_delta=8`，`row_cache_miss_delta=0`，render duration 增量 `90,667 ns` |
 | cursor blink | `records_delta=0`，`cache_hits_delta=8`，`row_cache_miss_delta=0` |
 | selection 改变 | `records_delta=0`，`cache_hits_delta=8`，`row_cache_miss_delta=0`，变化像素 `2,380` |
-| 40 × 120 混合 Unicode | `records=40`，`visible_rows=40`，`recordable_rows=40`，`row_cache_misses=40`，`render_duration=16,325,375 ns` |
+| 40 × 120 混合 Unicode | `records=40`，`visible_rows=40`，`recordable_rows=40`，`row_cache_misses=40`，`render_duration=12,096,833 ns` |
 
 特殊字符在混合 Unicode 行中已经进入静态行 RenderNode 录制；第二帧、cursor blink 和
 selection 改变没有触发静态行重录。没有设置特殊字符独立的纳秒硬门槛。
