@@ -41,6 +41,7 @@ public final class RemoteTerminalRenderer {
   private final TerminalCellGeometry geometry = new TerminalCellGeometry();
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
+  private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
   private int phaseMetricsFrame;
@@ -570,7 +571,6 @@ public final class RemoteTerminalRenderer {
     float x = geometry.textOriginX(startCol);
     int left = geometry.columnEdgePx(startCol);
     int right = geometry.columnEdgePx(startCol + text.length());
-    float width = right - left;
     float expectedWidth = text.length() * geometry.cellWidth();
     // The canonical cell path scales each glyph independently. Scaling a whole run changes
     // hinting/anti-aliasing and can visibly shift glyphs, so only batch naturally cell-wide text.
@@ -591,20 +591,9 @@ public final class RemoteTerminalRenderer {
           rowY + geometry.baselineOffset(), textPaint);
     }
 
-    if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.SINGLE
-        || styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
-      textPaint.setColor(styleScratch.underlineColor);
-      float underlineY = rowY + geometry.lineHeightPx() - 2;
-      canvas.drawLine(left, underlineY, right, underlineY, textPaint);
-      if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
-        canvas.drawLine(left, underlineY - 3, right, underlineY - 3, textPaint);
-      }
-    }
-    if (styleScratch.strike) {
-      textPaint.setColor(styleScratch.foreground);
-      float strikeY = rowY + geometry.lineHeightPx() * 0.52f;
-      canvas.drawLine(left, strikeY, right, strikeY, textPaint);
-    }
+    int rowTop = Math.round(rowY);
+    decorationPainter.draw(canvas, styleScratch, left, right, rowTop,
+        rowTop + geometry.lineHeightPx());
     return true;
   }
 
@@ -664,20 +653,9 @@ public final class RemoteTerminalRenderer {
       if (savedMatrix) canvas.restore();
     }
 
-    if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.SINGLE
-        || styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
-      textPaint.setColor(styleScratch.underlineColor);
-      float underlineY = rowY + lineHeight - 2;
-      canvas.drawLine(left, underlineY, right, underlineY, textPaint);
-      if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
-        canvas.drawLine(left, underlineY - 3, right, underlineY - 3, textPaint);
-      }
-    }
-    if (styleScratch.strike) {
-      textPaint.setColor(styleScratch.foreground);
-      float strikeY = rowY + lineHeight * 0.52f;
-      canvas.drawLine(left, strikeY, right, strikeY, textPaint);
-    }
+    int rowTop = Math.round(rowY);
+    decorationPainter.draw(canvas, styleScratch, left, right, rowTop,
+        rowTop + geometry.lineHeightPx());
 
     if (selected) {
       // Draw after the complete glyph run so selection never replaces text with
