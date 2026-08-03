@@ -101,14 +101,41 @@ final class TerminalLineCompiler {
     return new CompiledTerminalLine(spans);
   }
 
+  /**
+   * 只扫描样式和正文形态，不创建编译 Span。用于决定是否需要动态 blink 覆盖层。
+   */
+  boolean hasVisibleBlink(
+      @NonNull RenderLine line,
+      int columns,
+      @NonNull TerminalPalette palette,
+      int canvasBackground) {
+    int lineLength = Math.min(line.length(), Math.max(0, columns));
+    for (int column = 0; column < lineLength; ) {
+      CellValue cell = line.at(column);
+      if (cell == null || cell.isSpacer()) {
+        column++;
+        continue;
+      }
+      int width = Math.min(Math.max(1, cell.width()), lineLength - column);
+      styleResolver.resolveInto(palette, cell.style(), false, styleScratch);
+      boolean hasDecoration = styleScratch.strike
+          || styleScratch.underlineKind != ResolvedTerminalStyle.UnderlineKind.NONE;
+      boolean visible = !styleScratch.hidden
+          && (cell.text().isEmpty() || !" ".equals(cell.text())
+              || styleScratch.background != canvasBackground
+              || hasDecoration);
+      if (visible && (styleScratch.blinkSlow || styleScratch.blinkFast)) return true;
+      column += Math.max(1, width);
+    }
+    return false;
+  }
+
   private static boolean isDefaultVisualBlank(
         String text, ResolvedTerminalStyle style, int canvasBackground) {
     return " ".equals(text)
         && !style.hidden
         && !style.strike
         && style.underlineKind == ResolvedTerminalStyle.UnderlineKind.NONE
-        && !style.blinkSlow
-        && !style.blinkFast
         && style.background == canvasBackground;
   }
 

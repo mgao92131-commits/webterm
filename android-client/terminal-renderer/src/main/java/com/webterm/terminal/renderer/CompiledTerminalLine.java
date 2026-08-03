@@ -24,6 +24,10 @@ final class CompiledTerminalLine {
     default int endColumn() {
       return startColumn() + columnCount();
     }
+
+    default boolean intersectsColumns(int firstColumn, int lastColumnExclusive) {
+      return firstColumn < endColumn() && lastColumnExclusive > startColumn();
+    }
   }
 
   record CompiledStyle(
@@ -75,6 +79,26 @@ final class CompiledTerminalLine {
     boolean hasDecoration() {
       return strike || underlineKind != ResolvedTerminalStyle.UnderlineKind.NONE;
     }
+
+    boolean hasBlink() {
+      return blinkSlow || blinkFast;
+    }
+
+    BlinkKind blinkKind() {
+      if (blinkFast) return BlinkKind.FAST;
+      if (blinkSlow) return BlinkKind.SLOW;
+      return BlinkKind.NONE;
+    }
+
+    boolean hasVisibleDecoration() {
+      return !hidden && hasDecoration();
+    }
+  }
+
+  enum BlinkKind {
+    NONE,
+    SLOW,
+    FAST
   }
 
   static final class TextSpan implements Span {
@@ -159,6 +183,14 @@ final class CompiledTerminalLine {
     boolean clusterPreserveAspect(int index) {
       return preserveAspect[index];
     }
+
+    int clusterIndexContainingColumn(int column) {
+      for (int i = 0; i < clusterCount(); i++) {
+        int start = clusterColumn(i);
+        if (column >= start && column < start + clusterWidth(i)) return i;
+      }
+      return -1;
+    }
   }
 
   static final class SpecialGlyphSpan implements Span {
@@ -239,7 +271,14 @@ final class CompiledTerminalLine {
     return new CompiledTerminalLine(Collections.emptyList());
   }
 
-  List<Span> spans() {
+    List<Span> spans() {
     return spans;
+  }
+
+  Span spanContainingColumn(int column) {
+    for (Span span : spans) {
+      if (column >= span.startColumn() && column < span.endColumn()) return span;
+    }
+    return null;
   }
 }

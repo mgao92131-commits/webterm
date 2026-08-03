@@ -20,8 +20,19 @@ final class TerminalTextPainter {
       @androidx.annotation.NonNull TerminalCellGeometry geometry,
       float rowY,
       @androidx.annotation.NonNull Paint textPaint) {
+    draw(canvas, span, geometry, rowY, textPaint, span.style().foreground(), false);
+  }
+
+  void draw(
+      @androidx.annotation.NonNull Canvas canvas,
+      @androidx.annotation.NonNull CompiledTerminalLine.TextSpan span,
+      @androidx.annotation.NonNull TerminalCellGeometry geometry,
+      float rowY,
+      @androidx.annotation.NonNull Paint textPaint,
+      int foregroundOverride,
+      boolean useForegroundOverride) {
     CompiledTerminalLine.CompiledStyle style = span.style();
-    applyStyle(textPaint, style);
+    applyStyle(textPaint, style, foregroundOverride, useForegroundOverride);
     if (style.hidden()) return;
 
     if (canDrawWholeRun(span, geometry, textPaint)) {
@@ -41,8 +52,9 @@ final class TerminalTextPainter {
     drawClusters(canvas, span, geometry, rowY, textPaint);
   }
 
-  private static void applyStyle(Paint paint, CompiledTerminalLine.CompiledStyle style) {
-    paint.setColor(style.foreground());
+  private static void applyStyle(Paint paint, CompiledTerminalLine.CompiledStyle style,
+                                 int foregroundOverride, boolean useForegroundOverride) {
+    paint.setColor(useForegroundOverride ? foregroundOverride : style.foreground());
     paint.setFakeBoldText(style.bold());
     paint.setTextSkewX(style.italic() ? -0.35f : 0f);
   }

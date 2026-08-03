@@ -120,7 +120,8 @@ public final class RemoteTerminalRendererCharacterizationTest {
         new CellValue("a", (byte) 1, slow, null),
         new CellValue("b", (byte) 1, slow, null),
         new CellValue("c", (byte) 1, slow, null)
-    }, ascii, new TerminalViewportState(), TerminalCursor.hidden());
+    }, ascii, new TerminalViewportState(), TerminalCursor.hidden(),
+        new TerminalAnimationState(true, true, false));
     assertTrue(ascii.textRunOps > 0);
     assertFalse("slow blink must not become fake bold", ascii.lastFakeBold);
     assertEquals("slow blink must not become bright ANSI color",
@@ -130,7 +131,8 @@ public final class RemoteTerminalRendererCharacterizationTest {
     CountingCanvas cell = new CountingCanvas(80, 40);
     render(new CellValue[] {
         new CellValue("界", (byte) 2, fast, null)
-    }, cell, new TerminalViewportState(), TerminalCursor.hidden());
+    }, cell, new TerminalViewportState(), TerminalCursor.hidden(),
+        new TerminalAnimationState(true, false, true));
     assertTrue(cell.textRunOps > 0);
     assertFalse("fast blink must not become fake bold", cell.lastFakeBold);
     assertEquals("fast blink must not become bright ANSI color",
@@ -145,9 +147,15 @@ public final class RemoteTerminalRendererCharacterizationTest {
 
   private static void render(CellValue[] cells, CountingCanvas canvas,
                              TerminalViewportState viewport, TerminalCursor cursor) {
+    render(cells, canvas, viewport, cursor, TerminalAnimationState.cursorOnly(true));
+  }
+
+  private static void render(CellValue[] cells, CountingCanvas canvas,
+                             TerminalViewportState viewport, TerminalCursor cursor,
+                             TerminalAnimationState animationState) {
     RemoteTerminalModel model = model(cells, cursor);
     RemoteTerminalRenderer renderer = renderer();
-    renderer.render(canvas, model.renderSnapshot(), viewport, true);
+    renderer.render(canvas, model.renderSnapshot(), viewport, animationState, null);
   }
 
   private static RemoteTerminalRenderer renderer() {

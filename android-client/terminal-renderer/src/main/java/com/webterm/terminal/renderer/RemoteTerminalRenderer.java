@@ -17,7 +17,6 @@ import com.webterm.terminal.model.SlotState;
 import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalSelection;
-import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalBufferKind;
@@ -150,7 +149,7 @@ public final class RemoteTerminalRenderer {
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn) {
-    render(canvas, model, viewport, cursorBlinkOn, null);
+    render(canvas, model, viewport, TerminalAnimationState.cursorOnly(cursorBlinkOn), null);
   }
 
   /**
@@ -161,6 +160,13 @@ public final class RemoteTerminalRenderer {
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn,
                      @Nullable TerminalLineRenderNodeCache lineCache) {
+    render(canvas, model, viewport, TerminalAnimationState.cursorOnly(cursorBlinkOn), lineCache);
+  }
+
+  void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
+              @NonNull TerminalViewportState viewport,
+              @NonNull TerminalAnimationState animationState,
+              @Nullable TerminalLineRenderNodeCache lineCache) {
     long renderStartedNanos = System.nanoTime();
     boolean samplePhases = (++phaseMetricsFrame & 63) == 1;
     long viewportCalculationNanos = 0L;
@@ -210,7 +216,7 @@ public final class RemoteTerminalRenderer {
     TerminalSelection normalizedSelection = selection != null ? selection.normalized() : null;
     TerminalCursor cursor = model.cursor;
     boolean cursorVisible = shouldDrawCursor(
-        viewport, model.activeBuffer, cursor, cursorBlinkOn);
+        viewport, model.activeBuffer, cursor, animationState.cursorOn());
     long backgroundDrawStartedNanos = samplePhases ? System.nanoTime() : 0L;
     canvas.drawColor(canvasBackground);
     if (samplePhases) {
@@ -277,12 +283,21 @@ public final class RemoteTerminalRenderer {
           canvasDrawNanos += System.nanoTime() - drawStartedNanos;
         }
       }
+      if (line != null && lineCompiler.hasVisibleBlink(
+          line, model.columns, palette, canvasBackground)) {
+        long blinkStartedNanos = samplePhases ? System.nanoTime() : 0L;
+        drawBlinkOverlayForLine(canvas, model.columns, palette, line, y,
+            canvasBackground, animationState);
+        if (samplePhases) {
+          canvasDrawNanos += System.nanoTime() - blinkStartedNanos;
+        }
+      }
       long overlayStartedNanos = samplePhases ? System.nanoTime() : 0L;
       drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
           historySeq, screenRow, normalizedSelection, canvasBackground);
       if (active && cursorVisible && cursor.row == screenRow) {
         drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
-            screenRow, cursor, canvasBackground);
+            screenRow, cursor, canvasBackground, animationState);
       }
       if (samplePhases) {
         canvasDrawNanos += System.nanoTime() - overlayStartedNanos;
@@ -376,11 +391,13 @@ public final class RemoteTerminalRenderer {
     if (line == null) return;
     CompiledTerminalLine compiled = lineCompiler.compile(
         line, columns, palette, canvasBackground);
-    drawCompiledLine(canvas, compiled, y, canvasBackground);
+    drawCompiledLine(canvas, compiled, y, canvasBackground,
+        TerminalAnimationState.staticContent());
   }
 
   private void drawCompiledLine(Canvas canvas, CompiledTerminalLine line,
-                                float rowY, int canvasBackground) {
+                                float rowY, int canvasBackground,
+                                TerminalAnimationState animationState) {
     for (CompiledTerminalLine.Span span : line.spans()) {
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = geometry.columnEdgePx(span.startColumn());
@@ -390,31 +407,65 @@ public final class RemoteTerminalRenderer {
         canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
       }
 
-      if (span instanceof CompiledTerminalLine.TextSpan) {
-        textPainter.draw(canvas, (CompiledTerminalLine.TextSpan) span,
-            geometry, rowY, textPaint);
-      } else if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
-        CompiledTerminalLine.SpecialGlyphSpan special =
-            (CompiledTerminalLine.SpecialGlyphSpan) span;
-        specialGlyphPainter.drawCodePointIfSupported(
-            canvas,
-            special.codePoint(),
-            left,
-            Math.round(rowY),
-            right,
-            Math.round(rowY) + geometry.lineHeightPx(),
-            style.foreground(),
-            0,
-            0,
-            special.startColumn(),
-            geometry.cellWidth());
+      if (animationState.foregroundVisible(style)) {
+        drawSpanForeground(canvas, span, rowY, style.foreground(),
+            style.underlineColor(), false);
       }
-
-      copyCompiledStyle(style, styleScratch);
-      int rowTop = Math.round(rowY);
-      decorationPainter.draw(canvas, styleScratch, left, right,
-          rowTop, rowTop + geometry.lineHeightPx());
     }
+  }
+
+  private void drawBlinkOverlayForLine(
+      Canvas canvas, int columns, TerminalPalette palette, RenderLine line, float rowY,
+      int canvasBackground, TerminalAnimationState animationState) {
+    CompiledTerminalLine compiled = lineCompiler.compile(
+        line, columns, palette, canvasBackground);
+    for (CompiledTerminalLine.Span span : compiled.spans()) {
+      CompiledTerminalLine.CompiledStyle style = span.style();
+      if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
+        drawSpanForeground(canvas, span, rowY, style.foreground(),
+            style.underlineColor(), false);
+      }
+    }
+  }
+
+  private void drawSpanForeground(
+      Canvas canvas,
+      CompiledTerminalLine.Span span,
+      float rowY,
+      int foreground,
+      int underlineColor,
+      boolean overrideForeground) {
+    CompiledTerminalLine.CompiledStyle style = span.style();
+    int left = geometry.columnEdgePx(span.startColumn());
+    int right = geometry.columnEdgePx(span.endColumn());
+    if (span instanceof CompiledTerminalLine.TextSpan) {
+      textPainter.draw(canvas, (CompiledTerminalLine.TextSpan) span,
+          geometry, rowY, textPaint, foreground, overrideForeground);
+    } else if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
+      CompiledTerminalLine.SpecialGlyphSpan special =
+          (CompiledTerminalLine.SpecialGlyphSpan) span;
+      specialGlyphPainter.drawCodePointIfSupported(
+          canvas,
+          special.codePoint(),
+          left,
+          Math.round(rowY),
+          right,
+          Math.round(rowY) + geometry.lineHeightPx(),
+          overrideForeground ? foreground : style.foreground(),
+          0,
+          0,
+          special.startColumn(),
+          geometry.cellWidth());
+    }
+
+    copyCompiledStyle(style, styleScratch);
+    if (overrideForeground) {
+      styleScratch.foreground = foreground;
+      styleScratch.underlineColor = underlineColor;
+    }
+    int rowTop = Math.round(rowY);
+    decorationPainter.draw(canvas, styleScratch, left, right,
+        rowTop, rowTop + geometry.lineHeightPx());
   }
 
   /** 在已绘制的行上追加选择高亮覆盖层。 */
@@ -445,7 +496,8 @@ public final class RemoteTerminalRenderer {
   /** 在已绘制的行上追加光标覆盖层。 */
   private void drawCursorOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
                                        RenderLine line, float y, int screenRow,
-                                       TerminalCursor cursor, int canvasBackground) {
+                                       TerminalCursor cursor, int canvasBackground,
+                                       TerminalAnimationState animationState) {
     if (line == null || cursor == null || !cursor.visible || screenRow != cursor.row
         || cursor.col < 0 || cursor.col >= columns) {
       return;
@@ -475,88 +527,28 @@ public final class RemoteTerminalRenderer {
       // 空 cell（或左侧无宽字符起始格的异常 spacer）没有字形可重绘，只画光标矩形。
       canvas.drawRect(left, y, right, y + lineHeight, bgPaint);
     } else {
-      // BLOCK 光标：复用 legacy cell 路径——先画反色背景与不透明光标矩形，
-      // 再以反色前景重绘字形，保证块光标下的字符可见（对齐旧 drawLine 路径）。
-      int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
-      boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint,
-          columnWidth, hasRightPadding(line, col, columnWidth, styleOf(cell)));
-      drawLegacyBlockCursorCell(canvas, palette, cell, col, y, false, true, cursor, preserveAspect,
-          canvasBackground);
-    }
-  }
-
-  // Phase 4 keeps the legacy single-cell redraw only for the block cursor overlay. Static
-  // ordinary text never enters this method; Phase 5 can replace this isolated path.
-  private void drawLegacyBlockCursorCell(Canvas canvas, TerminalPalette palette,
-                        CellValue cell, int col, float rowY, boolean selected,
-                        boolean insideCursor, TerminalCursor cursor, boolean preserveAspect,
-                        int canvasBackground) {
-    StyleValue style = styleOf(cell);
-    boolean blockCursor = insideCursor && cursor.shape == TerminalCursor.Shape.BLOCK;
-    styleResolver.resolveInto(palette, style, blockCursor, styleScratch);
-
-    float x = geometry.textOriginX(col);
-    int left = geometry.columnEdgePx(col);
-    int right = geometry.columnEdgePx(col + (cell.isWideStart() ? 2 : 1));
-    float lineHeight = geometry.lineHeightPx();
-    if (styleScratch.background != canvasBackground) {
-      bgPaint.setColor(styleScratch.background);
-      canvas.drawRect(left, rowY, right, rowY + lineHeight, bgPaint);
-    }
-
-    if (insideCursor) {
-      bgPaint.setColor(resolveColor(palette, palette.cursorColor));
-      if (cursor.shape == TerminalCursor.Shape.BAR) {
-        canvas.drawRect(left, rowY, barCursorRight(left, right), rowY + lineHeight, bgPaint);
-      } else if (cursor.shape == TerminalCursor.Shape.UNDERLINE) {
-        canvas.drawRect(left, rowY + lineHeight * 3f / 4f, right, rowY + lineHeight, bgPaint);
-      } else {
-        canvas.drawRect(left, rowY, right, rowY + lineHeight, bgPaint);
-      }
-    }
-
-    String text = cell.text();
-    if (text.isEmpty()) text = " ";
-    // A terminal's common case is an unstyled blank cell. Its background was
-    // already handled above, so measuring and drawing a space per cell only
-    // burns UI-thread time without changing pixels.
-    boolean drawGlyph = !" ".equals(text) && !styleScratch.hidden;
-    int rowTop = Math.round(rowY);
-    int rowBottom = rowTop + geometry.lineHeightPx();
-    if (drawGlyph) {
-      boolean specialGlyphDrawn = specialGlyphPainter.drawIfSupported(
-          canvas, text, left, rowTop, right, rowBottom, styleScratch.foreground,
-          0, 0, col, geometry.cellWidth());
-      if (!specialGlyphDrawn) {
-        textPaint.setColor(styleScratch.foreground);
-        textPaint.setFakeBoldText(styleScratch.bold);
-        textPaint.setTextSkewX(styleScratch.italic ? -0.35f : 0f);
-        float expectedWidth = (cell.isWideStart() ? 2 : 1) * geometry.cellWidth();
-        float measuredWidth = textPaint.measureText(text);
-        boolean scaleGlyph = !preserveAspect && measuredWidth > 0
-            && Math.abs(measuredWidth - expectedWidth) > 0.01f;
-        boolean savedMatrix = false;
-        float drawX = x;
-        if (scaleGlyph) {
-          canvas.save();
-          float scaleX = expectedWidth / measuredWidth;
-          canvas.scale(scaleX, 1f);
-          drawX = x / scaleX;
-          savedMatrix = true;
+      // BLOCK 光标：只重放与 cursor cell 相交的已编译 Span。文字仍使用原 TextSpan
+      // 的完整 shaping context，特殊字符也继续走 Phase 3 painter。
+      canvas.drawRect(left, y, right, y + lineHeight, bgPaint);
+      TerminalStyleResolver cursorResolver = styleResolver;
+      cursorResolver.resolveInto(palette, cell.style(), true, styleScratch);
+      int cursorForeground = styleScratch.foreground;
+      int cursorUnderlineColor = styleScratch.underlineColor;
+      CompiledTerminalLine compiled = lineCompiler.compile(
+          line, columns, palette, canvasBackground);
+      int saveCount = canvas.save();
+      canvas.clipRect(left, Math.round(y), right,
+          Math.round(y) + geometry.lineHeightPx());
+      try {
+        for (CompiledTerminalLine.Span span : compiled.spans()) {
+          if (!span.intersectsColumns(col, col + columnWidth)) continue;
+          if (!animationState.foregroundVisible(span.style())) continue;
+          drawSpanForeground(canvas, span, y, cursorForeground,
+              cursorUnderlineColor, true);
         }
-        canvas.drawText(text, drawX, rowY + geometry.baselineOffset(), textPaint);
-        if (savedMatrix) canvas.restore();
+      } finally {
+        canvas.restoreToCount(saveCount);
       }
-    }
-
-    decorationPainter.draw(canvas, styleScratch, left, right, rowTop,
-        rowBottom);
-
-    if (selected) {
-      // Draw after the complete glyph run so selection never replaces text with
-      // an opaque, cell-sized reverse background.
-      selectionPaint.setColor(SELECTION_OVERLAY);
-      canvas.drawRect(left, rowY, right, rowY + lineHeight, selectionPaint);
     }
   }
 
@@ -575,22 +567,8 @@ public final class RemoteTerminalRenderer {
     target.underlineKind = source.underlineKind();
   }
 
-  private boolean hasRightPadding(
-      RenderLine line, int col, int width, StyleValue style) {
-    int nextCol = col + width;
-    if (nextCol >= line.length()) return false;
-    CellValue next = line.at(nextCol);
-    return next != null && !next.isSpacer()
-        && java.util.Objects.equals(styleOf(next), style)
-        && (next.text().isEmpty() || " ".equals(next.text()));
-  }
-
   private static int barCursorRight(int left, int right) {
     return Math.min(right, left + Math.max(1, Math.round((right - left) / 4f)));
-  }
-
-  private static StyleValue styleOf(CellValue cell) {
-    return cell == null ? null : cell.style();
   }
 
   private static boolean isCellSelected(TerminalSelection selection, long historySeq, int screenRow,
