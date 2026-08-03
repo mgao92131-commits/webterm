@@ -38,7 +38,7 @@ import org.robolectric.annotation.Config;
  * 记录当前 renderer 的 Canvas 操作形态；不把普通字体的 glyph 轮廓作为正确性断言。
  */
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
+@Config(manifest = Config.NONE, sdk = 35)
 public final class RemoteTerminalRendererCharacterizationTest {
   @Test
   public void plainAsciiUsesContextualTextRun() {

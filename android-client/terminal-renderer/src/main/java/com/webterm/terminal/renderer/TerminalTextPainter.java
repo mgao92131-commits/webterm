@@ -55,7 +55,7 @@ final class TerminalTextPainter {
     float runStartX = geometry.textOriginX(span.startColumn());
     for (int cluster = 0; cluster < span.clusterCount(); cluster++) {
       int end = span.clusterUtf16End(cluster);
-      float actualAdvance = runAdvance(paint, text, 0, end, 0, text.length());
+      float actualAdvance = prefixAdvance(paint, text, end);
       if (actualAdvance <= 0f) {
         actualAdvance = paint.measureText(text, 0, end);
       }
@@ -86,7 +86,7 @@ final class TerminalTextPainter {
       int end = span.clusterUtf16End(cluster);
       float x = geometry.textOriginX(span.clusterColumn(cluster));
       float expectedWidth = span.clusterWidth(cluster) * geometry.cellWidth();
-      float measuredWidth = runAdvance(paint, text, start, end, contextStart, contextEnd);
+      float measuredWidth = clusterAdvance(paint, text, start, end, contextStart, contextEnd);
       if (measuredWidth <= 0f) {
         measuredWidth = paint.measureText(text, start, end);
       }
@@ -117,16 +117,13 @@ final class TerminalTextPainter {
     }
   }
 
-  private static float runAdvance(
+  private static float prefixAdvance(Paint paint, CharSequence text, int offset) {
+    return paint.getRunAdvance(
+        text, 0, text.length(), 0, text.length(), false, offset);
+  }
+
+  private static float clusterAdvance(
       Paint paint, CharSequence text, int start, int end, int contextStart, int contextEnd) {
-    try {
-      return paint.getRunAdvance(text, start, end, contextStart, contextEnd, false, 0);
-    } catch (NoSuchMethodError | IndexOutOfBoundsException ignored) {
-      // Robolectric shadows for older API surfaces may not expose this method even though the
-      // runtime API supported by the module does. Some old native shadows also reject a valid
-      // context range; the caller falls back to CharSequence measureText without splitting the
-      // grapheme or losing its context range.
-      return -1f;
-    }
+    return paint.getRunAdvance(text, start, end, contextStart, contextEnd, false, end);
   }
 }

@@ -30,7 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
+@Config(manifest = Config.NONE, sdk = 35)
 public final class RemoteTerminalViewScreenRegionTest {
   @Test
   public void screenRegionDirtyReturnsScreenRegion() {

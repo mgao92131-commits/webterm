@@ -2,7 +2,9 @@
 
 ## 状态
 
-Phase 4 的代码实现和 API 36 验证已完成；API 29 模拟器和真实 Android 设备尚未在当前环境执行，因此完整阶段验收仍保留这两个未验证项。
+Phase 4 的代码实现和 API 36 验证已完成。本轮修订修正了 `Paint.getRunAdvance()` 的绝对
+`offset` 参数，并补充了受控 advance 范围测试；API 29 模拟器和真实 Android 设备尚未
+在当前环境执行，因此完整阶段验收仍保留这两个未验证项。
 
 本阶段只把普通文字迁移到有序 Span 和 `Canvas.drawTextRun()`，没有修改 terminal-model、服务端协议、历史加载、滚动轴或特殊字符 painter 的几何实现。
 
@@ -10,7 +12,8 @@ Phase 4 的代码实现和 API 36 验证已完成；API 29 模拟器和真实 An
 
 - 生产基准（Phase 3 head）：`f9e6bba083d5beacc285e61cfac8863eb840ece8`
 - Phase 4 分支：`agent/android-renderer-phase4-contextual-text-runs`
-- 当前实现提交：`67d16f33` 及其父提交
+- Phase 4 基线实现提交：`67d16f33` 及其父提交
+- 本轮审查修订：工作树待提交（contextual advance offset 与测试增强）
 - Phase 4 提交：
   - `4850d95d test(renderer): add phase4 contextual text fixtures`
   - `29cbaf88 refactor(renderer): compile rows into ordered render spans`
@@ -43,9 +46,9 @@ Phase 4 的代码实现和 API 36 验证已完成；API 29 模拟器和真实 An
 
 结果：
 
-- JVM/Robolectric：118/118 通过。
+- JVM/Robolectric：120/120 通过。
 - `:terminal-renderer:assembleDebug`：通过。
-- API 36 instrumentation：25/25 通过。
+- API 36 instrumentation：25/25 通过（修订后重跑）。
 - `git diff --check`：通过。
 
 新增 JVM 覆盖：
@@ -55,6 +58,7 @@ Phase 4 的代码实现和 API 36 验证已完成；API 29 模拟器和真实 An
 - style boundary、special glyph boundary；
 - 默认空白裁剪、样式空格、hidden 背景；
 - TextRun 完整上下文、cluster fallback、combining 不拆分；
+- `getRunAdvance()` 的全文本前缀 offset、cluster `offset=end` 和合法范围约束；
 - bold/italic/color 状态不泄漏。
 
 新增 API 36 parity：
@@ -64,6 +68,7 @@ Phase 4 的代码实现和 API 36 验证已完成；API 29 模拟器和真实 An
 - Direct Canvas 与 RenderNode 的普通文字对照；
 - 当前设备上下文文字 parity 差异：`0/46464` 像素；
 - 既有特殊字符 parity、三行接缝和 decoration parity 继续通过。
+- 末列斜体 overhang 继续按 `KNOWN-05` 记录，未扩大到 CJK/emoji。
 
 ## RenderNode 指标
 

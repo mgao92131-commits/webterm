@@ -9,18 +9,23 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE)
+@Config(manifest = Config.NONE, sdk = 35)
 public final class TerminalTextPainterTest {
   @Test
   public void naturallyAlignedAsciiUsesOneContextualRun() {
-    Paint paint = paint();
-    TerminalCellGeometry geometry = geometry(paint.measureText("X"), 20f, 15f);
+    ControlledAdvancePaint paint = new ControlledAdvancePaint(
+        new float[] {10f, 20f, 30f},
+        new float[] {10f, 10f, 10f});
+    TerminalCellGeometry geometry = geometry(10f, 20f, 15f);
     CompiledTerminalLine.TextSpan span = textSpan(
         0, "abc", new int[] {0, 1, 2}, new int[] {0, 1, 2},
         new byte[] {1, 1, 1}, new boolean[] {false, false, false});
@@ -37,8 +42,10 @@ public final class TerminalTextPainterTest {
 
   @Test
   public void mismatchFallsBackToClustersButKeepsFullContext() {
-    Paint paint = paint();
-    TerminalCellGeometry geometry = geometry(paint.measureText("X") + 2f, 20f, 15f);
+    ControlledAdvancePaint paint = new ControlledAdvancePaint(
+        new float[] {9f, 18f, 27f},
+        new float[] {9f, 9f, 9f});
+    TerminalCellGeometry geometry = geometry(10f, 20f, 15f);
     CompiledTerminalLine.TextSpan span = textSpan(
         0, "abc", new int[] {0, 1, 2}, new int[] {0, 1, 2},
         new byte[] {1, 1, 1}, new boolean[] {true, true, true});
@@ -53,9 +60,71 @@ public final class TerminalTextPainterTest {
   }
 
   @Test
+  public void wholeRunUsesAbsolutePrefixOffsetsInFullContext() {
+    ControlledAdvancePaint paint = new ControlledAdvancePaint(
+        new float[] {10f, 20f, 40f, 50f},
+        new float[] {10f, 10f, 20f, 10f});
+    TerminalCellGeometry geometry = geometry(10f, 20f, 15f);
+    CompiledTerminalLine.TextSpan span = textSpan(
+        0, "abcd", new int[] {0, 1, 2, 3}, new int[] {0, 1, 2, 4},
+        new byte[] {1, 1, 2, 1}, new boolean[] {false, false, false, false});
+    CountingCanvas canvas = new CountingCanvas();
+
+    new TerminalTextPainter().draw(canvas, span, geometry, 0f, paint);
+
+    assertEquals(1, canvas.drawTextRunCount);
+    assertEquals(4, paint.runAdvanceCalls.size());
+    for (int i = 0; i < paint.runAdvanceCalls.size(); i++) {
+      RunAdvanceCall call = paint.runAdvanceCalls.get(i);
+      assertEquals(0, call.start());
+      assertEquals(4, call.end());
+      assertEquals(0, call.contextStart());
+      assertEquals(4, call.contextEnd());
+      assertEquals(i + 1, call.offset());
+    }
+  }
+
+  @Test
+  public void clusterFallbackUsesValidClusterOffsetsAndFullContext() {
+    ControlledAdvancePaint paint = new ControlledAdvancePaint(
+        new float[] {10f, 20f, 40f, 49f},
+        new float[] {9f, 11f, 20f, 10f});
+    TerminalCellGeometry geometry = geometry(10f, 20f, 15f);
+    CompiledTerminalLine.TextSpan span = textSpan(
+        0, "abcd", new int[] {0, 1, 2, 3}, new int[] {0, 1, 2, 4},
+        new byte[] {1, 1, 2, 1}, new boolean[] {false, false, false, false});
+    CountingCanvas canvas = new CountingCanvas();
+
+    new TerminalTextPainter().draw(canvas, span, geometry, 0f, paint);
+
+    assertEquals(4, canvas.drawTextRunCount);
+    assertEquals(8, paint.runAdvanceCalls.size());
+    for (int i = 0; i < 4; i++) {
+      RunAdvanceCall prefix = paint.runAdvanceCalls.get(i);
+      assertEquals(0, prefix.start());
+      assertEquals(4, prefix.end());
+      assertEquals(0, prefix.contextStart());
+      assertEquals(4, prefix.contextEnd());
+      assertEquals(i + 1, prefix.offset());
+
+      RunAdvanceCall cluster = paint.runAdvanceCalls.get(i + 4);
+      assertEquals(i, cluster.start());
+      assertEquals(i + 1, cluster.end());
+      assertEquals(0, cluster.contextStart());
+      assertEquals(4, cluster.contextEnd());
+      assertEquals(i + 1, cluster.offset());
+      assertTrue(cluster.contextStart() <= cluster.start());
+      assertTrue(cluster.start() <= cluster.offset());
+      assertTrue(cluster.offset() <= cluster.end());
+      assertTrue(cluster.end() <= cluster.contextEnd());
+    }
+  }
+
+  @Test
   public void combiningClusterIsNeverSplit() {
-    Paint paint = paint();
-    TerminalCellGeometry geometry = geometry(paint.measureText("X") + 2f, 20f, 15f);
+    ControlledAdvancePaint paint = new ControlledAdvancePaint(
+        new float[] {10f, 10f}, new float[] {10f});
+    TerminalCellGeometry geometry = geometry(10f, 20f, 15f);
     CompiledTerminalLine.TextSpan span = textSpan(
         0, "e\u0301", new int[] {0}, new int[] {0}, new byte[] {1},
         new boolean[] {false});
@@ -72,8 +141,9 @@ public final class TerminalTextPainterTest {
 
   @Test
   public void styleAndFontStateAreAppliedForEachSpan() {
-    Paint paint = paint();
-    TerminalCellGeometry geometry = geometry(paint.measureText("X"), 20f, 15f);
+    ControlledAdvancePaint paint = new ControlledAdvancePaint(
+        new float[] {10f}, new float[] {10f});
+    TerminalCellGeometry geometry = geometry(10f, 20f, 15f);
     CompiledTerminalLine.CompiledStyle boldItalic = style(0xFFFF0000, true, true, false);
     CompiledTerminalLine.CompiledStyle plain = style(0xFF00FF00, false, false, false);
     CountingCanvas canvas = new CountingCanvas();
@@ -195,10 +265,14 @@ public final class TerminalTextPainterTest {
     }
   }
 
-  private static final class RecordingPaint extends Paint {
+  private record RunAdvanceCall(
+      int start, int end, int contextStart, int contextEnd, int offset) {}
+
+  private static class RecordingPaint extends Paint {
     boolean recordedFakeBold;
     float recordedSkewX;
     int recordedColor;
+    final List<RunAdvanceCall> runAdvanceCalls = new ArrayList<>();
 
     @Override
     public void setFakeBoldText(boolean fakeBoldText) {
@@ -216,6 +290,33 @@ public final class TerminalTextPainterTest {
     public void setColor(int color) {
       recordedColor = color;
       super.setColor(color);
+    }
+
+    @Override
+    public float getRunAdvance(CharSequence text, int start, int end,
+                               int contextStart, int contextEnd, boolean isRtl, int offset) {
+      runAdvanceCalls.add(new RunAdvanceCall(start, end, contextStart, contextEnd, offset));
+      return super.getRunAdvance(text, start, end, contextStart, contextEnd, isRtl, offset);
+    }
+  }
+
+  private static final class ControlledAdvancePaint extends RecordingPaint {
+    private final float[] prefixAdvances;
+    private final float[] clusterAdvances;
+
+    ControlledAdvancePaint(float[] prefixAdvances, float[] clusterAdvances) {
+      this.prefixAdvances = prefixAdvances;
+      this.clusterAdvances = clusterAdvances;
+    }
+
+    @Override
+    public float getRunAdvance(CharSequence text, int start, int end,
+                               int contextStart, int contextEnd, boolean isRtl, int offset) {
+      runAdvanceCalls.add(new RunAdvanceCall(start, end, contextStart, contextEnd, offset));
+      if (start == 0 && end == text.length()) {
+        return prefixAdvances[offset - 1];
+      }
+      return clusterAdvances[start];
     }
   }
 }
