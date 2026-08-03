@@ -42,10 +42,10 @@ public final class RemoteTerminalRenderer {
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
   private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
+  private final TerminalLineCompiler lineCompiler = new TerminalLineCompiler();
+  private final TerminalTextPainter textPainter = new TerminalTextPainter();
   private final TerminalSpecialGlyphPainter specialGlyphPainter =
       new TerminalSpecialGlyphPainter();
-  /** Reused on the UI thread for the common, plain-ASCII output path. */
-  private final StringBuilder plainAsciiRun = new StringBuilder();
   private int phaseMetricsFrame;
 
   private int textSizeSp = 14;
@@ -59,6 +59,7 @@ public final class RemoteTerminalRenderer {
     typeface = tf;
     textPaint.setTextSize(textSizePx);
     textPaint.setTypeface(tf != null ? tf : Typeface.MONOSPACE);
+    textPainter.configureFont(textPaint);
     // ceil 保证行高落在整数像素；与像素对齐的 topInset 一起，使相邻行
     // RenderNode 的上下边界都落在整数 Y，避免硬件合成时出现 1px 暗缝。
     float lineHeight = (float) Math.ceil(textPaint.getFontSpacing());
@@ -144,6 +145,7 @@ public final class RemoteTerminalRenderer {
   private void applyFont() {
     textPaint.setTextSize(textSizeSp);
     textPaint.setTypeface(typeface != null ? typeface : Typeface.MONOSPACE);
+    textPainter.configureFont(textPaint);
   }
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
@@ -270,27 +272,20 @@ public final class RemoteTerminalRenderer {
       }
       if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
         long drawStartedNanos = samplePhases ? System.nanoTime() : 0L;
-        if (useCache) {
-          drawTerminalLineContent(canvas, model.columns, palette, line, y, canvasBackground);
-        } else {
-          drawLine(canvas, model.columns, palette, line, y, historySeq, screenRow,
-              normalizedSelection, cursor, active && cursorVisible, canvasBackground);
-        }
+        drawTerminalLineContent(canvas, model.columns, palette, line, y, canvasBackground);
         if (samplePhases) {
           canvasDrawNanos += System.nanoTime() - drawStartedNanos;
         }
       }
-      if (useCache) {
-        long overlayStartedNanos = samplePhases ? System.nanoTime() : 0L;
-        drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
-            historySeq, screenRow, normalizedSelection, canvasBackground);
-        if (active && cursorVisible && cursor.row == screenRow) {
-          drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
-              screenRow, cursor, canvasBackground);
-        }
-        if (samplePhases) {
-          canvasDrawNanos += System.nanoTime() - overlayStartedNanos;
-        }
+      long overlayStartedNanos = samplePhases ? System.nanoTime() : 0L;
+      drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
+          historySeq, screenRow, normalizedSelection, canvasBackground);
+      if (active && cursorVisible && cursor.row == screenRow) {
+        drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
+            screenRow, cursor, canvasBackground);
+      }
+      if (samplePhases) {
+        canvasDrawNanos += System.nanoTime() - overlayStartedNanos;
       }
       }
     } finally {
@@ -371,95 +366,54 @@ public final class RemoteTerminalRenderer {
     return (int) value;
   }
 
-  private void drawLine(Canvas canvas, int columns, TerminalPalette palette,
-                        RenderLine line, float y,
-                        long historySeq, int screenRow, TerminalSelection selection,
-                        TerminalCursor cursor, boolean cursorVisible, int canvasBackground) {
-    if (line == null) return;
-    int lineLength = Math.min(line.length(), columns);
-    for (int col = 0; col < lineLength; ) {
-      CellValue cell = line.at(col);
-      if (cell == null || cell.isSpacer()) {
-        col++;
-        continue;
-      }
-
-      // Keep Unicode/wide cells on the canonical path, but batch contiguous ASCII cells with
-      // the same style. Selection and cursor boundaries deliberately split runs.
-      if (startsBatchableAsciiRun(line, lineLength, selection, historySeq, screenRow, col,
-          cursor, cursorVisible)) {
-        int runStart = col;
-        StyleValue runStyle = styleOf(cell);
-        plainAsciiRun.setLength(0);
-        do {
-          plainAsciiRun.append(line.at(col).text().charAt(0));
-          col++;
-        } while (col < lineLength && java.util.Objects.equals(
-                styleOf(line.at(col)), runStyle)
-            && canBatchAscii(line.at(col), selection, historySeq, screenRow, col, cursor,
-                cursorVisible));
-        if (drawAsciiRun(canvas, palette, runStyle, plainAsciiRun, runStart, y,
-            canvasBackground)) {
-          continue;
-        }
-        // A scaling requirement discovered after measuring the complete run uses the canonical
-        // per-cell path so glyph hinting and placement remain pixel-identical.
-        col = runStart;
-      }
-      int columnWidth = cell.isWideStart() ? 2 : 1;
-      boolean selected = isCellSelected(selection, historySeq, screenRow, col, columnWidth);
-      boolean insideCursor = cursorVisible && screenRow == cursor.row
-          && (cursor.col == col || (columnWidth == 2 && cursor.col == col + 1));
-      int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
-      boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, columnWidth,
-          hasRightPadding(line, col, columnWidth, styleOf(cell)));
-      drawCell(canvas, palette, cell, col, y, selected, insideCursor, cursor,
-          preserveAspect, canvasBackground);
-      col++;
-    }
-  }
-
   /**
    * 仅绘制终端行的静态正文：背景、字符、样式装饰，不包含光标和选择。
-   * 用于 RenderNode 行缓存录制，保证光标闪烁和选择变化不会触发整行重录。
+   * 用于 RenderNode 行缓存录制和 Direct Canvas fallback，保证两条路径共享同一份
+   * 编译结果和文字绘制实现。
    */
   void drawTerminalLineContent(Canvas canvas, int columns, TerminalPalette palette,
                                RenderLine line, float y, int canvasBackground) {
     if (line == null) return;
-    int lineLength = Math.min(line.length(), columns);
-    for (int col = 0; col < lineLength; ) {
-      CellValue cell = line.at(col);
-      if (cell == null || cell.isSpacer()) {
-        col++;
-        continue;
+    CompiledTerminalLine compiled = lineCompiler.compile(
+        line, columns, palette, canvasBackground);
+    drawCompiledLine(canvas, compiled, y, canvasBackground);
+  }
+
+  private void drawCompiledLine(Canvas canvas, CompiledTerminalLine line,
+                                float rowY, int canvasBackground) {
+    for (CompiledTerminalLine.Span span : line.spans()) {
+      CompiledTerminalLine.CompiledStyle style = span.style();
+      int left = geometry.columnEdgePx(span.startColumn());
+      int right = geometry.columnEdgePx(span.endColumn());
+      if (style.background() != canvasBackground) {
+        bgPaint.setColor(style.background());
+        canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
       }
 
-      // 静态正文没有光标和选择边界，统一传 null / false 以复用现有批处理路径。
-      if (startsBatchableAsciiRun(line, lineLength, null, 0, -1, col,
-          null, false)) {
-        int runStart = col;
-        StyleValue runStyle = styleOf(cell);
-        plainAsciiRun.setLength(0);
-        do {
-          plainAsciiRun.append(line.at(col).text().charAt(0));
-          col++;
-        } while (col < lineLength && java.util.Objects.equals(
-                styleOf(line.at(col)), runStyle)
-            && canBatchAscii(line.at(col), null, 0, -1, col, null,
-                false));
-        if (drawAsciiRun(canvas, palette, runStyle, plainAsciiRun, runStart, y,
-            canvasBackground)) {
-          continue;
-        }
-        col = runStart;
+      if (span instanceof CompiledTerminalLine.TextSpan) {
+        textPainter.draw(canvas, (CompiledTerminalLine.TextSpan) span,
+            geometry, rowY, textPaint);
+      } else if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
+        CompiledTerminalLine.SpecialGlyphSpan special =
+            (CompiledTerminalLine.SpecialGlyphSpan) span;
+        specialGlyphPainter.drawCodePointIfSupported(
+            canvas,
+            special.codePoint(),
+            left,
+            Math.round(rowY),
+            right,
+            Math.round(rowY) + geometry.lineHeightPx(),
+            style.foreground(),
+            0,
+            0,
+            special.startColumn(),
+            geometry.cellWidth());
       }
-      int columnWidth = cell.isWideStart() ? 2 : 1;
-      int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
-      boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint, columnWidth,
-          hasRightPadding(line, col, columnWidth, styleOf(cell)));
-      drawCell(canvas, palette, cell, col, y, false, false, null,
-          preserveAspect, canvasBackground);
-      col++;
+
+      copyCompiledStyle(style, styleScratch);
+      int rowTop = Math.round(rowY);
+      decorationPainter.draw(canvas, styleScratch, left, right,
+          rowTop, rowTop + geometry.lineHeightPx());
     }
   }
 
@@ -526,78 +480,14 @@ public final class RemoteTerminalRenderer {
       int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
       boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint,
           columnWidth, hasRightPadding(line, col, columnWidth, styleOf(cell)));
-      drawCell(canvas, palette, cell, col, y, false, true, cursor, preserveAspect,
+      drawLegacyBlockCursorCell(canvas, palette, cell, col, y, false, true, cursor, preserveAspect,
           canvasBackground);
     }
   }
 
-  private static boolean canBatchAscii(CellValue cell, TerminalSelection selection,
-                                       long historySeq, int screenRow, int col,
-                                       TerminalCursor cursor, boolean cursorVisible) {
-    if (cell == null || cell.isSpacer() || cell.isWideStart()
-        || cell.text().length() != 1) return false;
-    char c = cell.text().charAt(0);
-    if (c < ' ' || c > '~') return false;
-    if (isCellSelected(selection, historySeq, screenRow, col, 1)) return false;
-    return !cursorVisible || screenRow != cursor.row || cursor.col != col;
-  }
-
-  private static boolean startsBatchableAsciiRun(RenderLine line, int lineLength,
-                                                 TerminalSelection selection, long historySeq,
-                                                 int screenRow, int col, TerminalCursor cursor,
-                                                 boolean cursorVisible) {
-    if (col + 2 >= lineLength) return false;
-    StyleValue style = styleOf(line.at(col));
-    for (int candidate = col; candidate < col + 3; candidate++) {
-      CellValue cell = line.at(candidate);
-      if (cell == null || !java.util.Objects.equals(
-              styleOf(cell), style)
-          || !canBatchAscii(cell, selection, historySeq, screenRow,
-          candidate, cursor, cursorVisible)) return false;
-    }
-    return true;
-  }
-
-  /** @return true if the run was drawn; false when glyph scaling requires the per-cell path. */
-  private boolean drawAsciiRun(Canvas canvas, TerminalPalette palette,
-                               @Nullable StyleValue style, CharSequence text, int startCol,
-                               float rowY, int canvasBackground) {
-    styleResolver.resolveInto(palette, style, false, styleScratch);
-
-    textPaint.setColor(styleScratch.foreground);
-    textPaint.setFakeBoldText(styleScratch.bold);
-    textPaint.setTextSkewX(styleScratch.italic ? -0.35f : 0f);
-
-    float x = geometry.textOriginX(startCol);
-    int left = geometry.columnEdgePx(startCol);
-    int right = geometry.columnEdgePx(startCol + text.length());
-    float expectedWidth = text.length() * geometry.cellWidth();
-    // The canonical cell path scales each glyph independently. Scaling a whole run changes
-    // hinting/anti-aliasing and can visibly shift glyphs, so only batch naturally cell-wide text.
-    if (!styleScratch.hidden) {
-      float measuredWidth = textPaint.measureText(text, 0, text.length());
-      // Robolectric's legacy Paint shadow reports zero; keep the benchmark capable of observing
-      // draw batching while real Android Canvas uses the strict no-scaling check below.
-      if (measuredWidth > 0 && Math.abs(measuredWidth - expectedWidth) > 0.01f) return false;
-    }
-    int bg = styleScratch.background;
-    if (bg != canvasBackground) {
-      bgPaint.setColor(bg);
-      canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
-    }
-
-    if (!styleScratch.hidden) {
-      canvas.drawText(text, 0, text.length(), x,
-          rowY + geometry.baselineOffset(), textPaint);
-    }
-
-    int rowTop = Math.round(rowY);
-    decorationPainter.draw(canvas, styleScratch, left, right, rowTop,
-        rowTop + geometry.lineHeightPx());
-    return true;
-  }
-
-  private void drawCell(Canvas canvas, TerminalPalette palette,
+  // Phase 4 keeps the legacy single-cell redraw only for the block cursor overlay. Static
+  // ordinary text never enters this method; Phase 5 can replace this isolated path.
+  private void drawLegacyBlockCursorCell(Canvas canvas, TerminalPalette palette,
                         CellValue cell, int col, float rowY, boolean selected,
                         boolean insideCursor, TerminalCursor cursor, boolean preserveAspect,
                         int canvasBackground) {
@@ -668,6 +558,21 @@ public final class RemoteTerminalRenderer {
       selectionPaint.setColor(SELECTION_OVERLAY);
       canvas.drawRect(left, rowY, right, rowY + lineHeight, selectionPaint);
     }
+  }
+
+  private static void copyCompiledStyle(
+      CompiledTerminalLine.CompiledStyle source, ResolvedTerminalStyle target) {
+    target.foreground = source.foreground();
+    target.background = source.background();
+    target.underlineColor = source.underlineColor();
+    target.bold = source.bold();
+    target.dim = source.dim();
+    target.italic = source.italic();
+    target.hidden = source.hidden();
+    target.strike = source.strike();
+    target.blinkSlow = source.blinkSlow();
+    target.blinkFast = source.blinkFast();
+    target.underlineKind = source.underlineKind();
   }
 
   private boolean hasRightPadding(

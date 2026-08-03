@@ -41,23 +41,25 @@ import org.robolectric.annotation.Config;
 @Config(manifest = Config.NONE)
 public final class RemoteTerminalRendererCharacterizationTest {
   @Test
-  public void plainAsciiUsesTheRunPath() {
+  public void plainAsciiUsesContextualTextRun() {
     TerminalCompatibilityFixtures.Fixture fixture = fixture("ascii-ligature-sequences");
     CountingCanvas canvas = new CountingCanvas(320, 40);
     render(fixture, canvas, new TerminalViewportState(), TerminalCursor.hidden());
 
     assertTrue("ASCII fixture must draw text", canvas.textOps > 0);
-    assertTrue("contiguous ASCII must expose the run path", canvas.batchedTextOps > 0);
+    assertTrue("ASCII must use drawTextRun", canvas.textRunOps > 0);
+    assertEquals("ordinary text must not use legacy drawText", 0, canvas.legacyTextOps);
   }
 
   @Test
-  public void nonAsciiGraphemesUsePerCellTextDrawing() {
+  public void nonAsciiGraphemesPreserveClusterMapping() {
     TerminalCompatibilityFixtures.Fixture fixture = fixture("emoji");
     CountingCanvas canvas = new CountingCanvas(160, 40);
     render(fixture, canvas, new TerminalViewportState(), TerminalCursor.hidden());
 
-    assertEquals("each emoji grapheme is drawn independently", 6, canvas.stringTextOps);
-    assertEquals(0, canvas.batchedTextOps);
+    assertTrue("emoji graphemes must use contextual drawTextRun", canvas.textRunOps > 0);
+    assertEquals("emoji must not use legacy String drawText", 0, canvas.legacyTextOps);
+    assertTrue("emoji run must retain context range", canvas.contextualRunOps > 0);
   }
 
   @Test
@@ -119,7 +121,7 @@ public final class RemoteTerminalRendererCharacterizationTest {
         new CellValue("b", (byte) 1, slow, null),
         new CellValue("c", (byte) 1, slow, null)
     }, ascii, new TerminalViewportState(), TerminalCursor.hidden());
-    assertTrue(ascii.textOps > 0);
+    assertTrue(ascii.textRunOps > 0);
     assertFalse("slow blink must not become fake bold", ascii.lastFakeBold);
     assertEquals("slow blink must not become bright ANSI color",
         expectedColor, ascii.lastTextColor);
@@ -129,7 +131,7 @@ public final class RemoteTerminalRendererCharacterizationTest {
     render(new CellValue[] {
         new CellValue("界", (byte) 2, fast, null)
     }, cell, new TerminalViewportState(), TerminalCursor.hidden());
-    assertTrue(cell.textOps > 0);
+    assertTrue(cell.textRunOps > 0);
     assertFalse("fast blink must not become fake bold", cell.lastFakeBold);
     assertEquals("fast blink must not become bright ANSI color",
         expectedColor, cell.lastTextColor);
@@ -181,8 +183,9 @@ public final class RemoteTerminalRendererCharacterizationTest {
 
   private static final class CountingCanvas extends Canvas {
     int textOps;
-    int stringTextOps;
-    int batchedTextOps;
+    int textRunOps;
+    int contextualRunOps;
+    int legacyTextOps;
     int rectOps;
     int lineOps;
     boolean lastFakeBold;
@@ -195,7 +198,7 @@ public final class RemoteTerminalRendererCharacterizationTest {
     @Override
     public void drawText(String text, float x, float y, Paint paint) {
       textOps++;
-      stringTextOps++;
+      legacyTextOps++;
       lastFakeBold = paint.isFakeBoldText();
       lastTextColor = paint.getColor();
       super.drawText(text, x, y, paint);
@@ -205,10 +208,21 @@ public final class RemoteTerminalRendererCharacterizationTest {
     public void drawText(
         CharSequence text, int start, int end, float x, float y, Paint paint) {
       textOps++;
-      batchedTextOps++;
+      legacyTextOps++;
       lastFakeBold = paint.isFakeBoldText();
       lastTextColor = paint.getColor();
       super.drawText(text, start, end, x, y, paint);
+    }
+
+    @Override
+    public void drawTextRun(CharSequence text, int start, int end,
+                            int contextStart, int contextEnd, float x, float y,
+                            boolean isRtl, Paint paint) {
+      textOps++;
+      textRunOps++;
+      if (start != contextStart || end != contextEnd) contextualRunOps++;
+      lastFakeBold = paint.isFakeBoldText();
+      lastTextColor = paint.getColor();
     }
 
     @Override

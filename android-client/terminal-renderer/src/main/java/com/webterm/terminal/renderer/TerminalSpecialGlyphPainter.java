@@ -90,6 +90,15 @@ final class TerminalSpecialGlyphPainter {
                           int left, int top, int right, int bottom, int foreground,
                           int phaseX, int phaseY, int column, float nominalCellWidth) {
     int codePoint = singleCodePoint(grapheme);
+    return drawCodePointIfSupported(canvas, codePoint, left, top, right, bottom, foreground,
+        phaseX, phaseY, column, nominalCellWidth);
+  }
+
+  /** 编译后的 SpecialGlyphSpan 已经完成单 code point 校验，直接走 painter 分派。 */
+  boolean drawCodePointIfSupported(Canvas canvas, int codePoint,
+                                   int left, int top, int right, int bottom, int foreground,
+                                   int phaseX, int phaseY, int column,
+                                   float nominalCellWidth) {
     Family family = familyForCodePoint(codePoint);
     if (!isEnabled(family) || left >= right || top >= bottom) return false;
 

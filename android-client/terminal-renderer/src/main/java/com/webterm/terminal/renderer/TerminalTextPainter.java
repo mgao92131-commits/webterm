@@ -121,10 +121,11 @@ final class TerminalTextPainter {
       Paint paint, CharSequence text, int start, int end, int contextStart, int contextEnd) {
     try {
       return paint.getRunAdvance(text, start, end, contextStart, contextEnd, false, 0);
-    } catch (NoSuchMethodError ignored) {
+    } catch (NoSuchMethodError | IndexOutOfBoundsException ignored) {
       // Robolectric shadows for older API surfaces may not expose this method even though the
-      // runtime API supported by the module does. The caller falls back to CharSequence
-      // measureText without splitting the grapheme or losing its context range.
+      // runtime API supported by the module does. Some old native shadows also reject a valid
+      // context range; the caller falls back to CharSequence measureText without splitting the
+      // grapheme or losing its context range.
       return -1f;
     }
   }

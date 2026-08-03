@@ -117,8 +117,9 @@ public final class SemanticRendererRegressionTest {
     }
 
     @Override
-    public void drawText(
-        CharSequence text, int start, int end, float x, float y, Paint paint) {
+    public void drawTextRun(CharSequence text, int start, int end,
+                            int contextStart, int contextEnd, float x, float y,
+                            boolean isRtl, Paint paint) {
       textOps++;
     }
   }
