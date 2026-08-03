@@ -467,6 +467,16 @@ public final class RemoteTerminalView extends View {
   }
 
   @Override
+  public void onVisibilityAggregated(boolean isVisible) {
+    super.onVisibilityAggregated(isVisible);
+    if (isVisible) {
+      updateCursorBlinkSchedule();
+    } else {
+      stopCursorBlinking();
+    }
+  }
+
+  @Override
   protected void onDetachedFromWindow() {
     clearPendingMouseMove();
     stopCursorBlinking();

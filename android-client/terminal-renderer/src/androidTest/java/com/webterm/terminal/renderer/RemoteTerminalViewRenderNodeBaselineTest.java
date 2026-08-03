@@ -7,6 +7,7 @@ import static org.junit.Assert.assertTrue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.widget.FrameLayout;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -306,6 +307,67 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
         afterBlinkOff.rowCacheHitCount > afterFirst.rowCacheHitCount);
     assertTrue("text blink phase must change foreground pixels",
         differentPixels(onShot.get(), offShot.get()) > 0);
+  }
+
+  @Test
+  public void aggregatedVisibilityRestartsTextBlinkScheduler() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(textBlinkBaseline()));
+    RenderUpdate update = model.consumeRenderUpdate();
+    TerminalViewportState viewport = new TerminalViewportState();
+    AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
+    AtomicReference<FrameLayout> parentRef = new AtomicReference<>();
+
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      scenario.onActivity(activity -> {
+        FrameLayout parent = new FrameLayout(activity);
+        RemoteTerminalView view = new RemoteTerminalView(activity);
+        parentRef.set(parent);
+        viewRef.set(view);
+        parent.addView(view, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        activity.setContentView(parent, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+      });
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+      DrawWaiter firstDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        firstDraw.attach(viewRef.get());
+        viewRef.get().bindModel(model);
+        viewRef.get().applyRenderUpdate(update, viewport);
+      });
+      assertTrue("aggregated visibility baseline draw did not complete", firstDraw.await());
+      scenario.onActivity(activity -> {
+        firstDraw.detach(viewRef.get());
+        assertTrue("text blink scheduler must start while aggregated visible",
+            viewRef.get().animationScheduledForTest());
+        viewRef.get().setVisibility(View.INVISIBLE);
+      });
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+      scenario.onActivity(activity -> assertFalse(
+          "View visibility must stop text blink scheduler",
+          viewRef.get().animationScheduledForTest()));
+
+      scenario.onActivity(activity -> viewRef.get().setVisibility(View.VISIBLE));
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+      scenario.onActivity(activity -> assertTrue(
+          "View visibility restore must restart text blink scheduler",
+          viewRef.get().animationScheduledForTest()));
+
+      scenario.onActivity(activity -> parentRef.get().setVisibility(View.GONE));
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+      scenario.onActivity(activity -> assertFalse(
+          "parent visibility must stop text blink scheduler",
+          viewRef.get().animationScheduledForTest()));
+
+      scenario.onActivity(activity -> parentRef.get().setVisibility(View.VISIBLE));
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+      scenario.onActivity(activity -> assertTrue(
+          "parent visibility restore must restart text blink scheduler",
+          viewRef.get().animationScheduledForTest()));
+    }
   }
 
   @Test
