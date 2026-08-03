@@ -38,13 +38,11 @@ public final class RemoteTerminalRenderer {
   private final Paint selectionPaint = new Paint();
   private final Paint placeholderPaint = new Paint();
   private final Rect clipBounds = new Rect();
+  private final TerminalCellGeometry geometry = new TerminalCellGeometry();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
   private int phaseMetricsFrame;
 
-  private float cellWidth;
-  private float lineHeight;
-  private float baselineOffset;
   private int textSizeSp = 14;
   @Nullable private Typeface typeface = Typeface.MONOSPACE;
 
@@ -58,25 +56,24 @@ public final class RemoteTerminalRenderer {
     textPaint.setTypeface(tf != null ? tf : Typeface.MONOSPACE);
     // ceil 保证行高落在整数像素；与像素对齐的 topInset 一起，使相邻行
     // RenderNode 的上下边界都落在整数 Y，避免硬件合成时出现 1px 暗缝。
-    lineHeight = (float) Math.ceil(textPaint.getFontSpacing());
+    float lineHeight = (float) Math.ceil(textPaint.getFontSpacing());
     // rowY is the top of a terminal cell. Match Termux TerminalRenderer:
     // its baseline is the cell top minus Paint.ascent(), not the full line
     // spacing. Using lineHeight here lowered glyphs within their cells and
     // made a full-cell block cursor appear visibly too high.
-    baselineOffset = -textPaint.ascent();
-    cellWidth = textPaint.measureText("X");
+    float baselineOffset = -textPaint.ascent();
+    float cellWidth = textPaint.measureText("X");
+    geometry.update(cellWidth, lineHeight, baselineOffset);
     // 预热 fallback chain，避免首个 emoji 采用错误的测量宽度。
     textPaint.measureText("😀");
   }
 
   public void setFontMetrics(float cellWidth, float lineHeight, float baselineOffset) {
-    this.cellWidth = cellWidth;
-    this.lineHeight = lineHeight;
-    this.baselineOffset = baselineOffset;
+    geometry.update(cellWidth, lineHeight, baselineOffset);
   }
 
-  public float getCellWidth() { return cellWidth; }
-  public float getLineHeight() { return lineHeight; }
+  public float getCellWidth() { return geometry.cellWidth(); }
+  public float getLineHeight() { return geometry.lineHeightPx(); }
 
   /**
    * Font-metric space above the first terminal cell, matching Termux.
@@ -88,11 +85,41 @@ public final class RemoteTerminalRenderer {
    * 保证坐标系一致。</p>
    */
   public float getTopInset() {
-    return (float) Math.round(Math.max(0f, lineHeight - baselineOffset));
+    return geometry.topInsetPx();
   }
 
   /** 基线相对行顶的偏移（仅供诊断只读快照使用）。 */
-  public float getBaselineOffset() { return baselineOffset; }
+  public float getBaselineOffset() { return geometry.baselineOffset(); }
+
+  float textOriginX(int column) { return geometry.textOriginX(column); }
+
+  int columnAt(float x, int columns) { return geometry.columnAt(x, columns); }
+
+  int screenRowAt(float y, int rows) { return geometry.rowAt(y, rows); }
+
+  int screenRowAt(float y, float screenTopY, int rows) {
+    return geometry.rowAt(y, screenTopY, rows);
+  }
+
+  int contentWidthPx(int columns) { return geometry.contentWidthPx(columns); }
+
+  int columnsThatFit(int availableWidth) { return geometry.columnsThatFit(availableWidth); }
+
+  int rowsThatFit(int availableHeight) { return geometry.rowsThatFit(availableHeight); }
+
+  int lineHeightPx() { return geometry.lineHeightPx(); }
+
+  int topInsetPx() { return geometry.topInsetPx(); }
+
+  int cellLeftPx(int column) { return geometry.cellLeftPx(column); }
+
+  int cellRightPx(int column, int columns) { return geometry.cellRightPx(column, columns); }
+
+  int cellRightPx(int column, int columnSpan, int columns) {
+    return geometry.spanRightPx(column, columnSpan, columns);
+  }
+
+  int cellWidthPx(int column, int columns) { return geometry.cellWidthPx(column, columns); }
 
   static int liveScreenExitOffsetPixels(int viewportHeight, float topInset) {
     return Math.max(
@@ -135,6 +162,8 @@ public final class RemoteTerminalRenderer {
     long renderNodeDrawOrRecordNanos = 0L;
     long canvasDrawNanos = 0L;
     try {
+    float cellWidth = geometry.cellWidth();
+    float lineHeight = geometry.lineHeightPx();
     if (lineHeight <= 0 || cellWidth <= 0) return;
 
     long viewportStartedNanos = samplePhases ? System.nanoTime() : 0L;
@@ -304,7 +333,8 @@ public final class RemoteTerminalRenderer {
     SlotState state = history.slotStateAt(historyIndex);
     int alpha = state == SlotState.UNAVAILABLE ? 18 : 10;
     placeholderPaint.setColor((canvasBackground & 0x00ffffff) | (alpha << 24));
-    canvas.drawRect(0f, y, columns * cellWidth, y + lineHeight, placeholderPaint);
+    canvas.drawRect(0f, y, geometry.contentWidthPx(columns),
+        y + geometry.lineHeightPx(), placeholderPaint);
   }
 
   /** Half-open row range whose cells can affect a Canvas clip, including one anti-aliasing guard. */
@@ -445,9 +475,9 @@ public final class RemoteTerminalRenderer {
       boolean selected = isCellSelected(normalized, historySeq, screenRow, col, columnWidth);
       if (selected) {
         selectionPaint.setColor(SELECTION_OVERLAY);
-        float x = col * cellWidth;
-        float width = columnWidth * cellWidth;
-        canvas.drawRect(x, y, x + width, y + lineHeight, selectionPaint);
+        int left = geometry.columnEdgePx(col);
+        int right = geometry.columnEdgePx(col + columnWidth);
+        canvas.drawRect(left, y, right, y + geometry.lineHeightPx(), selectionPaint);
       }
       col += columnWidth;
     }
@@ -474,8 +504,11 @@ public final class RemoteTerminalRenderer {
     }
     int columnWidth = cell != null && cell.isWideStart() ? 2 : 1;
     int cursorColor = resolveColor(palette, palette.cursorColor);
-    float x = col * cellWidth;
-    float width = columnWidth * cellWidth;
+    int left = geometry.columnEdgePx(col);
+    int right = geometry.columnEdgePx(col + columnWidth);
+    float x = left;
+    float width = right - left;
+    float lineHeight = geometry.lineHeightPx();
     bgPaint.setColor(cursorColor);
     if (cursor.shape == TerminalCursor.Shape.BAR) {
       canvas.drawRect(x, y, x + width / 4f, y + lineHeight, bgPaint);
@@ -546,39 +579,43 @@ public final class RemoteTerminalRenderer {
     textPaint.setFakeBoldText(bold);
     textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
 
-    float x = startCol * cellWidth;
-    float width = text.length() * cellWidth;
+    float x = geometry.textOriginX(startCol);
+    int left = geometry.columnEdgePx(startCol);
+    int right = geometry.columnEdgePx(startCol + text.length());
+    float width = right - left;
+    float expectedWidth = text.length() * geometry.cellWidth();
     // The canonical cell path scales each glyph independently. Scaling a whole run changes
     // hinting/anti-aliasing and can visibly shift glyphs, so only batch naturally cell-wide text.
     if (style == null || !style.hidden()) {
       float measuredWidth = textPaint.measureText(text, 0, text.length());
       // Robolectric's legacy Paint shadow reports zero; keep the benchmark capable of observing
       // draw batching while real Android Canvas uses the strict no-scaling check below.
-      if (measuredWidth > 0 && Math.abs(measuredWidth - width) > 0.01f) return false;
+      if (measuredWidth > 0 && Math.abs(measuredWidth - expectedWidth) > 0.01f) return false;
     }
     int bg = resolveColor(palette, bgColor);
     if (bg != canvasBackground) {
       bgPaint.setColor(bg);
-      canvas.drawRect(x, rowY, x + width, rowY + lineHeight, bgPaint);
+      canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
     }
 
     if (style == null || !style.hidden()) {
-      canvas.drawText(text, 0, text.length(), x, rowY + baselineOffset, textPaint);
+      canvas.drawText(text, 0, text.length(), x,
+          rowY + geometry.baselineOffset(), textPaint);
     }
 
     if (style != null && (style.underline() || style.doubleUnderline())) {
       textPaint.setColor(style.underlineColor() != null
           ? resolveColor(palette, style.underlineColor()) : fg);
-      float underlineY = rowY + lineHeight - 2;
-      canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
+      float underlineY = rowY + geometry.lineHeightPx() - 2;
+      canvas.drawLine(left, underlineY, right, underlineY, textPaint);
       if (style.doubleUnderline()) {
-        canvas.drawLine(x, underlineY - 3, x + width, underlineY - 3, textPaint);
+        canvas.drawLine(left, underlineY - 3, right, underlineY - 3, textPaint);
       }
     }
     if (style != null && style.strike()) {
       textPaint.setColor(fg);
-      canvas.drawLine(x, rowY + lineHeight * 0.52f, x + width,
-          rowY + lineHeight * 0.52f, textPaint);
+      float strikeY = rowY + geometry.lineHeightPx() * 0.52f;
+      canvas.drawLine(left, strikeY, right, strikeY, textPaint);
     }
     return true;
   }
@@ -610,11 +647,14 @@ public final class RemoteTerminalRenderer {
     if (style != null && style.dim()) fg = TerminalVisualRules.dim(fg);
     int bg = resolveColor(palette, bgColor);
 
-    float x = col * cellWidth;
-    float width = cell.isWideStart() ? cellWidth * 2 : cellWidth;
+    float x = geometry.textOriginX(col);
+    int left = geometry.columnEdgePx(col);
+    int right = geometry.columnEdgePx(col + (cell.isWideStart() ? 2 : 1));
+    float width = right - left;
+    float lineHeight = geometry.lineHeightPx();
     if (bg != canvasBackground) {
       bgPaint.setColor(bg);
-      canvas.drawRect(x, rowY, x + width, rowY + lineHeight, bgPaint);
+      canvas.drawRect(left, rowY, right, rowY + lineHeight, bgPaint);
     }
 
     if (insideCursor) {
@@ -638,7 +678,7 @@ public final class RemoteTerminalRenderer {
       textPaint.setColor(fg);
       textPaint.setFakeBoldText(bold);
       textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
-      float expectedWidth = (cell.isWideStart() ? 2 : 1) * cellWidth;
+      float expectedWidth = (cell.isWideStart() ? 2 : 1) * geometry.cellWidth();
       float measuredWidth = textPaint.measureText(text);
       boolean scaleGlyph = !preserveAspect && measuredWidth > 0
           && Math.abs(measuredWidth - expectedWidth) > 0.01f;
@@ -651,7 +691,7 @@ public final class RemoteTerminalRenderer {
         drawX = x / scaleX;
         savedMatrix = true;
       }
-      canvas.drawText(text, drawX, rowY + baselineOffset, textPaint);
+      canvas.drawText(text, drawX, rowY + geometry.baselineOffset(), textPaint);
       if (savedMatrix) canvas.restore();
     }
 
@@ -659,20 +699,21 @@ public final class RemoteTerminalRenderer {
       textPaint.setColor(style.underlineColor() != null
           ? resolveColor(palette, style.underlineColor()) : fg);
       float underlineY = rowY + lineHeight - 2;
-      canvas.drawLine(x, underlineY, x + width, underlineY, textPaint);
+      canvas.drawLine(left, underlineY, right, underlineY, textPaint);
       if (style.doubleUnderline()) {
-        canvas.drawLine(x, underlineY - 3, x + width, underlineY - 3, textPaint);
+        canvas.drawLine(left, underlineY - 3, right, underlineY - 3, textPaint);
       }
     }
     if (style != null && style.strike()) {
-      canvas.drawLine(x, rowY + lineHeight * 0.52f, x + width, rowY + lineHeight * 0.52f, textPaint);
+      float strikeY = rowY + lineHeight * 0.52f;
+      canvas.drawLine(left, strikeY, right, strikeY, textPaint);
     }
 
     if (selected) {
       // Draw after the complete glyph run so selection never replaces text with
       // an opaque, cell-sized reverse background.
       selectionPaint.setColor(SELECTION_OVERLAY);
-      canvas.drawRect(x, rowY, x + width, rowY + lineHeight, selectionPaint);
+      canvas.drawRect(left, rowY, right, rowY + lineHeight, selectionPaint);
     }
   }
 

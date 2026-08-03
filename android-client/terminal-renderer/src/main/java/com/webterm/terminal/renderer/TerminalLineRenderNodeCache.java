@@ -69,8 +69,8 @@ public final class TerminalLineRenderNodeCache {
     int nextColumns = snapshot.columns;
     // 行节点高度必须与整数 lineHeight 一致，保证录制内容铺满单元格且与
     // 像素对齐的 translate Y 无缝衔接。
-    int nextHeightPx = Math.max(1, Math.round(renderer.getLineHeight()));
-    int nextWidthPx = Math.max(1, Math.round(nextColumns * renderer.getCellWidth()));
+    int nextHeightPx = Math.max(1, renderer.lineHeightPx());
+    int nextWidthPx = Math.max(1, renderer.contentWidthPx(nextColumns));
     boolean generationChanged = instanceId == null
         || !instanceId.equals(snapshot.instanceId)
         || layoutEpoch != snapshot.layoutEpoch

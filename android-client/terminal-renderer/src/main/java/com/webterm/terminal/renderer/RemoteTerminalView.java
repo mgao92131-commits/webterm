@@ -660,15 +660,13 @@ public final class RemoteTerminalView extends View {
   @androidx.annotation.VisibleForTesting
   int pointerRow() {
     int rows = renderedSnapshot != null ? renderedSnapshot.rows : 0;
-    return Math.max(0, Math.min(rows > 0 ? rows - 1 : 0,
-        (int) (lastPointerY / lineHeight())));
+    return renderer.screenRowAt(lastPointerY, rows);
   }
 
   @androidx.annotation.VisibleForTesting
   int pointerColumn() {
     int cols = renderedSnapshot != null ? renderedSnapshot.columns : 0;
-    return Math.max(0, Math.min(cols > 0 ? cols - 1 : 0,
-        (int) (lastPointerX / cellWidth())));
+    return renderer.columnAt(lastPointerX, cols);
   }
 
   private void sendMouse(MotionEvent event, @NonNull String button, int wheelDelta, boolean pressed) {
@@ -676,8 +674,8 @@ public final class RemoteTerminalView extends View {
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     lastPointerX = event.getX();
     lastPointerY = event.getY();
-    int col = Math.max(0, Math.min(snapshot.columns - 1, (int) (event.getX() / cellWidth())));
-    int row = Math.max(0, Math.min(snapshot.rows - 1, (int) (event.getY() / lineHeight())));
+    int col = renderer.columnAt(event.getX(), snapshot.columns);
+    int row = renderer.screenRowAt(event.getY(), snapshot.rows);
     sendMouseAt(row, col, event.getMetaState(), button, wheelDelta, pressed);
   }
 
@@ -698,10 +696,8 @@ public final class RemoteTerminalView extends View {
     if (snapshot.rows <= 0 || snapshot.columns <= 0) return;
     lastPointerX = event.getX();
     lastPointerY = event.getY();
-    pendingMouseCol = Math.max(0,
-        Math.min(snapshot.columns - 1, (int) (event.getX() / cellWidth())));
-    pendingMouseRow = Math.max(0,
-        Math.min(snapshot.rows - 1, (int) (event.getY() / lineHeight())));
+    pendingMouseCol = renderer.columnAt(event.getX(), snapshot.columns);
+    pendingMouseRow = renderer.screenRowAt(event.getY(), snapshot.rows);
     pendingMouseMeta = event.getMetaState();
     if (!mouseMoveScheduled) {
       mouseMoveScheduled = true;
@@ -1000,8 +996,8 @@ public final class RemoteTerminalView extends View {
     float cellW = cellWidth();
     float lineH = lineHeight();
     if (cellW <= 0 || lineH <= 0) return;
-    int cols = Math.max(4, (int) (w / cellW));
-    int rows = Math.max(4, (int) ((h - renderer.getTopInset()) / lineH));
+    int cols = Math.max(4, renderer.columnsThatFit(w));
+    int rows = Math.max(4, renderer.rowsThatFit(h));
     if (host != null) {
       host.onRequestResize(cols, rows, w, h, cellW, lineH, isKeyboardVisible());
     }
@@ -1339,10 +1335,12 @@ public final class RemoteTerminalView extends View {
           (int) Math.ceil(Math.max(start[1], end[1]) + lineHeight()) + 1);
       if (bottom > top) {
         boolean singleRow = Math.abs(start[1] - end[1]) < 0.5f;
+        int startColumn = Math.max(0, Math.min(snapshot.columns, normalized.start.col));
+        int endColumn = Math.max(0, Math.min(snapshot.columns, normalized.end.col));
         int left = singleRow
-            ? Math.max(0, (int) Math.floor(Math.min(start[0], end[0])) - 1) : 0;
+            ? Math.max(0, renderer.cellLeftPx(Math.min(startColumn, endColumn)) - 1) : 0;
         int right = singleRow
-            ? Math.min(getWidth(), (int) Math.ceil(Math.max(start[0], end[0])) + 1)
+            ? Math.min(getWidth(), renderer.cellLeftPx(Math.max(startColumn, endColumn)) + 1)
             : getWidth();
         if (right > left) selectionDamage.set(left, top, right, bottom);
       }
@@ -1392,7 +1390,7 @@ public final class RemoteTerminalView extends View {
     float cellW = cellWidth();
     float lineH = lineHeight();
     if (cellW <= 0 || lineH <= 0) return null;
-    int col = Math.max(0, Math.min(cols - 1, (int) (x / cellW)));
+    int col = renderer.columnAt(x, cols);
 
     HistoryRenderView history = snapshot.history;
     int screenRows = snapshot.screenView.size();
@@ -1405,15 +1403,13 @@ public final class RemoteTerminalView extends View {
         lineH, renderer.getTopInset(), scrollOffset);
 
     if (screenRows > 0 && (y >= screenTopY || historyRows == 0)) {
-      int row = (int) ((y - screenTopY) / lineH);
-      row = Math.max(0, Math.min(screenRows - 1, row));
+      int row = renderer.screenRowAt(y, screenTopY, screenRows);
       return new TerminalSelection.Anchor(
           0, row, normalizeSelectionColumn(snapshot.screenView.lineAt(row), col));
     }
 
     if (historyRows == 0) return null;
-    int historyIndex = (int) ((y - contentTopY) / lineH);
-    historyIndex = Math.max(0, Math.min(historyRows - 1, historyIndex));
+    int historyIndex = renderer.screenRowAt(y, contentTopY, historyRows);
     RenderLine line = history.renderLineAt(historyIndex);
     // 稀疏分页历史下，命中的逻辑行可能尚未加载（UNLOADED）或已被裁剪（UNAVAILABLE），
     // lineAt 返回 null。此时无法锚定选择，安全返回 null 让上层（selectWordAt/长按）退出。
@@ -1648,9 +1644,10 @@ public final class RemoteTerminalView extends View {
     if (anchor.historySeq != 0) {
       int index = history.findSeqIndex(anchor.historySeq);
       if (index < 0) return null;
-      return new float[] {col * cellWidth(), contentTop + index * lineHeight()};
+      return new float[] {renderer.textOriginX(col), contentTop + index * lineHeight()};
     }
-    return new float[] {col * cellWidth(), contentTop + (history.size() + anchor.screenRow) * lineHeight()};
+    return new float[] {renderer.textOriginX(col),
+        contentTop + (history.size() + anchor.screenRow) * lineHeight()};
   }
 
   private float contentTopY() {

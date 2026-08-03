@@ -73,6 +73,19 @@ public final class RemoteTerminalViewScreenRegionTest {
     assertTrue(rect[3] - rect[1] < fx.view.getHeight());
   }
 
+  @Test
+  public void sharedRendererHitTestingKeepsTopInsetAboveRowZero() {
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(7.3f, 20.4f, 15.2f);
+    int topInset = renderer.topInsetPx();
+    int lineHeight = renderer.lineHeightPx();
+
+    assertEquals(0, renderer.screenRowAt(topInset - 1, 4));
+    assertEquals(0, renderer.screenRowAt(topInset, 4));
+    assertEquals(1, renderer.screenRowAt(topInset + lineHeight, 4));
+    assertEquals(2, renderer.columnAt(renderer.cellRightPx(1, 4), 4));
+  }
+
   private static Fixture fixture() {
     List<HistoryPush> history = new ArrayList<>();
     for (long seq = 1; seq <= 20; seq++) {
