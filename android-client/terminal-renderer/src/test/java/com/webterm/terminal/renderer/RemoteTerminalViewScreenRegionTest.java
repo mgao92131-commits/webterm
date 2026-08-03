@@ -86,6 +86,15 @@ public final class RemoteTerminalViewScreenRegionTest {
     assertEquals(2, renderer.columnAt(renderer.cellRightPx(1, 4), 4));
   }
 
+  @Test
+  public void fragmentedBlinkFallbackUsesAbsoluteContentBottom() {
+    // 17 行内容从 y=252 开始贴到 1000px View 底部；超过 8 个分散范围时，
+    // fallback 必须覆盖完整的 252..1000，而不能把内容高度误当成 bottom 坐标。
+    assertEquals(1000f,
+        RemoteTerminalView.animationViewportBottom(252f, 17L, 44f),
+        0f);
+  }
+
   private static Fixture fixture() {
     List<HistoryPush> history = new ArrayList<>();
     for (long seq = 1; seq <= 20; seq++) {

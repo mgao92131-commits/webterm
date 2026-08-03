@@ -211,6 +211,10 @@ public final class RemoteTerminalView extends View {
   private boolean cursorBlinkScheduled;
   private final Runnable animationRunnable = new Runnable() {
     @Override public void run() {
+      if (!isAnimationVisible()) {
+        stopCursorBlinking();
+        return;
+      }
       VisibleBlinkRows visibleRows = collectVisibleBlinkRows();
       int blinkKinds = visibleRows.kinds;
       boolean cursorShouldBlink = shouldBlinkCursor();
@@ -450,6 +454,16 @@ public final class RemoteTerminalView extends View {
   protected void onAttachedToWindow() {
     super.onAttachedToWindow();
     updateCursorBlinkSchedule();
+  }
+
+  @Override
+  protected void onWindowVisibilityChanged(int visibility) {
+    super.onWindowVisibilityChanged(visibility);
+    if (visibility == VISIBLE) {
+      updateCursorBlinkSchedule();
+    } else {
+      stopCursorBlinking();
+    }
   }
 
   @Override
@@ -1781,6 +1795,10 @@ public final class RemoteTerminalView extends View {
   }
 
   private void updateCursorBlinkSchedule() {
+    if (!isAnimationVisible()) {
+      stopCursorBlinking();
+      return;
+    }
     int blinkKinds = collectVisibleBlinkRows().kinds;
     boolean shouldBlink = shouldBlinkCursor();
     if (!shouldBlink && blinkKinds == 0) {
@@ -1807,6 +1825,10 @@ public final class RemoteTerminalView extends View {
     fastBlinkOn = true;
   }
 
+  private boolean isAnimationVisible() {
+    return isAttachedToWindow() && getWindowVisibility() == VISIBLE && isShown();
+  }
+
   private void scheduleAnimation(int blinkKinds) {
     removeCallbacks(animationRunnable);
     long period = (blinkKinds & TerminalLineCompiler.BLINK_FAST) != 0 ? 250L : 500L;
@@ -1823,7 +1845,7 @@ public final class RemoteTerminalView extends View {
     VisibleBlinkRows result = visibleBlinkRowsScratch;
     result.reset();
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    if (snapshot == null || !isAttachedToWindow() || getHeight() <= 0) return result;
+    if (snapshot == null || !isAnimationVisible() || getHeight() <= 0) return result;
 
     float rowHeight = renderer.getLineHeight();
     if (rowHeight <= 0f) return result;
@@ -1924,7 +1946,9 @@ public final class RemoteTerminalView extends View {
       }
       if (rangeStart >= 0L) {
         if (rangeCount == MAX_PARTIAL_DIRTY_RECTS) {
-          postAnimatedViewportDamage(contentTop, snapshot.contentAxis.rowCount() * rowHeight);
+          postAnimatedViewportDamage(
+              contentTop, animationViewportBottom(
+                  contentTop, snapshot.contentAxis.rowCount(), rowHeight));
           return;
         }
         animationRangeTops[rangeCount] = contentTop + rangeStart * rowHeight;
@@ -1935,7 +1959,9 @@ public final class RemoteTerminalView extends View {
     }
     if (rangeStart >= 0L) {
       if (rangeCount == MAX_PARTIAL_DIRTY_RECTS) {
-        postAnimatedViewportDamage(contentTop, snapshot.contentAxis.rowCount() * rowHeight);
+        postAnimatedViewportDamage(
+            contentTop, animationViewportBottom(
+                contentTop, snapshot.contentAxis.rowCount(), rowHeight));
         return;
       }
       animationRangeTops[rangeCount] = contentTop + rangeStart * rowHeight;
@@ -1953,6 +1979,11 @@ public final class RemoteTerminalView extends View {
     int top = damageTop(Math.max(0f, contentTop));
     int bottom = damageBottom(Math.min(getHeight(), contentBottom));
     if (bottom > top) postInvalidateOnAnimation(0, top, getWidth(), bottom);
+  }
+
+  @androidx.annotation.VisibleForTesting
+  static float animationViewportBottom(float contentTop, long rowCount, float rowHeight) {
+    return contentTop + rowCount * rowHeight;
   }
 
   private boolean postCursorRowDamage(int row, float screenTop, float rowHeight) {

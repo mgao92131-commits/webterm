@@ -1,8 +1,10 @@
 package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 
@@ -271,6 +273,12 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       scenario.onActivity(activity -> {
         firstDraw.detach(viewRef.get());
         assertTrue("text blink scheduler must be active",
+            viewRef.get().animationScheduledForTest());
+        viewRef.get().onWindowVisibilityChanged(View.INVISIBLE);
+        assertFalse("hidden window must stop text blink scheduler",
+            viewRef.get().animationScheduledForTest());
+        viewRef.get().onWindowVisibilityChanged(View.VISIBLE);
+        assertTrue("visible window must restart text blink scheduler",
             viewRef.get().animationScheduledForTest());
       });
       afterFirst = TerminalRenderMetrics.snapshot();
