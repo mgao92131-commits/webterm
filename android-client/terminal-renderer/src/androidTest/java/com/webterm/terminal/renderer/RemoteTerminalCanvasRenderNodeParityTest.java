@@ -255,6 +255,47 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     }
   }
 
+  @Test
+  public void specialTerminalGlyphsHaveCanvasRenderNodeParity() throws Exception {
+    CellValue[][] rows = new CellValue[][] {
+        row(COLUMNS, "┌", "─", "─", "─", "─", "┐", " ", " ", " ", " ", " ", " ",
+            "", "", "", ""),
+        row(COLUMNS, "│", "█", "▀", "▄", "│", " ", " ", " ", " ", " ", " ", "├", "⣿", "▒", "┤"),
+        row(COLUMNS, "└", "─", "─", "─", "─", "┘", " ", " ", " ", " ", " ", "╔", "═", "╗")
+    };
+    ParityCapture capture = captureParity(rows, COLUMNS, VIEW_HEIGHT);
+    try {
+      CapturedViewState state = capture.state;
+      int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
+      int terminalRight = Math.min(capture.direct.getWidth(), edgePx(state.cellWidth, COLUMNS));
+      for (int row = 0; row < rows.length; row++) {
+        int rowTop = topInset + Math.round(row * state.lineHeight);
+        int rowBottom = Math.min(capture.direct.getHeight(),
+            rowTop + Math.round(state.lineHeight));
+        for (int column = 0; column < COLUMNS; column++) {
+          String text = rows[row][column].text();
+          if (!isSpecialGlyph(text)) continue;
+          int left = edgePx(state.cellWidth, column);
+          int right = Math.min(terminalRight, edgePx(state.cellWidth, column + 1));
+          for (int y = rowTop; y < rowBottom; y++) {
+            for (int x = left; x < right; x++) {
+              boolean directInk = capture.direct.getPixel(x, y) != BACKGROUND;
+              boolean hardwareInk = capture.hardware.getPixel(x, y) != BACKGROUND;
+              assertEquals("special mask mismatch at row=" + row + " col=" + column
+                  + " x=" + x + " y=" + y + " text=" + text,
+                  directInk, hardwareInk);
+            }
+          }
+        }
+      }
+      System.out.println("PARITY_SPECIAL canvas_rendernode=true rows=" + rows.length
+          + " columns=" + COLUMNS + " cell_width=" + state.cellWidth
+          + " line_height=" + state.lineHeight + " baseline=" + state.baseline);
+    } finally {
+      capture.recycle();
+    }
+  }
+
   private static RemoteTerminalModel model() {
     return parityModel(new CellValue[][] {cells()}, COLUMNS);
   }
@@ -366,6 +407,22 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     return cells;
   }
 
+  private static CellValue[] row(int columns, String... graphemes) {
+    CellValue[] cells = new CellValue[columns];
+    Arrays.fill(cells, CellValue.EMPTY);
+    int column = 0;
+    for (String grapheme : graphemes) {
+      if (column >= columns) break;
+      cells[column++] = new CellValue(grapheme, (byte) 1, null, null);
+    }
+    return cells;
+  }
+
+  private static boolean isSpecialGlyph(String text) {
+    return TerminalSpecialGlyphPainter.familyFor(text)
+        != TerminalSpecialGlyphPainter.Family.NONE;
+  }
+
   private static List<EdgeCase> edgeCases() {
     return List.of(
         new EdgeCase("last-italic-f", 15, edgeLine(15, italic("f"))),
@@ -456,6 +513,10 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       }
     }
     return count;
+  }
+
+  private static int countInk(Bitmap bitmap, int left, int right, int top, int bottom) {
+    return countInk(bitmap, new Rect(left, top, right, bottom));
   }
 
   private static boolean inkBoundsClose(Rect direct, Rect hardware) {
