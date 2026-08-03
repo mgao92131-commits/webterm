@@ -14,8 +14,6 @@ import java.util.List;
 final class TerminalLineCompiler {
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
-  private final TerminalSpecialGlyphPainter specialGlyphPainter =
-      new TerminalSpecialGlyphPainter();
 
   @NonNull
   CompiledTerminalLine compile(
@@ -52,7 +50,8 @@ final class TerminalLineCompiler {
 
       String text = cell.text().isEmpty() ? " " : cell.text();
       int codePoint = TerminalSpecialGlyphPainter.singleCodePoint(text);
-      boolean special = !styleScratch.hidden && specialGlyphPainter.supports(text);
+      boolean special = !styleScratch.hidden
+          && TerminalSpecialGlyphPainter.supportsGrapheme(text);
       if (special) {
         textBuilder = flushText(textBuilder, spans);
         blankBuilder = flushBlank(blankBuilder, spans);

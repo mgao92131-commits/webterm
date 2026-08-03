@@ -62,6 +62,10 @@ final class TerminalSpecialGlyphPainter {
   private final PowerlineGlyphPainter powerlinePainter = new PowerlineGlyphPainter();
 
   boolean supports(String grapheme) {
+    return supportsGrapheme(grapheme);
+  }
+
+  static boolean supportsGrapheme(String grapheme) {
     return isEnabled(familyFor(grapheme));
   }
 
