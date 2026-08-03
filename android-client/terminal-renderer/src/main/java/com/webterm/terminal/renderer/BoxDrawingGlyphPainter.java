@@ -227,18 +227,22 @@ final class BoxDrawingGlyphPainter {
     float radiusY = (bottom - top) / 2f;
     float kx = radiusX * CURVE_KAPPA;
     float ky = radiusY * CURVE_KAPPA;
+    // The curve must be tangent to the vertical stroke at the top/bottom edge and tangent
+    // to the horizontal stroke at the left/right edge. The previous control points swapped
+    // those axes, producing a deep inward bow and a visible kink where the arc met straight
+    // neighbouring cells.
     if (glyph.right != Stroke.NONE && glyph.bottom != Stroke.NONE) {
       path.moveTo(centerX, bottom);
-      path.cubicTo(centerX + kx, bottom, right, centerY + ky, right, centerY);
+      path.cubicTo(centerX, bottom - ky, right - kx, centerY, right, centerY);
     } else if (glyph.left != Stroke.NONE && glyph.bottom != Stroke.NONE) {
       path.moveTo(centerX, bottom);
-      path.cubicTo(centerX - kx, bottom, left, centerY + ky, left, centerY);
+      path.cubicTo(centerX, bottom - ky, left + kx, centerY, left, centerY);
     } else if (glyph.left != Stroke.NONE && glyph.top != Stroke.NONE) {
       path.moveTo(centerX, top);
-      path.cubicTo(centerX - kx, top, left, centerY - ky, left, centerY);
+      path.cubicTo(centerX, top + ky, left + kx, centerY, left, centerY);
     } else {
       path.moveTo(centerX, top);
-      path.cubicTo(centerX + kx, top, right, centerY - ky, right, centerY);
+      path.cubicTo(centerX, top + ky, right - kx, centerY, right, centerY);
     }
     canvas.drawPath(path, antiAliasPaint);
   }
