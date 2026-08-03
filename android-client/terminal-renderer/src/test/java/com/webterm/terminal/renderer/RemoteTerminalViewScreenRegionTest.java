@@ -8,6 +8,7 @@ import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.HistoryPush;
 import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineBodyRecord;
 import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderDirtyState;
@@ -86,9 +87,11 @@ public final class RemoteTerminalViewScreenRegionTest {
     }
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(new ScreenBaseline(
-        "session", "instance-1", 1, 1, 1, 1,
+        "session", "instance-1", 1, 1, 1,
         4, 80, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, 20), history, screen,
+        new HistoryExtent(1, 20), history,
+        screen.stream().map(ScreenLineContent::key).toList(),
+        screen.stream().map(line -> new LineBodyRecord(line.key(), line.body())).toList(),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
     RemoteTerminalView view = new RemoteTerminalView(RuntimeEnvironment.getApplication());

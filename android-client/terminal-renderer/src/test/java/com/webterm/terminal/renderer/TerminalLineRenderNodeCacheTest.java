@@ -11,6 +11,7 @@ import android.graphics.Canvas;
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.HistoryExtent;
 import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineBodyRecord;
 import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderLine;
@@ -165,12 +166,13 @@ public final class TerminalLineRenderNodeCacheTest {
 
   private static ScreenBaseline baseline(String instance, long layoutEpoch) {
     RenderLine line = line(1, 1, "x");
-    List<ScreenLineContent> screen = Collections.singletonList(
-        new ScreenLineContent(line.key(), line.body()));
+    List<LineKey> screenRows = Collections.singletonList(line.key());
+    List<LineBodyRecord> screenBodies = Collections.singletonList(
+        new LineBodyRecord(line.key(), line.body()));
     return new ScreenBaseline(
-        "s", instance, layoutEpoch, 1, 1, 1,
+        "s", instance, layoutEpoch, 1, 1,
         1, 1, TerminalBufferKind.MAIN,
-        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screen,
+        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(), screenRows, screenBodies,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
   }
 

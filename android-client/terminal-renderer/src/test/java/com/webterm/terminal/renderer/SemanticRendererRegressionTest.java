@@ -14,6 +14,7 @@ import com.webterm.terminal.model.HistoryPush;
 import com.webterm.terminal.model.HistoryRangeResult;
 import com.webterm.terminal.model.HistoryRequestContext;
 import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineBodyRecord;
 import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.ProjectionIdentity;
 import com.webterm.terminal.model.RemoteTerminalModel;
@@ -66,14 +67,16 @@ public final class SemanticRendererRegressionTest {
   private static RemoteTerminalModel loadedModel(int historyColumns) {
     CellValue[] screenCells = cells(80, "screen");
     LineKey historyKey = new LineKey(10, 1);
+    LineKey screenKey = new LineKey(20, 1);
+    LineBody screenBody = new LineBody(80, false, screenCells);
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(new ScreenBaseline(
-        "s", "i", 1, 1, 1, 1,
+        "s", "i", 1, 1, 1,
         1, 80, TerminalBufferKind.MAIN,
         new HistoryExtent(1, 1),
         Collections.singletonList(new HistoryPush(1, historyKey)),
-        Collections.singletonList(new ScreenLineContent(
-            new LineKey(20, 1), new LineBody(80, false, screenCells))),
+        Collections.singletonList(screenKey),
+        Collections.singletonList(new LineBodyRecord(screenKey, screenBody)),
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     HistoryBodyResult result = model.applyHistoryBody(
         new HistoryRangeResult(
