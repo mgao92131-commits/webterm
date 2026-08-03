@@ -1644,9 +1644,9 @@ public final class RemoteTerminalView extends View {
     if (anchor.historySeq != 0) {
       int index = history.findSeqIndex(anchor.historySeq);
       if (index < 0) return null;
-      return new float[] {renderer.textOriginX(col), contentTop + index * lineHeight()};
+      return new float[] {renderer.cellLeftPx(col), contentTop + index * lineHeight()};
     }
-    return new float[] {renderer.textOriginX(col),
+    return new float[] {renderer.cellLeftPx(col),
         contentTop + (history.size() + anchor.screenRow) * lineHeight()};
   }
 

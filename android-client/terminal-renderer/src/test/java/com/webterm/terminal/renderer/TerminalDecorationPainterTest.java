@@ -90,6 +90,50 @@ public final class TerminalDecorationPainterTest {
     }
   }
 
+  @Test
+  public void decorationPatternIsIndependentOfSpanSplits() {
+    ResolvedTerminalStyle.UnderlineKind[] kinds = {
+        ResolvedTerminalStyle.UnderlineKind.SINGLE,
+        ResolvedTerminalStyle.UnderlineKind.DOUBLE,
+        ResolvedTerminalStyle.UnderlineKind.CURLY,
+        ResolvedTerminalStyle.UnderlineKind.DOTTED,
+        ResolvedTerminalStyle.UnderlineKind.DASHED
+    };
+    for (ResolvedTerminalStyle.UnderlineKind kind : kinds) {
+      Bitmap expected = bitmap(96, 20);
+      new TerminalDecorationPainter().draw(new Canvas(expected),
+          style(kind, false, UNDERLINE, STRIKE), 0, 88, 0, 20);
+      for (int split : new int[] {22, 44, 66}) {
+        Bitmap actual = bitmap(96, 20);
+        TerminalDecorationPainter painter = new TerminalDecorationPainter();
+        ResolvedTerminalStyle splitStyle = style(kind, false, UNDERLINE, STRIKE);
+        painter.draw(new Canvas(actual), splitStyle, 0, split, 0, 20);
+        painter.draw(new Canvas(actual), splitStyle, split, 88, 0, 20);
+        assertDecorationMasksEqual(kind + " split=" + split, expected, actual);
+        actual.recycle();
+      }
+      expected.recycle();
+    }
+  }
+
+  @Test
+  public void dottedDecorationStaysInsideAccumulatedGeometryEdges() {
+    for (float cellWidth : new float[] {7.3f, 10f, 22f}) {
+      TerminalCellGeometry geometry = new TerminalCellGeometry();
+      geometry.update(cellWidth, 20f, 15f);
+      int left = geometry.columnEdgePx(1);
+      int right = geometry.columnEdgePx(2);
+      Bitmap bitmap = bitmap(Math.max(80, right + 10), 20);
+      new TerminalDecorationPainter().draw(new Canvas(bitmap),
+          style(ResolvedTerminalStyle.UnderlineKind.DOTTED, false, UNDERLINE, STRIKE),
+          left, right, 0, 20);
+      assertEquals("dotted decoration must be clipped for cell width " + cellWidth, 0,
+          countInk(bitmap, 0, left, 0, 20)
+              + countInk(bitmap, right, bitmap.getWidth(), 0, 20));
+      bitmap.recycle();
+    }
+  }
+
   private static ResolvedTerminalStyle style(
       ResolvedTerminalStyle.UnderlineKind kind, boolean hidden, int underlineColor, int foreground) {
     ResolvedTerminalStyle style = new ResolvedTerminalStyle();
@@ -102,9 +146,25 @@ public final class TerminalDecorationPainterTest {
   }
 
   private static Bitmap bitmap() {
-    Bitmap bitmap = Bitmap.createBitmap(40, 20, Bitmap.Config.ARGB_8888);
+    return bitmap(40, 20);
+  }
+
+  private static Bitmap bitmap(int width, int height) {
+    Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     bitmap.eraseColor(BACKGROUND);
     return bitmap;
+  }
+
+  private static void assertDecorationMasksEqual(String label, Bitmap expected, Bitmap actual) {
+    assertEquals(label + " width", expected.getWidth(), actual.getWidth());
+    assertEquals(label + " height", expected.getHeight(), actual.getHeight());
+    for (int y = 0; y < expected.getHeight(); y++) {
+      for (int x = 0; x < expected.getWidth(); x++) {
+        assertEquals(label + " decoration mask differs at " + x + "," + y,
+            expected.getPixel(x, y) != BACKGROUND,
+            actual.getPixel(x, y) != BACKGROUND);
+      }
+    }
   }
 
   private static int countInk(Bitmap bitmap, int left, int right, int top, int bottom) {

@@ -509,17 +509,15 @@ public final class RemoteTerminalRenderer {
     int cursorColor = resolveColor(palette, palette.cursorColor);
     int left = geometry.columnEdgePx(col);
     int right = geometry.columnEdgePx(col + columnWidth);
-    float x = left;
-    float width = right - left;
     float lineHeight = geometry.lineHeightPx();
     bgPaint.setColor(cursorColor);
     if (cursor.shape == TerminalCursor.Shape.BAR) {
-      canvas.drawRect(x, y, x + width / 4f, y + lineHeight, bgPaint);
+      canvas.drawRect(left, y, barCursorRight(left, right), y + lineHeight, bgPaint);
     } else if (cursor.shape == TerminalCursor.Shape.UNDERLINE) {
-      canvas.drawRect(x, y + lineHeight * 3f / 4f, x + width, y + lineHeight, bgPaint);
+      canvas.drawRect(left, y + lineHeight * 3f / 4f, right, y + lineHeight, bgPaint);
     } else if (cell == null || cell.isSpacer()) {
       // 空 cell（或左侧无宽字符起始格的异常 spacer）没有字形可重绘，只画光标矩形。
-      canvas.drawRect(x, y, x + width, y + lineHeight, bgPaint);
+      canvas.drawRect(left, y, right, y + lineHeight, bgPaint);
     } else {
       // BLOCK 光标：复用 drawCell 的 insideCursor 路径——先画反色背景与不透明光标矩形，
       // 再以反色前景重绘字形，保证块光标下的字符可见（对齐旧 drawLine 路径）。
@@ -608,7 +606,6 @@ public final class RemoteTerminalRenderer {
     float x = geometry.textOriginX(col);
     int left = geometry.columnEdgePx(col);
     int right = geometry.columnEdgePx(col + (cell.isWideStart() ? 2 : 1));
-    float width = right - left;
     float lineHeight = geometry.lineHeightPx();
     if (styleScratch.background != canvasBackground) {
       bgPaint.setColor(styleScratch.background);
@@ -618,11 +615,11 @@ public final class RemoteTerminalRenderer {
     if (insideCursor) {
       bgPaint.setColor(resolveColor(palette, palette.cursorColor));
       if (cursor.shape == TerminalCursor.Shape.BAR) {
-        canvas.drawRect(x, rowY, x + width / 4f, rowY + lineHeight, bgPaint);
+        canvas.drawRect(left, rowY, barCursorRight(left, right), rowY + lineHeight, bgPaint);
       } else if (cursor.shape == TerminalCursor.Shape.UNDERLINE) {
-        canvas.drawRect(x, rowY + lineHeight * 3f / 4f, x + width, rowY + lineHeight, bgPaint);
+        canvas.drawRect(left, rowY + lineHeight * 3f / 4f, right, rowY + lineHeight, bgPaint);
       } else {
-        canvas.drawRect(x, rowY, x + width, rowY + lineHeight, bgPaint);
+        canvas.drawRect(left, rowY, right, rowY + lineHeight, bgPaint);
       }
     }
 
@@ -673,6 +670,10 @@ public final class RemoteTerminalRenderer {
     return next != null && !next.isSpacer()
         && java.util.Objects.equals(styleOf(next), style)
         && (next.text().isEmpty() || " ".equals(next.text()));
+  }
+
+  private static int barCursorRight(int left, int right) {
+    return Math.min(right, left + Math.max(1, Math.round((right - left) / 4f)));
   }
 
   private static StyleValue styleOf(CellValue cell) {

@@ -123,33 +123,37 @@ public final class RemoteTerminalDecorationParityTest {
     CapturedViewState state = stateRef.get();
     int top = Math.round(Math.max(0f, state.lineHeight - state.baseline));
     int bottom = top + Math.round(state.lineHeight);
-    int cellWidth = Math.round(state.cellWidth);
-    assertOutsideTerminalMatches(direct, hardware, COLUMNS * cellWidth, bottom + 2);
+    int strikeTop = top + Math.round(state.lineHeight * 0.45f);
+    int strikeBottom = top + Math.round(state.lineHeight * 0.60f) + 1;
+    int terminalRight = edgePx(state.cellWidth, COLUMNS);
+    assertOutsideTerminalMatches(direct, hardware, terminalRight, bottom + 2);
 
     for (int column = 0; column < 7; column++) {
-      int left = column * cellWidth;
-      int right = (column + 1) * cellWidth;
+      int left = edgePx(state.cellWidth, column);
+      int right = edgePx(state.cellWidth, column + 1);
       assertTrue("direct underline missing at column " + column,
           hasColorFamily(direct, GREEN, left, right, bottom - 6, bottom));
       assertTrue("hardware underline missing at column " + column,
           hasColorFamily(hardware, GREEN, left, right, bottom - 6, bottom));
       assertTrue("direct strike missing at column " + column,
-          hasColorFamily(direct, RED, left, right, top + 8, top + 16));
+          hasColorFamily(direct, RED, left, right, strikeTop, strikeBottom));
       assertTrue("hardware strike missing at column " + column,
-          hasColorFamily(hardware, RED, left, right, top + 8, top + 16));
+          hasColorFamily(hardware, RED, left, right, strikeTop, strikeBottom));
     }
 
-    int hiddenLeft = 7 * cellWidth;
-    assertEquals(BLUE, direct.getPixel(hiddenLeft + cellWidth / 2, top + 5));
-    assertEquals(BLUE, hardware.getPixel(hiddenLeft + cellWidth / 2, top + 5));
+    int hiddenLeft = edgePx(state.cellWidth, 7);
+    int hiddenRight = edgePx(state.cellWidth, 8);
+    int hiddenCenter = (hiddenLeft + hiddenRight) / 2;
+    assertEquals(BLUE, direct.getPixel(hiddenCenter, top + 5));
+    assertEquals(BLUE, hardware.getPixel(hiddenCenter, top + 5));
     assertTrue("hidden direct cell must not draw decoration",
-        !hasColorFamily(direct, GREEN, hiddenLeft, hiddenLeft + cellWidth, top, bottom)
-            && !hasColorFamily(direct, RED, hiddenLeft, hiddenLeft + cellWidth, top, bottom));
+        !hasColorFamily(direct, GREEN, hiddenLeft, hiddenRight, top, bottom)
+            && !hasColorFamily(direct, RED, hiddenLeft, hiddenRight, top, bottom));
     assertTrue("hidden hardware cell must not draw decoration",
-        !hasColorFamily(hardware, GREEN, hiddenLeft, hiddenLeft + cellWidth, top, bottom)
-            && !hasColorFamily(hardware, RED, hiddenLeft, hiddenLeft + cellWidth, top, bottom));
+        !hasColorFamily(hardware, GREEN, hiddenLeft, hiddenRight, top, bottom)
+            && !hasColorFamily(hardware, RED, hiddenLeft, hiddenRight, top, bottom));
     System.out.println("DECORATION_PARITY_DEVICE direct_and_rendernode=true top=" + top
-        + " bottom=" + bottom + " cell_width=" + cellWidth);
+        + " bottom=" + bottom + " cell_width=" + state.cellWidth);
     direct.recycle();
     hardware.recycle();
   }
@@ -161,10 +165,11 @@ public final class RemoteTerminalDecorationParityTest {
     cells[0] = new CellValue("a", (byte) 1, single, null);
     cells[1] = new CellValue("b", (byte) 1, single, null);
     cells[2] = new CellValue("c", (byte) 1, single, null);
-    cells[3] = new CellValue("X", (byte) 1, style(1 << 4), null);
-    cells[4] = new CellValue("X", (byte) 1, style(1 << 5), null);
-    cells[5] = new CellValue("X", (byte) 1, style(1 << 6), null);
-    cells[6] = new CellValue("X", (byte) 1, style(1 << 7), null);
+    // 空格 + strike 让下面的红色断言只能由 decoration 产生，避免被 glyph 误满足。
+    cells[3] = new CellValue(" ", (byte) 1, style((1 << 4) | (1 << 12)), null);
+    cells[4] = new CellValue(" ", (byte) 1, style((1 << 5) | (1 << 12)), null);
+    cells[5] = new CellValue(" ", (byte) 1, style((1 << 6) | (1 << 12)), null);
+    cells[6] = new CellValue(" ", (byte) 1, style((1 << 7) | (1 << 12)), null);
     cells[7] = new CellValue("X", (byte) 1,
         new StyleValue(TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x000080),
             TerminalColor.rgb(0x00FF00), (1 << 3) | (1 << 11) | (1 << 12)), null);
@@ -215,6 +220,10 @@ public final class RemoteTerminalDecorationParityTest {
       }
     }
     return false;
+  }
+
+  private static int edgePx(float cellWidth, int column) {
+    return Math.round(column * cellWidth);
   }
 
   private static void copyWindowPixels(Window window, Bitmap target) throws Exception {

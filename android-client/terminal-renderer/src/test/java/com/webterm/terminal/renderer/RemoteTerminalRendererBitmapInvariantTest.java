@@ -94,6 +94,28 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
   }
 
   @Test
+  public void fractionalCellWidthCursorsUseAccumulatedIntegerEdges() {
+    CellValue[] cells = blankCells();
+    TerminalViewportState viewport = new TerminalViewportState();
+    int left = Math.round(2 * 7.3f);
+    int right = Math.round(3 * 7.3f);
+
+    Bitmap bar = render(cells, viewport,
+        new TerminalCursor(0, 2, true, TerminalCursor.Shape.BAR, false), 7.3f);
+    assertNotEquals(BACKGROUND, bar.getPixel(left, 10));
+    assertEquals("bar cursor must remain inside rounded cell edge",
+        BACKGROUND, bar.getPixel(left + Math.max(1, Math.round((right - left) / 4f)), 10));
+    bar.recycle();
+
+    Bitmap block = render(cells, viewport,
+        new TerminalCursor(0, 2, true, TerminalCursor.Shape.BLOCK, false), 7.3f);
+    assertNotEquals(BACKGROUND, block.getPixel(right - 1, 10));
+    assertEquals("block cursor must stop at the next rounded edge",
+        BACKGROUND, block.getPixel(right, 10));
+    block.recycle();
+  }
+
+  @Test
   public void blockCursorOnWideSpacerCoversBothColumns() {
     CellValue[] cells = blankCells();
     cells[4] = new CellValue("界", (byte) 2, null, null);
@@ -147,10 +169,15 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
 
   private static Bitmap render(CellValue[] cells, TerminalViewportState viewport,
                                TerminalCursor cursor) {
+    return render(cells, viewport, cursor, CELL_WIDTH);
+  }
+
+  private static Bitmap render(CellValue[] cells, TerminalViewportState viewport,
+                               TerminalCursor cursor, float cellWidth) {
     Bitmap bitmap = Bitmap.createBitmap(
-        COLUMNS * (int) CELL_WIDTH, 40, Bitmap.Config.ARGB_8888);
+        Math.round(COLUMNS * cellWidth), 40, Bitmap.Config.ARGB_8888);
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
-    renderer.setFontMetrics(CELL_WIDTH, LINE_HEIGHT, BASELINE_OFFSET);
+    renderer.setFontMetrics(cellWidth, LINE_HEIGHT, BASELINE_OFFSET);
     RemoteTerminalModel model = model(cells, cursor);
     renderer.render(new Canvas(bitmap), model.renderSnapshot(), viewport, true);
     return bitmap;

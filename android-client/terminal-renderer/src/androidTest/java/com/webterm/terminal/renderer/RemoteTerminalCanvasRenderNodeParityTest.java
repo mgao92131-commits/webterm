@@ -132,9 +132,9 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     CapturedViewState state = stateRef.get();
     int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
     int terminalRight = Math.min(direct.getWidth(),
-        (int) Math.ceil(COLUMNS * state.cellWidth));
+        edgePx(state.cellWidth, COLUMNS));
     int terminalBottom = Math.min(direct.getHeight(),
-        topInset + (int) Math.ceil(state.lineHeight) + 2);
+        topInset + Math.round(state.lineHeight) + 2);
     Rect terminalBounds = new Rect(0, 0, terminalRight, terminalBottom);
     Diff diff = diff(direct, hardware, terminalBounds, CHANNEL_TOLERANCE);
     File artifactDir = saveArtifacts(direct, hardware, terminalBounds, CHANNEL_TOLERANCE);
@@ -150,8 +150,8 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       if (cell.isSpacer() || cell.text().equals(" ")) continue;
       int widthColumns = cell.isWideStart() ? 2 : 1;
       Rect cellBounds = new Rect(
-          Math.round(column * state.cellWidth), topInset,
-          Math.min(terminalRight, Math.round((column + widthColumns) * state.cellWidth)),
+          edgePx(state.cellWidth, column), topInset,
+          Math.min(terminalRight, edgePx(state.cellWidth, column + widthColumns)),
           terminalBottom);
       Rect directInk = findInkBounds(direct, cellBounds);
       Rect hardwareInk = findInkBounds(hardware, cellBounds);
@@ -185,7 +185,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       try {
         CapturedViewState state = capture.state;
         int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
-        int scanLeft = Math.round(edge.startColumn * state.cellWidth);
+        int scanLeft = edgePx(state.cellWidth, edge.startColumn);
         Rect scan = new Rect(scanLeft, 0, capture.direct.getWidth(), capture.direct.getHeight());
         Rect directInk = findInkBounds(capture.direct, scan);
         Rect hardwareInk = findInkBounds(capture.hardware, scan);
@@ -236,7 +236,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       CapturedViewState state = capture.state;
       int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
       int terminalRight = Math.min(capture.direct.getWidth(),
-          (int) Math.ceil(columns * state.cellWidth));
+          edgePx(state.cellWidth, columns));
       for (int row = 1; row < colors.length; row++) {
         int boundary = Math.round(topInset + row * state.lineHeight);
         for (int y = Math.max(0, boundary - 1);
@@ -467,7 +467,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
 
   private static boolean isExpectedRenderNodeClipping(EdgeCase edge, Rect direct,
                                                        Rect hardware, CapturedViewState state) {
-    int terminalRight = (int) Math.ceil(COLUMNS * state.cellWidth);
+    int terminalRight = edgePx(state.cellWidth, COLUMNS);
     return Math.abs(direct.left - hardware.left) <= INK_EDGE_TOLERANCE
         && Math.abs(direct.top - hardware.top) <= INK_EDGE_TOLERANCE
         && Math.abs(direct.bottom - hardware.bottom) <= INK_EDGE_TOLERANCE
@@ -552,6 +552,10 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     int green = Math.abs(((first >>> 8) & 0xFF) - ((second >>> 8) & 0xFF));
     int blue = Math.abs((first & 0xFF) - (second & 0xFF));
     return Math.max(Math.max(alpha, red), Math.max(green, blue));
+  }
+
+  private static int edgePx(float cellWidth, int column) {
+    return Math.round(column * cellWidth);
   }
 
   private static final class Diff {
