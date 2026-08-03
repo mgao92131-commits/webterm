@@ -133,7 +133,6 @@ final class TerminalLineCompiler {
           || styleScratch.underlineKind != ResolvedTerminalStyle.UnderlineKind.NONE;
       boolean visible = !styleScratch.hidden
           && (cell.text().isEmpty() || !" ".equals(cell.text())
-              || styleScratch.background != canvasBackground
               || hasDecoration);
       if (visible && styleScratch.blinkSlow) kinds |= BLINK_SLOW;
       if (visible && styleScratch.blinkFast) kinds |= BLINK_FAST;
