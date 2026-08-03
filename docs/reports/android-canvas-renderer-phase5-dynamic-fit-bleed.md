@@ -18,6 +18,7 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 - Phase 5 基线实现提交：`f95bc7740e2ad1ca96e413915d2ff4d15287cc26`
 - Hardening 实现提交：`127a140f`
 - 最新 hardening 修复：`2da6e0d8 fix(renderer): correct fragmented blink invalidation`
+- 可见性生命周期修复：`edc22ae1 fix(renderer): resume blink on aggregated view visibility`
 - 主要提交：
   - `2287ef45 refactor(renderer): separate static and dynamic foreground spans`
   - `41a29c91 feat(renderer): schedule visible slow and fast blink rows`
@@ -36,6 +37,8 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
   坐标，不会漏刷内容底部。
 - View 不可见、未显示或 detached 时不会启动/续排 Blink callback；窗口重新可见后会重新检查
   当前 viewport 并恢复调度。
+- `onVisibilityAggregated()` 覆盖 View 自身和父容器的隐藏/恢复，Tab 或容器重新显示后会恢复
+  Blink scheduler。
 
 ## 实现内容
 
@@ -68,7 +71,7 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 - JVM/Robolectric：130/130 通过。
 - `:terminal-renderer:assembleDebug`：通过。
 - `:app:assembleDebug`：通过。
-- API 36 instrumentation：26/26 通过。
+- API 36 instrumentation：27/27 通过。
 - `git diff --check`：通过。
 
 新增/扩展覆盖：
@@ -96,6 +99,7 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 - selection 改变：`records_delta=0`、`cache_hits_delta=8`，截图变化 2380 像素；
 - 文字 slow blink：`records_delta=0`，on/off 相位截图前景发生变化；
 - 窗口不可见时 Blink scheduler 停止，重新可见时恢复调度；
+- View 自身 `INVISIBLE → VISIBLE` 和父容器 `GONE → VISIBLE` 均能停止并恢复 Blink scheduler；
 - 40×120 mixed Unicode：40 个 record，单次 `render_duration=13,547,375 ns`。
 
 以上纳秒值是单次 AVD smoke 样本，不代表 P50/P95；本阶段没有把单次模拟器时间作为硬性
