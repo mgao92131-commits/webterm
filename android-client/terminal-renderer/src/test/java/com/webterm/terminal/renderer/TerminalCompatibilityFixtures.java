@@ -67,6 +67,7 @@ final class TerminalCompatibilityFixtures {
     List<Fixture> fixtures = new ArrayList<>();
     fixtures.add(ascii());
     fixtures.add(asciiLigatures());
+    fixtures.addAll(contextualTextRuns());
     fixtures.add(combining());
     fixtures.add(cjkChinese());
     fixtures.add(cjkJapanese());
@@ -99,6 +100,24 @@ final class TerminalCompatibilityFixtures {
   private static Fixture asciiLigatures() {
     return row("ascii-ligature-sequences", Category.ASCII, 24,
         asciiCells("ffi fi fl == != =>"));
+  }
+
+  /** Phase 4 专用夹具：记录 grapheme、样式和特殊字符的 TextRun 边界。 */
+  private static List<Fixture> contextualTextRuns() {
+    StyleValue bold = new StyleValue(
+        TerminalColor.rgb(0xF5F5F5), TerminalColor.DEFAULT_BG, null, BOLD);
+    return List.of(
+        row("text-run-mixed-context", Category.ASCII, 8,
+            cell("A", 1), cell("e\u0301", 1), wide("中"), wide("😀"), cell("Z", 1)),
+        row("text-run-style-boundary", Category.ASCII, 12,
+            cell("a", 1), cell("b", 1), cell("c", 1),
+            new CellValue("D", (byte) 1, bold, null),
+            new CellValue("E", (byte) 1, bold, null),
+            new CellValue("F", (byte) 1, bold, null),
+            cell("g", 1), cell("h", 1), cell("i", 1)),
+        row("text-run-special-boundary", Category.ASCII, 8,
+            cell("a", 1), cell("b", 1), cell("─", 1), cell("─", 1),
+            cell("c", 1), cell("d", 1)));
   }
 
   /**
