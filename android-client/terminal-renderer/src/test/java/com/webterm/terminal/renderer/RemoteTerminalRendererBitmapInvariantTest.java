@@ -279,6 +279,29 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
   }
 
   @Test
+  public void blockCursorReplayDoesNotChangePixelsOutsideCursorCell() {
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("e\u0301", (byte) 1, null, null);
+    cells[1] = new CellValue("界", (byte) 2, null, null);
+    cells[2] = CellValue.SPACER;
+    cells[3] = new CellValue("😀", (byte) 2, null, null);
+    cells[4] = CellValue.SPACER;
+
+    Bitmap plain = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    Bitmap cursor = render(cells, new TerminalViewportState(),
+        new TerminalCursor(0, 1, true, TerminalCursor.Shape.BLOCK, false));
+    for (int y = 0; y < plain.getHeight(); y++) {
+      for (int x = 0; x < plain.getWidth(); x++) {
+        if (x >= 10 && x < 30) continue;
+        assertEquals("block cursor must not alter pixels outside its clipped cell",
+            plain.getPixel(x, y), cursor.getPixel(x, y));
+      }
+    }
+    plain.recycle();
+    cursor.recycle();
+  }
+
+  @Test
   public void decorationIsDrawnAfterSpecialGlyphInsideTheSameCell() {
     StyleValue style = new StyleValue(
         TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG,
