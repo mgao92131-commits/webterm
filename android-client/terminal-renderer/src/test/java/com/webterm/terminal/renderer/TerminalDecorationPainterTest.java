@@ -67,6 +67,18 @@ public final class TerminalDecorationPainterTest {
   }
 
   @Test
+  public void plainStyleSkipsDecorationCanvasOperations() {
+    CountingCanvas canvas = new CountingCanvas();
+    ResolvedTerminalStyle style = new ResolvedTerminalStyle();
+
+    new TerminalDecorationPainter().draw(canvas, style, 0, 20, 0, 20);
+
+    assertEquals(0, canvas.saveOps);
+    assertEquals(0, canvas.clipOps);
+    assertEquals(0, canvas.restoreOps);
+  }
+
+  @Test
   public void underlineShapesHaveDifferentRasterSignatures() {
     int[] signatures = new int[5];
     ResolvedTerminalStyle.UnderlineKind[] kinds = {
@@ -203,5 +215,33 @@ public final class TerminalDecorationPainterTest {
       }
     }
     return false;
+  }
+
+  private static final class CountingCanvas extends Canvas {
+    int saveOps;
+    int clipOps;
+    int restoreOps;
+
+    CountingCanvas() {
+      super(Bitmap.createBitmap(40, 20, Bitmap.Config.ARGB_8888));
+    }
+
+    @Override
+    public int save() {
+      saveOps++;
+      return super.save();
+    }
+
+    @Override
+    public boolean clipRect(int left, int top, int right, int bottom) {
+      clipOps++;
+      return super.clipRect(left, top, right, bottom);
+    }
+
+    @Override
+    public void restoreToCount(int saveCount) {
+      restoreOps++;
+      super.restoreToCount(saveCount);
+    }
   }
 }

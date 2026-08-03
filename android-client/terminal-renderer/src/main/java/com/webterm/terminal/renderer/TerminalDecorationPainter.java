@@ -23,7 +23,7 @@ final class TerminalDecorationPainter {
 
   void draw(Canvas canvas, ResolvedTerminalStyle style,
             int left, int right, int rowTop, int rowBottom) {
-    if (style == null || style.hidden || left >= right || rowBottom <= rowTop) return;
+    if (!hasDecoration(style) || left >= right || rowBottom <= rowTop) return;
 
     int saveCount = canvas.save();
     canvas.clipRect(left, rowTop, right, rowBottom);
@@ -58,6 +58,11 @@ final class TerminalDecorationPainter {
     } finally {
       canvas.restoreToCount(saveCount);
     }
+  }
+
+  static boolean hasDecoration(ResolvedTerminalStyle style) {
+    return style != null && !style.hidden
+        && (style.underlineKind != ResolvedTerminalStyle.UnderlineKind.NONE || style.strike);
   }
 
   private void drawLine(Canvas canvas, int left, int right, float y) {
