@@ -297,6 +297,47 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
   }
 
   @Test
+  public void contextualTextRowsHaveCanvasRenderNodeParity() throws Exception {
+    CellValue[][] rows = contextualTextRows();
+    ParityCapture capture = captureParity(rows, COLUMNS, VIEW_HEIGHT);
+    try {
+      CapturedViewState state = capture.state;
+      int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
+      int terminalRight = Math.min(capture.direct.getWidth(), edgePx(state.cellWidth, COLUMNS));
+      int terminalBottom = Math.min(capture.direct.getHeight(),
+          topInset + rows.length * Math.round(state.lineHeight));
+      Rect terminalBounds = new Rect(0, topInset, terminalRight, terminalBottom);
+      Diff diff = diff(capture.direct, capture.hardware, terminalBounds, CHANNEL_TOLERANCE);
+      assertBackgroundOutsideTerminal(capture.direct, capture.hardware, terminalBounds);
+      assertTrue("contextual text parity difference is too large: " + diff,
+          diff.differentPixels <= diff.totalPixels * MAX_DIFF_RATIO);
+
+      for (int row = 0; row < rows.length; row++) {
+        int rowTop = topInset + row * Math.round(state.lineHeight);
+        int rowBottom = Math.min(capture.direct.getHeight(),
+            rowTop + Math.round(state.lineHeight));
+        for (int column = 0; column < COLUMNS; column++) {
+          CellValue cell = rows[row][column];
+          if (cell.isSpacer() || cell.text().equals(" ")) continue;
+          int width = cell.isWideStart() ? 2 : 1;
+          Rect cellBounds = new Rect(
+              edgePx(state.cellWidth, column), rowTop,
+              Math.min(terminalRight, edgePx(state.cellWidth, column + width)), rowBottom);
+          assertEquals("contextual text ink mismatch row=" + row + " col=" + column,
+              findInkBounds(capture.direct, cellBounds) != null,
+              findInkBounds(capture.hardware, cellBounds) != null);
+          if (cell.isWideStart()) column++;
+        }
+      }
+      System.out.println("PARITY_TEXT_RUN canvas_rendernode=true rows=" + rows.length
+          + " columns=" + COLUMNS + " different_pixels=" + diff.differentPixels
+          + "/" + diff.totalPixels + " diff_bounds=" + diff.bounds);
+    } finally {
+      capture.recycle();
+    }
+  }
+
+  @Test
   public void coloredShadeAndVerticalDashHaveParityWithOddLineGeometry() throws Exception {
     CellValue[][] rows = new CellValue[][] {
         coloredSpecialRow(COLUMNS, "▒", 0x00FF00, "┊", 0xFF0000),
@@ -465,6 +506,51 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     cells[0] = coloredCell(shade, shadeColor);
     cells[1] = coloredCell(dashed, dashedColor);
     cells[2] = coloredCell(dashed, dashedColor);
+    return cells;
+  }
+
+  private static CellValue[][] contextualTextRows() {
+    StyleValue bold = new StyleValue(
+        TerminalColor.rgb(0xF5F5F5), TerminalColor.DEFAULT_BG, null, 1 << 0);
+    StyleValue italic = new StyleValue(
+        TerminalColor.rgb(0xF5F5F5), TerminalColor.DEFAULT_BG, null, 1 << 2);
+    CellValue[][] rows = new CellValue[3][];
+    rows[0] = emptyRow(COLUMNS);
+    rows[0][0] = new CellValue("A", (byte) 1, null, null);
+    rows[0][1] = new CellValue("e\u0301", (byte) 1, null, null);
+    rows[0][2] = new CellValue("中", (byte) 2, null, null);
+    rows[0][3] = CellValue.SPACER;
+    rows[0][4] = new CellValue("😀", (byte) 2, null, null);
+    rows[0][5] = CellValue.SPACER;
+    rows[0][6] = new CellValue("Z", (byte) 1, null, null);
+
+    rows[1] = emptyRow(COLUMNS);
+    rows[1][0] = new CellValue("a", (byte) 1, null, null);
+    rows[1][1] = new CellValue("b", (byte) 1, null, null);
+    rows[1][2] = new CellValue("c", (byte) 1, null, null);
+    rows[1][3] = new CellValue("D", (byte) 1, bold, null);
+    rows[1][4] = new CellValue("E", (byte) 1, bold, null);
+    rows[1][5] = new CellValue("F", (byte) 1, bold, null);
+    rows[1][6] = new CellValue("g", (byte) 1, italic, null);
+    rows[1][7] = new CellValue("h", (byte) 1, italic, null);
+    rows[1][8] = new CellValue("i", (byte) 1, italic, null);
+
+    rows[2] = emptyRow(COLUMNS);
+    String[] arabic = {"ا", "ل", "ع", "ر", "ب", "ي", "ة"};
+    for (int i = 0; i < arabic.length; i++) {
+      rows[2][i] = new CellValue(arabic[i], (byte) 1, null, null);
+    }
+    rows[2][7] = new CellValue("हि", (byte) 1, null, null);
+    rows[2][8] = new CellValue("न्", (byte) 1, null, null);
+    rows[2][9] = new CellValue("दी", (byte) 1, null, null);
+    rows[2][10] = new CellValue("❤️", (byte) 2, null, null);
+    rows[2][11] = CellValue.SPACER;
+    return rows;
+  }
+
+  private static CellValue[] emptyRow(int columns) {
+    CellValue[] cells = new CellValue[columns];
+    Arrays.fill(cells, CellValue.EMPTY);
     return cells;
   }
 
