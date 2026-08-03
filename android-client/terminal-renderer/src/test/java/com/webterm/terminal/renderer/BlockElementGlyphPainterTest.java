@@ -137,6 +137,34 @@ public final class BlockElementGlyphPainterTest {
     bitmap.recycle();
   }
 
+  @Test
+  public void shadePatternIsTintedByTheResolvedForegroundColor() {
+    int[] codePoints = {0x2591, 0x2592, 0x2593};
+    int[] colors = {0xFFFF0000, 0xFF00FF00, 0xFF0000FF};
+    for (int index = 0; index < codePoints.length; index++) {
+      Bitmap bitmap = bitmap(8, 8);
+      new BlockElementGlyphPainter().draw(new Canvas(bitmap), codePoints[index],
+          0, 0, 8, 8, colors[index], 0, 0);
+      assertEquals("shade must preserve resolved foreground for U+"
+              + Integer.toHexString(codePoints[index]), colors[index], bitmap.getPixel(0, 0));
+      bitmap.recycle();
+    }
+
+    Bitmap dimmed = bitmap(8, 8);
+    new BlockElementGlyphPainter().draw(new Canvas(dimmed), 0x2592,
+        0, 0, 8, 8, 0xFFAAAAAA, 0, 0);
+    assertEquals("dim shade must use the dimmed foreground", 0xFFAAAAAA,
+        dimmed.getPixel(0, 0));
+    dimmed.recycle();
+
+    Bitmap customIndexed = bitmap(8, 8);
+    new BlockElementGlyphPainter().draw(new Canvas(customIndexed), 0x2593,
+        0, 0, 8, 8, 0xFF123456, 0, 0);
+    assertEquals("custom resolved indexed color must tint shade", 0xFF123456,
+        customIndexed.getPixel(0, 0));
+    customIndexed.recycle();
+  }
+
   private static Bitmap bitmap() {
     return bitmap(40, 40);
   }

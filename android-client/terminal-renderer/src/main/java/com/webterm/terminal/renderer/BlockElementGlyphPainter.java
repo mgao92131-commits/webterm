@@ -3,6 +3,9 @@ package com.webterm.terminal.renderer;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.BlendMode;
+import android.graphics.BlendModeColorFilter;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Shader;
@@ -15,6 +18,9 @@ final class BlockElementGlyphPainter {
   private final Paint paint = new Paint();
   private final BitmapShader[] shadeShaders = new BitmapShader[3];
   private final Matrix shadeMatrix = new Matrix();
+  private ColorFilter shadeColorFilter;
+  private int shadeColor;
+  private boolean hasShadeColorFilter;
 
   BlockElementGlyphPainter() {
     paint.setStyle(Paint.Style.FILL);
@@ -37,6 +43,8 @@ final class BlockElementGlyphPainter {
     if (!supports(codePoint) || left >= right || top >= bottom) return false;
     paint.setColor(foreground);
     paint.setStyle(Paint.Style.FILL);
+    paint.setShader(null);
+    paint.setColorFilter(null);
     switch (codePoint) {
       case 0x2580: // upper half
         drawRect(canvas, left, top, right, edge(top, bottom, 4, 8));
@@ -112,10 +120,24 @@ final class BlockElementGlyphPainter {
     shadeMatrix.setTranslate(-phaseX, phaseY - top);
     shader.setLocalMatrix(shadeMatrix);
     paint.setShader(shader);
-    canvas.drawRect(left, top, right, bottom, paint);
-    paint.setShader(null);
-    shadeMatrix.reset();
-    shader.setLocalMatrix(shadeMatrix);
+    paint.setColorFilter(shadeColorFilter(foreground));
+    try {
+      canvas.drawRect(left, top, right, bottom, paint);
+    } finally {
+      paint.setColorFilter(null);
+      paint.setShader(null);
+      shadeMatrix.reset();
+      shader.setLocalMatrix(shadeMatrix);
+    }
+  }
+
+  private ColorFilter shadeColorFilter(int foreground) {
+    if (!hasShadeColorFilter || shadeColor != foreground) {
+      shadeColor = foreground;
+      shadeColorFilter = new BlendModeColorFilter(foreground, BlendMode.SRC_IN);
+      hasShadeColorFilter = true;
+    }
+    return shadeColorFilter;
   }
 
   private static BitmapShader createShadeShader(int shade) {

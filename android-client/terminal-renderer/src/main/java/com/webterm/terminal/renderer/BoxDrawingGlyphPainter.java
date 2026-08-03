@@ -36,11 +36,18 @@ final class BoxDrawingGlyphPainter {
 
   boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
                int foreground) {
-    return draw(canvas, codePoint, left, top, right, bottom, foreground, 0, 0);
+    return draw(canvas, codePoint, left, top, right, bottom, foreground, 0, 0, 0,
+        right - left);
   }
 
   boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
                int foreground, int phaseX, int phaseY) {
+    return draw(canvas, codePoint, left, top, right, bottom, foreground,
+        phaseX, phaseY, 0, right - left);
+  }
+
+  boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
+               int foreground, int phaseX, int phaseY, int column, float nominalCellWidth) {
     if (!supports(codePoint) || left >= right || top >= bottom) return false;
     BoxGlyph glyph = GLYPHS[codePoint - FIRST];
     if (glyph == null) return false;
@@ -65,10 +72,13 @@ final class BoxDrawingGlyphPainter {
       return true;
     }
 
-    drawHorizontalDirection(canvas, left, centerX, left, right, centerY, glyph.left,
-        glyph.horizontalPattern, lightWidth, heavyWidth, phaseX);
-    drawHorizontalDirection(canvas, centerX, right, left, right, centerY, glyph.right,
-        glyph.horizontalPattern, lightWidth, heavyWidth, phaseX);
+    float logicalCellLeft = column * nominalCellWidth;
+    drawHorizontalDirection(canvas, left, centerX, left, right, logicalCellLeft,
+        nominalCellWidth, centerY, glyph.left, glyph.horizontalPattern, lightWidth,
+        heavyWidth);
+    drawHorizontalDirection(canvas, centerX, right, left, right, logicalCellLeft,
+        nominalCellWidth, centerY, glyph.right, glyph.horizontalPattern, lightWidth,
+        heavyWidth);
     drawVerticalDirection(canvas, top, centerY, top, bottom, centerX, glyph.top,
         glyph.verticalPattern, lightWidth, heavyWidth, phaseY);
     drawVerticalDirection(canvas, centerY, bottom, top, bottom, centerX, glyph.bottom,
@@ -110,21 +120,22 @@ final class BoxDrawingGlyphPainter {
   }
 
   private void drawHorizontalDirection(Canvas canvas, int start, int end,
-                                       int cellLeft, int cellRight, int center,
+                                       int cellLeft, int cellRight, float logicalCellLeft,
+                                       float nominalCellWidth, int center,
                                        Stroke stroke, Pattern pattern, int lightWidth,
-                                       int heavyWidth, int phaseX) {
+                                       int heavyWidth) {
     if (stroke == Stroke.NONE || start >= end) return;
     int from = Math.min(start, end);
     int to = Math.max(start, end);
     if (stroke == Stroke.DOUBLE) {
       int offset = Math.max(1, lightWidth);
-      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, center - offset,
-          lightWidth, pattern, phaseX);
-      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, center + offset,
-          lightWidth, pattern, phaseX);
+      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, logicalCellLeft,
+          nominalCellWidth, center - offset, lightWidth, pattern);
+      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, logicalCellLeft,
+          nominalCellWidth, center + offset, lightWidth, pattern);
     } else {
-      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, center,
-          stroke == Stroke.HEAVY ? heavyWidth : lightWidth, pattern, phaseX);
+      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, logicalCellLeft,
+          nominalCellWidth, center, stroke == Stroke.HEAVY ? heavyWidth : lightWidth, pattern);
     }
   }
 
@@ -148,24 +159,25 @@ final class BoxDrawingGlyphPainter {
   }
 
   private void drawHorizontalPattern(Canvas canvas, int left, int right,
-                                     int cellLeft, int cellRight, int centerY,
-                                     int thickness, Pattern pattern, int phaseX) {
+                                     int cellLeft, int cellRight, float logicalCellLeft,
+                                     float nominalCellWidth, int centerY, int thickness,
+                                     Pattern pattern) {
     if (pattern == Pattern.SOLID) {
       hardEdgePaint.setStyle(Paint.Style.FILL);
       canvas.drawRect(left, bandStart(centerY, thickness), right,
           bandEnd(centerY, thickness), hardEdgePaint);
       return;
     }
-    float period = dashPeriod(pattern, Math.max(1, cellRight - cellLeft));
+    float period = dashPeriod(pattern, nominalCellWidth);
     float dashLength = Math.max(1f, period / 2f);
-    int first = (int) Math.floor((cellLeft - phaseX) / period) - 1;
+    int first = (int) Math.floor((cellLeft - logicalCellLeft) / period) - 1;
     hardEdgePaint.setStyle(Paint.Style.FILL);
     for (int index = first; ; index++) {
-      float start = phaseX + index * period;
+      float start = logicalCellLeft + index * period;
       if (start >= cellRight) break;
       float end = start + dashLength;
-      int segmentLeft = Math.max(left, (int) Math.floor(start));
-      int segmentRight = Math.min(right, (int) Math.ceil(end));
+      int segmentLeft = Math.max(left, Math.round(start));
+      int segmentRight = Math.min(right, Math.round(end));
       if (segmentLeft < segmentRight) {
         canvas.drawRect(segmentLeft, bandStart(centerY, thickness), segmentRight,
             bandEnd(centerY, thickness), hardEdgePaint);
@@ -190,8 +202,8 @@ final class BoxDrawingGlyphPainter {
       float start = phaseY + index * period;
       if (start >= cellBottom - cellTop) break;
       float end = start + dashLength;
-      int segmentTop = Math.max(top, cellTop + (int) Math.floor(start));
-      int segmentBottom = Math.min(bottom, cellTop + (int) Math.ceil(end));
+      int segmentTop = Math.max(top, cellTop + Math.round(start));
+      int segmentBottom = Math.min(bottom, cellTop + Math.round(end));
       if (segmentTop < segmentBottom) {
         canvas.drawRect(bandStart(centerX, thickness), segmentTop,
             bandEnd(centerX, thickness), segmentBottom, hardEdgePaint);
@@ -199,8 +211,8 @@ final class BoxDrawingGlyphPainter {
     }
   }
 
-  private static float dashPeriod(Pattern pattern, int dimension) {
-    return Math.max(2f, dimension / (float) pattern.dashCount());
+  private static float dashPeriod(Pattern pattern, float dimension) {
+    return Math.max(2f, dimension / pattern.dashCount());
   }
 
   private void drawRoundedCorner(Canvas canvas, BoxGlyph glyph, int left, int top,

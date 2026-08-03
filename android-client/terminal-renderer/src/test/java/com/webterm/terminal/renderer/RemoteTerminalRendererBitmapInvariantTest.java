@@ -210,6 +210,48 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
   }
 
   @Test
+  public void shadeUsesResolvedForegroundForColorDimReverseAndBlockCursor() {
+    CellValue[] cells = blankCells();
+
+    cells[0] = new CellValue("░", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 0), null);
+    Bitmap red = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertContainsExactColor("red shade", red, 0xFFFF0000);
+    red.recycle();
+
+    cells[0] = new CellValue("▒", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0x00FF00), TerminalColor.rgb(0x0000FF), null, 0), null);
+    Bitmap green = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertContainsExactColor("green shade", green, 0xFF00FF00);
+    green.recycle();
+
+    cells[0] = new CellValue("▓", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0x0000FF), TerminalColor.rgb(0x000000), null, 0), null);
+    Bitmap blue = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertContainsExactColor("blue shade", blue, 0xFF0000FF);
+    blue.recycle();
+
+    cells[0] = new CellValue("▒", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG, null, 1 << 1), null);
+    Bitmap dim = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertContainsExactColor("dim shade", dim, 0xFFAAAAAA);
+    dim.recycle();
+
+    cells[0] = new CellValue("▒", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 1 << 10), null);
+    Bitmap reverse = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertContainsExactColor("reverse shade foreground", reverse, 0xFF0000FF);
+    reverse.recycle();
+
+    cells[0] = new CellValue("▒", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 0), null);
+    Bitmap cursor = render(cells, new TerminalViewportState(),
+        new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, false));
+    assertContainsExactColor("block cursor shade foreground", cursor, 0xFF0000FF);
+    cursor.recycle();
+  }
+
+  @Test
   public void wideSpecialGlyphUsesTheServerProvidedTwoColumnSpan() {
     CellValue[] cells = blankCells();
     cells[2] = new CellValue("█", (byte) 2, null, null);
@@ -310,5 +352,14 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
     CellValue[] cells = new CellValue[COLUMNS];
     Arrays.fill(cells, CellValue.EMPTY);
     return cells;
+  }
+
+  private static void assertContainsExactColor(String label, Bitmap bitmap, int color) {
+    for (int y = 0; y < bitmap.getHeight(); y++) {
+      for (int x = 0; x < bitmap.getWidth(); x++) {
+        if (bitmap.getPixel(x, y) == color) return;
+      }
+    }
+    assertTrue(label + " must contain " + Integer.toHexString(color), false);
   }
 }

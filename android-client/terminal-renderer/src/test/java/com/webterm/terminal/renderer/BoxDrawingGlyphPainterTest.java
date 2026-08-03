@@ -131,6 +131,27 @@ public final class BoxDrawingGlyphPainterTest {
     bitmap.recycle();
   }
 
+  @Test
+  public void fractionalCellWidthUsesOneLogicalDashPeriodForEveryColumn() {
+    Bitmap bitmap = bitmap(160, 96);
+    BoxDrawingGlyphPainter painter = new BoxDrawingGlyphPainter();
+    float cellWidth = 7.3f;
+    int[] codePoints = {0x254C, 0x2504, 0x2508};
+    int[] expectedRuns = {2, 3, 4};
+    for (int row = 0; row < codePoints.length; row++) {
+      int top = row * 24;
+      for (int column = 0; column < 20; column++) {
+        int left = Math.round(column * cellWidth);
+        int right = Math.round((column + 1) * cellWidth);
+        painter.draw(bitmapCanvas(bitmap), codePoints[row], left, top, right, top + 24,
+            FOREGROUND, 0, 0, column, cellWidth);
+        assertEquals("logical dash count changed at row=" + row + " column=" + column,
+            expectedRuns[row], countRuns(bitmap, left, right, top + 10, top + 16));
+      }
+    }
+    bitmap.recycle();
+  }
+
   private static void drawClipped(Bitmap bitmap, BoxDrawingGlyphPainter painter,
                                   int codePoint, int left, int top, int right, int bottom) {
     Canvas canvas = new Canvas(bitmap);
@@ -144,6 +165,10 @@ public final class BoxDrawingGlyphPainterTest {
     Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     bitmap.eraseColor(BACKGROUND);
     return bitmap;
+  }
+
+  private static Canvas bitmapCanvas(Bitmap bitmap) {
+    return new Canvas(bitmap);
   }
 
   private static boolean hasInkInColumn(Bitmap bitmap, int x, int top, int bottom) {

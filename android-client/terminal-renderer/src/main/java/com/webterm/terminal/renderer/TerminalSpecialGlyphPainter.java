@@ -67,7 +67,8 @@ final class TerminalSpecialGlyphPainter {
 
   boolean drawIfSupported(Canvas canvas, String grapheme,
                           int left, int top, int right, int bottom, int foreground) {
-    return drawIfSupported(canvas, grapheme, left, top, right, bottom, foreground, 0, 0);
+    return drawIfSupported(canvas, grapheme, left, top, right, bottom, foreground,
+        0, 0, 0, right - left);
   }
 
   /**
@@ -77,6 +78,17 @@ final class TerminalSpecialGlyphPainter {
   boolean drawIfSupported(Canvas canvas, String grapheme,
                           int left, int top, int right, int bottom, int foreground,
                           int phaseX, int phaseY) {
+    return drawIfSupported(canvas, grapheme, left, top, right, bottom, foreground,
+        phaseX, phaseY, 0, right - left);
+  }
+
+  /**
+   * Draws with the physical phase used by pixel patterns and the logical column/cell width used
+   * by dashed Box glyphs. The latter avoids deriving dash periods from rounded cell edges.
+   */
+  boolean drawIfSupported(Canvas canvas, String grapheme,
+                          int left, int top, int right, int bottom, int foreground,
+                          int phaseX, int phaseY, int column, float nominalCellWidth) {
     int codePoint = singleCodePoint(grapheme);
     Family family = familyForCodePoint(codePoint);
     if (!isEnabled(family) || left >= right || top >= bottom) return false;
@@ -88,7 +100,7 @@ final class TerminalSpecialGlyphPainter {
       switch (family) {
         case BOX_DRAWING:
           drawn = boxDrawingPainter.draw(canvas, codePoint, left, top, right, bottom, foreground,
-              phaseX, phaseY);
+              phaseX, phaseY, column, nominalCellWidth);
           break;
         case BLOCK_ELEMENTS:
           drawn = blockElementPainter.draw(canvas, codePoint, left, top, right, bottom, foreground,

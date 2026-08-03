@@ -296,6 +296,40 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     }
   }
 
+  @Test
+  public void coloredShadeAndVerticalDashHaveParityWithOddLineGeometry() throws Exception {
+    CellValue[][] rows = new CellValue[][] {
+        coloredSpecialRow(COLUMNS, "▒", 0x00FF00, "┊", 0xFF0000),
+        coloredSpecialRow(COLUMNS, "▓", 0x0000FF, "┋", 0xFFFF00),
+        coloredSpecialRow(COLUMNS, "░", 0xFF0000, "┊", 0x00FFFF)
+    };
+    ParityCapture capture = captureParity(rows, COLUMNS, 240, 10);
+    try {
+      CapturedViewState state = capture.state;
+      int lineHeight = Math.round(state.lineHeight);
+      int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
+      assertTrue("test must use an odd line height: " + lineHeight
+          + " for textSizeSp=" + state.fontSizeSp, (lineHeight & 1) == 1);
+      assertTrue("test must use an odd top inset: " + topInset
+          + " for textSizeSp=" + state.fontSizeSp, (topInset & 1) == 1);
+      int terminalRight = Math.min(capture.direct.getWidth(), edgePx(state.cellWidth, COLUMNS));
+      int terminalBottom = Math.min(capture.direct.getHeight(),
+          topInset + rows.length * lineHeight);
+      for (int y = topInset; y < terminalBottom; y++) {
+        for (int x = 0; x < terminalRight; x++) {
+          assertEquals("colored special pixel mismatch at x=" + x + " y=" + y,
+              capture.direct.getPixel(x, y), capture.hardware.getPixel(x, y));
+        }
+      }
+      System.out.println("PARITY_SPECIAL_ODD canvas_rendernode=true rows=" + rows.length
+          + " columns=" + COLUMNS + " text_size_sp=" + state.fontSizeSp
+          + " cell_width=" + state.cellWidth + " line_height=" + state.lineHeight
+          + " top_inset=" + topInset);
+    } finally {
+      capture.recycle();
+    }
+  }
+
   private static RemoteTerminalModel model() {
     return parityModel(new CellValue[][] {cells()}, COLUMNS);
   }
@@ -321,6 +355,11 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
 
   private static ParityCapture captureParity(CellValue[][] rows, int columns, int viewHeight)
       throws Exception {
+    return captureParity(rows, columns, viewHeight, -1);
+  }
+
+  private static ParityCapture captureParity(CellValue[][] rows, int columns, int viewHeight,
+                                             int textSizeSp) throws Exception {
     RemoteTerminalModel model = parityModel(rows, columns);
     RenderUpdate update = model.consumeRenderUpdate();
     TerminalViewportState viewport = new TerminalViewportState();
@@ -336,6 +375,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
              ActivityScenario.launch(ClipboardTestActivity.class)) {
       scenario.onActivity(activity -> {
         RemoteTerminalView view = new RemoteTerminalView(activity);
+        if (textSizeSp > 0) view.setTextSize(textSizeSp);
         viewRef.set(view);
         windowRef.set(activity.getWindow());
         activity.setContentView(view, new ViewGroup.LayoutParams(
@@ -416,6 +456,21 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       cells[column++] = new CellValue(grapheme, (byte) 1, null, null);
     }
     return cells;
+  }
+
+  private static CellValue[] coloredSpecialRow(int columns, String shade, int shadeColor,
+                                               String dashed, int dashedColor) {
+    CellValue[] cells = new CellValue[columns];
+    Arrays.fill(cells, CellValue.EMPTY);
+    cells[0] = coloredCell(shade, shadeColor);
+    cells[1] = coloredCell(dashed, dashedColor);
+    cells[2] = coloredCell(dashed, dashedColor);
+    return cells;
+  }
+
+  private static CellValue coloredCell(String text, int color) {
+    return new CellValue(text, (byte) 1,
+        new StyleValue(TerminalColor.rgb(color), TerminalColor.DEFAULT_BG, null, 0), null);
   }
 
   private static boolean isSpecialGlyph(String text) {
