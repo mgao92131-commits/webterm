@@ -635,7 +635,7 @@ public final class RemoteTerminalRenderer {
     int rowBottom = rowTop + geometry.lineHeightPx();
     if (drawGlyph) {
       boolean specialGlyphDrawn = specialGlyphPainter.drawIfSupported(
-          canvas, text, left, rowTop, right, rowBottom, styleScratch.foreground);
+          canvas, text, left, rowTop, right, rowBottom, styleScratch.foreground, 0, 0);
       if (!specialGlyphDrawn) {
         textPaint.setColor(styleScratch.foreground);
         textPaint.setFakeBoldText(styleScratch.bold);

@@ -96,6 +96,41 @@ public final class BoxDrawingGlyphPainterTest {
     }
   }
 
+  @Test
+  public void dashedHorizontalPatternsUseTheCompleteCellAxis() {
+    assertEquals(2, horizontalDashRuns(0x254C));
+    assertEquals(2, horizontalDashRuns(0x254D));
+    assertEquals(3, horizontalDashRuns(0x2504));
+    assertEquals(3, horizontalDashRuns(0x2505));
+    assertEquals(4, horizontalDashRuns(0x2508));
+    assertEquals(4, horizontalDashRuns(0x2509));
+  }
+
+  @Test
+  public void dashedVerticalPatternsUseCellHeightNotCellWidth() {
+    assertEquals(2, verticalDashRuns(0x254E));
+    assertEquals(2, verticalDashRuns(0x254F));
+    assertEquals(3, verticalDashRuns(0x2506));
+    assertEquals(3, verticalDashRuns(0x2507));
+    assertEquals(4, verticalDashRuns(0x250A));
+    assertEquals(4, verticalDashRuns(0x250B));
+  }
+
+  @Test
+  public void verticalDashPhaseIsLineLocal() {
+    Bitmap bitmap = bitmap(24, 96);
+    BoxDrawingGlyphPainter painter = new BoxDrawingGlyphPainter();
+    painter.draw(new Canvas(bitmap), 0x2506, 0, 9, 24, 33, FOREGROUND, 0, 0);
+    painter.draw(new Canvas(bitmap), 0x2506, 0, 52, 24, 76, FOREGROUND, 0, 0);
+    for (int y = 0; y < 24; y++) {
+      for (int x = 0; x < 24; x++) {
+        assertEquals("vertical dash phase depends on screen row", bitmap.getPixel(x, 9 + y),
+            bitmap.getPixel(x, 52 + y));
+      }
+    }
+    bitmap.recycle();
+  }
+
   private static void drawClipped(Bitmap bitmap, BoxDrawingGlyphPainter painter,
                                   int codePoint, int left, int top, int right, int bottom) {
     Canvas canvas = new Canvas(bitmap);
@@ -127,5 +162,36 @@ public final class BoxDrawingGlyphPainterTest {
       }
     }
     return count;
+  }
+
+  private static int horizontalDashRuns(int codePoint) {
+    Bitmap bitmap = bitmap(48, 32);
+    drawClipped(bitmap, new BoxDrawingGlyphPainter(), codePoint, 0, 0, 40, 32);
+    int runs = countRuns(bitmap, 0, 40, 14, 20);
+    bitmap.recycle();
+    return runs;
+  }
+
+  private static int verticalDashRuns(int codePoint) {
+    Bitmap bitmap = bitmap(32, 48);
+    drawClipped(bitmap, new BoxDrawingGlyphPainter(), codePoint, 0, 0, 32, 40);
+    int runs = countRuns(bitmap, 14, 20, 0, 40);
+    bitmap.recycle();
+    return runs;
+  }
+
+  private static int countRuns(Bitmap bitmap, int left, int right, int top, int bottom) {
+    int runs = 0;
+    boolean inRun = false;
+    boolean horizontal = right - left > bottom - top;
+    int length = horizontal ? right - left : bottom - top;
+    for (int offset = 0; offset < length; offset++) {
+      boolean ink = horizontal
+          ? countInk(bitmap, left + offset, left + offset + 1, top, bottom) > 0
+          : countInk(bitmap, left, right, top + offset, top + offset + 1) > 0;
+      if (ink && !inRun) runs++;
+      inRun = ink;
+    }
+    return runs;
   }
 }

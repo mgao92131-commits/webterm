@@ -84,14 +84,55 @@ public final class BlockElementGlyphPainterTest {
   }
 
   @Test
-  public void shadePatternUsesAbsolutePixelPhaseAcrossCells() {
+  public void everyQuadrantCodePointMatchesItsIndependentTopology() {
+    int[][] expectedMasks = {
+        {0, 0, 1, 0}, // U+2596 lower left
+        {0, 0, 0, 1}, // U+2597 lower right
+        {1, 0, 0, 0}, // U+2598 upper left
+        {1, 0, 1, 1}, // U+2599 upper left + lower left + lower right
+        {1, 0, 0, 1}, // U+259A upper left + lower right
+        {1, 1, 1, 0}, // U+259B upper left + upper right + lower left
+        {1, 1, 0, 1}, // U+259C upper left + upper right + lower right
+        {0, 1, 0, 0}, // U+259D upper right
+        {0, 1, 1, 0}, // U+259E upper right + lower left
+        {0, 1, 1, 1}  // U+259F upper right + lower left + lower right
+    };
+    for (int index = 0; index < expectedMasks.length; index++) {
+      Bitmap bitmap = bitmap();
+      new BlockElementGlyphPainter().draw(new Canvas(bitmap), 0x2596 + index,
+          4, 4, 36, 36, FOREGROUND);
+      assertQuadrant(bitmap, 0x2596 + index, 4, 4, 36, 36, expectedMasks[index]);
+      bitmap.recycle();
+    }
+  }
+
+  @Test
+  public void shadePatternUsesTerminalXPhaseAcrossOddCellBoundary() {
     Bitmap bitmap = bitmap(64, 24);
     BlockElementGlyphPainter painter = new BlockElementGlyphPainter();
-    painter.draw(new Canvas(bitmap), 0x2592, 0, 0, 32, 24, FOREGROUND);
-    painter.draw(new Canvas(bitmap), 0x2592, 32, 0, 64, 24, FOREGROUND);
+    painter.draw(new Canvas(bitmap), 0x2592, 0, 0, 31, 24, FOREGROUND, 0, 0);
+    painter.draw(new Canvas(bitmap), 0x2592, 31, 0, 64, 24, FOREGROUND, 0, 0);
     for (int y = 0; y < 24; y++) {
-      assertEquals("shade phase restarted at cell boundary", bitmap.getPixel(31, y),
-          bitmap.getPixel(33, y));
+      for (int x = 0; x < 64; x++) {
+        int expected = ((x + y) & 1) == 0 ? FOREGROUND : BACKGROUND;
+        assertEquals("shade phase restarted at odd cell boundary x=" + x + " y=" + y,
+            expected, bitmap.getPixel(x, y));
+      }
+    }
+    bitmap.recycle();
+  }
+
+  @Test
+  public void shadePatternUsesLineLocalYPhase() {
+    Bitmap bitmap = bitmap(32, 96);
+    BlockElementGlyphPainter painter = new BlockElementGlyphPainter();
+    painter.draw(new Canvas(bitmap), 0x2592, 0, 9, 32, 33, FOREGROUND, 0, 0);
+    painter.draw(new Canvas(bitmap), 0x2592, 0, 52, 32, 76, FOREGROUND, 0, 0);
+    for (int y = 0; y < 24; y++) {
+      for (int x = 0; x < 32; x++) {
+        assertEquals("shade phase depends on screen row", bitmap.getPixel(x, 9 + y),
+            bitmap.getPixel(x, 52 + y));
+      }
     }
     bitmap.recycle();
   }
@@ -114,5 +155,22 @@ public final class BlockElementGlyphPainterTest {
       }
     }
     return count;
+  }
+
+  private static void assertQuadrant(Bitmap bitmap, int codePoint, int left, int top,
+                                     int right, int bottom, int[] expectedMask) {
+    int middleX = left + (right - left) / 2;
+    int middleY = top + (bottom - top) / 2;
+    int[] sampleX = {left + 4, middleX + 4};
+    int[] sampleY = {top + 4, middleY + 4};
+    int index = 0;
+    for (int row = 0; row < 2; row++) {
+      for (int column = 0; column < 2; column++) {
+        int expected = expectedMask[index++];
+        int actual = bitmap.getPixel(sampleX[column], sampleY[row]) == FOREGROUND ? 1 : 0;
+        assertEquals("quadrant mask U+" + Integer.toHexString(codePoint)
+            + " index=" + (index - 1), expected, actual);
+      }
+    }
   }
 }

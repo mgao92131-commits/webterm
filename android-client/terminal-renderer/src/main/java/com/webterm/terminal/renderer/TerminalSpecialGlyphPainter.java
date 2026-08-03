@@ -67,30 +67,43 @@ final class TerminalSpecialGlyphPainter {
 
   boolean drawIfSupported(Canvas canvas, String grapheme,
                           int left, int top, int right, int bottom, int foreground) {
+    return drawIfSupported(canvas, grapheme, left, top, right, bottom, foreground, 0, 0);
+  }
+
+  /**
+   * Draws using a stable terminal phase. X is in the terminal coordinate space; Y is relative
+   * to the line being recorded so a direct Canvas fallback matches a translated RenderNode.
+   */
+  boolean drawIfSupported(Canvas canvas, String grapheme,
+                          int left, int top, int right, int bottom, int foreground,
+                          int phaseX, int phaseY) {
     int codePoint = singleCodePoint(grapheme);
     Family family = familyForCodePoint(codePoint);
-    if (!isEnabled(family)) return false;
+    if (!isEnabled(family) || left >= right || top >= bottom) return false;
 
     int saveCount = canvas.save();
     canvas.clipRect(left, top, right, bottom);
     try {
+      boolean drawn = false;
       switch (family) {
         case BOX_DRAWING:
-          boxDrawingPainter.draw(canvas, codePoint, left, top, right, bottom, foreground);
+          drawn = boxDrawingPainter.draw(canvas, codePoint, left, top, right, bottom, foreground,
+              phaseX, phaseY);
           break;
         case BLOCK_ELEMENTS:
-          blockElementPainter.draw(canvas, codePoint, left, top, right, bottom, foreground);
+          drawn = blockElementPainter.draw(canvas, codePoint, left, top, right, bottom, foreground,
+              phaseX, phaseY);
           break;
         case BRAILLE:
-          braillePainter.draw(canvas, codePoint, left, top, right, bottom, foreground);
+          drawn = braillePainter.draw(canvas, codePoint, left, top, right, bottom, foreground);
           break;
         case POWERLINE:
-          powerlinePainter.draw(canvas, codePoint, left, top, right, bottom, foreground);
+          drawn = powerlinePainter.draw(canvas, codePoint, left, top, right, bottom, foreground);
           break;
         case NONE:
           return false;
       }
-      return true;
+      return drawn;
     } finally {
       canvas.restoreToCount(saveCount);
     }

@@ -21,9 +21,9 @@ final class BrailleGlyphPainter {
     return codePoint >= FIRST && codePoint <= LAST;
   }
 
-  void draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
-            int foreground) {
-    if (!supports(codePoint) || left >= right || top >= bottom) return;
+  boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
+               int foreground) {
+    if (!supports(codePoint) || left >= right || top >= bottom) return false;
     paint.setColor(foreground);
     int mask = codePoint - FIRST;
     float width = right - left;
@@ -38,5 +38,6 @@ final class BrailleGlyphPainter {
       float y = top + height * ((row * 2 + 1) / 8f);
       canvas.drawCircle(x, y, radius, paint);
     }
+    return true;
   }
 }

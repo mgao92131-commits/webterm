@@ -18,9 +18,9 @@ final class PowerlineGlyphPainter {
         || codePoint == 0xE0B4 || codePoint == 0xE0B6;
   }
 
-  void draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
-            int foreground) {
-    if (!supports(codePoint) || left >= right || top >= bottom) return;
+  boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
+               int foreground) {
+    if (!supports(codePoint) || left >= right || top >= bottom) return false;
     paint.setColor(foreground);
     float middleY = top + (bottom - top) / 2f;
     path.reset();
@@ -48,8 +48,9 @@ final class PowerlineGlyphPainter {
         path.close();
         break;
       default:
-        return;
+        return false;
     }
     canvas.drawPath(path, paint);
+    return true;
   }
 }

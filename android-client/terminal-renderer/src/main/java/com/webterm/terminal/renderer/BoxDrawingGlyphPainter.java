@@ -34,11 +34,16 @@ final class BoxDrawingGlyphPainter {
     return supports(codePoint) && GLYPHS[codePoint - FIRST] != null;
   }
 
-  void draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
-            int foreground) {
-    if (!supports(codePoint) || left >= right || top >= bottom) return;
+  boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
+               int foreground) {
+    return draw(canvas, codePoint, left, top, right, bottom, foreground, 0, 0);
+  }
+
+  boolean draw(Canvas canvas, int codePoint, int left, int top, int right, int bottom,
+               int foreground, int phaseX, int phaseY) {
+    if (!supports(codePoint) || left >= right || top >= bottom) return false;
     BoxGlyph glyph = GLYPHS[codePoint - FIRST];
-    if (glyph == null) return;
+    if (glyph == null) return false;
 
     hardEdgePaint.setColor(foreground);
     int width = right - left;
@@ -53,21 +58,21 @@ final class BoxDrawingGlyphPainter {
         || glyph.shape == Shape.DIAGONAL_BACKWARD
         || glyph.shape == Shape.DIAGONAL_CROSS) {
       drawDiagonal(canvas, glyph.shape, left, top, right, bottom, lightWidth, foreground);
-      return;
+      return true;
     }
     if (glyph.shape == Shape.ROUNDED) {
       drawRoundedCorner(canvas, glyph, left, top, right, bottom, lightWidth, foreground);
-      return;
+      return true;
     }
 
-    drawHorizontalDirection(canvas, left, centerX, centerY, glyph.left,
-        glyph.horizontalPattern, lightWidth, heavyWidth);
-    drawHorizontalDirection(canvas, centerX, right, centerY, glyph.right,
-        glyph.horizontalPattern, lightWidth, heavyWidth);
-    drawVerticalDirection(canvas, top, centerY, centerX, glyph.top,
-        glyph.verticalPattern, lightWidth, heavyWidth, width);
-    drawVerticalDirection(canvas, centerY, bottom, centerX, glyph.bottom,
-        glyph.verticalPattern, lightWidth, heavyWidth, width);
+    drawHorizontalDirection(canvas, left, centerX, left, right, centerY, glyph.left,
+        glyph.horizontalPattern, lightWidth, heavyWidth, phaseX);
+    drawHorizontalDirection(canvas, centerX, right, left, right, centerY, glyph.right,
+        glyph.horizontalPattern, lightWidth, heavyWidth, phaseX);
+    drawVerticalDirection(canvas, top, centerY, top, bottom, centerX, glyph.top,
+        glyph.verticalPattern, lightWidth, heavyWidth, phaseY);
+    drawVerticalDirection(canvas, centerY, bottom, top, bottom, centerX, glyph.bottom,
+        glyph.verticalPattern, lightWidth, heavyWidth, phaseY);
 
     // Two parallel double lines are intentionally separated on straight glyphs. For corners
     // and junctions fill only the central hub so mixed double/single connections do not leave a
@@ -80,6 +85,7 @@ final class BoxDrawingGlyphPainter {
       canvas.drawRect(hubLeft, hubTop, bandEnd(centerX, hubWidth),
           bandEnd(centerY, hubWidth), hardEdgePaint);
     }
+    return true;
   }
 
   private static boolean needsHub(BoxGlyph glyph) {
@@ -103,53 +109,63 @@ final class BoxDrawingGlyphPainter {
     return result;
   }
 
-  private void drawHorizontalDirection(Canvas canvas, int start, int end, int center,
+  private void drawHorizontalDirection(Canvas canvas, int start, int end,
+                                       int cellLeft, int cellRight, int center,
                                        Stroke stroke, Pattern pattern, int lightWidth,
-                                       int heavyWidth) {
+                                       int heavyWidth, int phaseX) {
     if (stroke == Stroke.NONE || start >= end) return;
     int from = Math.min(start, end);
     int to = Math.max(start, end);
     if (stroke == Stroke.DOUBLE) {
       int offset = Math.max(1, lightWidth);
-      drawHorizontalPattern(canvas, from, to, center - offset, lightWidth, pattern);
-      drawHorizontalPattern(canvas, from, to, center + offset, lightWidth, pattern);
+      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, center - offset,
+          lightWidth, pattern, phaseX);
+      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, center + offset,
+          lightWidth, pattern, phaseX);
     } else {
-      drawHorizontalPattern(canvas, from, to, center,
-          stroke == Stroke.HEAVY ? heavyWidth : lightWidth, pattern);
+      drawHorizontalPattern(canvas, from, to, cellLeft, cellRight, center,
+          stroke == Stroke.HEAVY ? heavyWidth : lightWidth, pattern, phaseX);
     }
   }
 
-  private void drawVerticalDirection(Canvas canvas, int start, int end, int center,
+  private void drawVerticalDirection(Canvas canvas, int start, int end,
+                                     int cellTop, int cellBottom, int center,
                                      Stroke stroke, Pattern pattern, int lightWidth,
-                                     int heavyWidth, int width) {
+                                     int heavyWidth, int phaseY) {
     if (stroke == Stroke.NONE || start >= end) return;
     int from = Math.min(start, end);
     int to = Math.max(start, end);
     if (stroke == Stroke.DOUBLE) {
       int offset = Math.max(1, lightWidth);
-      drawVerticalPattern(canvas, from, to, center - offset, lightWidth, pattern, width);
-      drawVerticalPattern(canvas, from, to, center + offset, lightWidth, pattern, width);
+      drawVerticalPattern(canvas, from, to, cellTop, cellBottom, center - offset,
+          lightWidth, pattern, phaseY);
+      drawVerticalPattern(canvas, from, to, cellTop, cellBottom, center + offset,
+          lightWidth, pattern, phaseY);
     } else {
-      drawVerticalPattern(canvas, from, to, center,
-          stroke == Stroke.HEAVY ? heavyWidth : lightWidth, pattern, width);
+      drawVerticalPattern(canvas, from, to, cellTop, cellBottom, center,
+          stroke == Stroke.HEAVY ? heavyWidth : lightWidth, pattern, phaseY);
     }
   }
 
-  private void drawHorizontalPattern(Canvas canvas, int left, int right, int centerY,
-                                     int thickness, Pattern pattern) {
+  private void drawHorizontalPattern(Canvas canvas, int left, int right,
+                                     int cellLeft, int cellRight, int centerY,
+                                     int thickness, Pattern pattern, int phaseX) {
     if (pattern == Pattern.SOLID) {
       hardEdgePaint.setStyle(Paint.Style.FILL);
       canvas.drawRect(left, bandStart(centerY, thickness), right,
           bandEnd(centerY, thickness), hardEdgePaint);
       return;
     }
-    int period = dashPeriod(pattern, Math.max(1, right - left));
-    int dashLength = Math.max(1, (period + 1) / 2);
-    int first = Math.floorDiv(left, period) * period;
+    float period = dashPeriod(pattern, Math.max(1, cellRight - cellLeft));
+    float dashLength = Math.max(1f, period / 2f);
+    int first = (int) Math.floor((cellLeft - phaseX) / period) - 1;
     hardEdgePaint.setStyle(Paint.Style.FILL);
-    for (int start = first; start < right; start += period) {
-      int segmentLeft = Math.max(left, start);
-      int segmentRight = Math.min(right, start + dashLength);
+    for (int index = first; ; index++) {
+      float start = phaseX + index * period;
+      if (start >= cellRight) break;
+      float end = start + dashLength;
+      int segmentLeft = Math.max(left, (int) Math.floor(start));
+      int segmentRight = Math.min(right, (int) Math.ceil(end));
       if (segmentLeft < segmentRight) {
         canvas.drawRect(segmentLeft, bandStart(centerY, thickness), segmentRight,
             bandEnd(centerY, thickness), hardEdgePaint);
@@ -157,21 +173,25 @@ final class BoxDrawingGlyphPainter {
     }
   }
 
-  private void drawVerticalPattern(Canvas canvas, int top, int bottom, int centerX,
-                                   int thickness, Pattern pattern, int width) {
+  private void drawVerticalPattern(Canvas canvas, int top, int bottom,
+                                   int cellTop, int cellBottom, int centerX,
+                                   int thickness, Pattern pattern, int phaseY) {
     if (pattern == Pattern.SOLID) {
       hardEdgePaint.setStyle(Paint.Style.FILL);
       canvas.drawRect(bandStart(centerX, thickness), top,
           bandEnd(centerX, thickness), bottom, hardEdgePaint);
       return;
     }
-    int period = dashPeriod(pattern, Math.max(1, width));
-    int dashLength = Math.max(1, (period + 1) / 2);
-    int first = Math.floorDiv(top, period) * period;
+    float period = dashPeriod(pattern, Math.max(1, cellBottom - cellTop));
+    float dashLength = Math.max(1f, period / 2f);
+    int first = (int) Math.floor((0f - phaseY) / period) - 1;
     hardEdgePaint.setStyle(Paint.Style.FILL);
-    for (int start = first; start < bottom; start += period) {
-      int segmentTop = Math.max(top, start);
-      int segmentBottom = Math.min(bottom, start + dashLength);
+    for (int index = first; ; index++) {
+      float start = phaseY + index * period;
+      if (start >= cellBottom - cellTop) break;
+      float end = start + dashLength;
+      int segmentTop = Math.max(top, cellTop + (int) Math.floor(start));
+      int segmentBottom = Math.min(bottom, cellTop + (int) Math.ceil(end));
       if (segmentTop < segmentBottom) {
         canvas.drawRect(bandStart(centerX, thickness), segmentTop,
             bandEnd(centerX, thickness), segmentBottom, hardEdgePaint);
@@ -179,10 +199,8 @@ final class BoxDrawingGlyphPainter {
     }
   }
 
-  private static int dashPeriod(Pattern pattern, int dimension) {
-    int count = pattern == Pattern.DOUBLE_DASH ? 2
-        : pattern == Pattern.TRIPLE_DASH ? 3 : 4;
-    return Math.max(2, Math.round(Math.max(1, dimension) / (float) count));
+  private static float dashPeriod(Pattern pattern, int dimension) {
+    return Math.max(2f, dimension / (float) pattern.dashCount());
   }
 
   private void drawRoundedCorner(Canvas canvas, BoxGlyph glyph, int left, int top,
@@ -249,7 +267,17 @@ final class BoxDrawingGlyphPainter {
     SOLID,
     DOUBLE_DASH,
     TRIPLE_DASH,
-    QUADRUPLE_DASH
+    QUADRUPLE_DASH;
+
+    int dashCount() {
+      switch (this) {
+        case DOUBLE_DASH: return 2;
+        case TRIPLE_DASH: return 3;
+        case QUADRUPLE_DASH: return 4;
+        case SOLID: return 1;
+      }
+      return 1;
+    }
   }
 
   private enum Shape {
