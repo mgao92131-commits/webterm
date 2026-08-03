@@ -17,6 +17,7 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 - Hardening 分支：`agent/android-renderer-phase5-hardening`
 - Phase 5 基线实现提交：`f95bc7740e2ad1ca96e413915d2ff4d15287cc26`
 - Hardening 实现提交：`127a140f`
+- 最新 hardening 修复：`2da6e0d8 fix(renderer): correct fragmented blink invalidation`
 - 主要提交：
   - `2287ef45 refactor(renderer): separate static and dynamic foreground spans`
   - `41a29c91 feat(renderer): schedule visible slow and fast blink rows`
@@ -31,6 +32,10 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 - 可见 blink 行扫描结果在一个动画 tick 内复用，相邻脏行合并，只有 phase 真正变化时才失效；
 - RenderNode 行缓存保存对应的 `CompiledTerminalLine`，静态正文与 blink overlay 不再重复编译；
 - 空字符串、width=1 的 blink cell 按视觉空格处理，不会启动无意义动画。
+- 分散 Blink 区域超过局部脏区上限时，fallback bottom 使用 `contentTop + contentHeight` 的绝对
+  坐标，不会漏刷内容底部。
+- View 不可见、未显示或 detached 时不会启动/续排 Blink callback；窗口重新可见后会重新检查
+  当前 viewport 并恢复调度。
 
 ## 实现内容
 
@@ -60,7 +65,7 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 
 结果：
 
-- JVM/Robolectric：129/129 通过。
+- JVM/Robolectric：130/130 通过。
 - `:terminal-renderer:assembleDebug`：通过。
 - `:app:assembleDebug`：通过。
 - API 36 instrumentation：26/26 通过。
@@ -90,6 +95,7 @@ assemble 和 API 36 instrumentation。API 29 模拟器、真实 Android 设备�
 - cursor blink：`records_delta=0`、`cache_hits_delta=16`；
 - selection 改变：`records_delta=0`、`cache_hits_delta=8`，截图变化 2380 像素；
 - 文字 slow blink：`records_delta=0`，on/off 相位截图前景发生变化；
+- 窗口不可见时 Blink scheduler 停止，重新可见时恢复调度；
 - 40×120 mixed Unicode：40 个 record，单次 `render_duration=13,547,375 ns`。
 
 以上纳秒值是单次 AVD smoke 样本，不代表 P50/P95；本阶段没有把单次模拟器时间作为硬性
