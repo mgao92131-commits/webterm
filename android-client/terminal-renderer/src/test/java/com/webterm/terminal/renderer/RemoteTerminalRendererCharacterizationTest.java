@@ -1,6 +1,7 @@
 package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
@@ -103,6 +104,37 @@ public final class RemoteTerminalRendererCharacterizationTest {
         withSelection.rectOps > withoutSelection.rectOps);
   }
 
+  @Test
+  public void blinkDoesNotSetFakeBoldOrRaiseIndexedColorOnEitherPath() {
+    int slowBlink = 1 << 8;
+    int fastBlink = 1 << 9;
+    TerminalColor lowIndexed = TerminalColor.indexed(1);
+    int expectedColor = RemoteTerminalRenderer.resolveColor(
+        TerminalPalette.defaults(), lowIndexed);
+
+    StyleValue slow = new StyleValue(lowIndexed, TerminalColor.DEFAULT_BG, null, slowBlink);
+    CountingCanvas ascii = new CountingCanvas(80, 40);
+    render(new CellValue[] {
+        new CellValue("a", (byte) 1, slow, null),
+        new CellValue("b", (byte) 1, slow, null),
+        new CellValue("c", (byte) 1, slow, null)
+    }, ascii, new TerminalViewportState(), TerminalCursor.hidden());
+    assertTrue(ascii.textOps > 0);
+    assertFalse("slow blink must not become fake bold", ascii.lastFakeBold);
+    assertEquals("slow blink must not become bright ANSI color",
+        expectedColor, ascii.lastTextColor);
+
+    StyleValue fast = new StyleValue(lowIndexed, TerminalColor.DEFAULT_BG, null, fastBlink);
+    CountingCanvas cell = new CountingCanvas(80, 40);
+    render(new CellValue[] {
+        new CellValue("界", (byte) 2, fast, null)
+    }, cell, new TerminalViewportState(), TerminalCursor.hidden());
+    assertTrue(cell.textOps > 0);
+    assertFalse("fast blink must not become fake bold", cell.lastFakeBold);
+    assertEquals("fast blink must not become bright ANSI color",
+        expectedColor, cell.lastTextColor);
+  }
+
   private static void render(TerminalCompatibilityFixtures.Fixture fixture,
                              CountingCanvas canvas, TerminalViewportState viewport,
                              TerminalCursor cursor) {
@@ -153,6 +185,8 @@ public final class RemoteTerminalRendererCharacterizationTest {
     int batchedTextOps;
     int rectOps;
     int lineOps;
+    boolean lastFakeBold;
+    int lastTextColor;
 
     CountingCanvas(int width, int height) {
       super(Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888));
@@ -162,6 +196,8 @@ public final class RemoteTerminalRendererCharacterizationTest {
     public void drawText(String text, float x, float y, Paint paint) {
       textOps++;
       stringTextOps++;
+      lastFakeBold = paint.isFakeBoldText();
+      lastTextColor = paint.getColor();
       super.drawText(text, x, y, paint);
     }
 
@@ -170,6 +206,8 @@ public final class RemoteTerminalRendererCharacterizationTest {
         CharSequence text, int start, int end, float x, float y, Paint paint) {
       textOps++;
       batchedTextOps++;
+      lastFakeBold = paint.isFakeBoldText();
+      lastTextColor = paint.getColor();
       super.drawText(text, start, end, x, y, paint);
     }
 

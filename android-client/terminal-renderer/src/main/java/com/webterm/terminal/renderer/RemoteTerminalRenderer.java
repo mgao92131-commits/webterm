@@ -39,6 +39,8 @@ public final class RemoteTerminalRenderer {
   private final Paint placeholderPaint = new Paint();
   private final Rect clipBounds = new Rect();
   private final TerminalCellGeometry geometry = new TerminalCellGeometry();
+  private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
+  private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
   private int phaseMetricsFrame;
@@ -559,25 +561,11 @@ public final class RemoteTerminalRenderer {
   private boolean drawAsciiRun(Canvas canvas, TerminalPalette palette,
                                @Nullable StyleValue style, CharSequence text, int startCol,
                                float rowY, int canvasBackground) {
-    TerminalColor fgColor = style != null ? style.fg() : palette.defaultFg;
-    TerminalColor bgColor = style != null ? style.bg() : palette.defaultBg;
-    if (palette.reverseVideo ^ (style != null && style.reverse())) {
-      TerminalColor swap = fgColor;
-      fgColor = bgColor;
-      bgColor = swap;
-    }
+    styleResolver.resolveInto(palette, style, false, styleScratch);
 
-    int fg = resolveColor(palette, fgColor);
-    boolean bold = style != null && (style.bold() || style.blinkSlow() || style.blinkFast());
-    if (bold && fgColor.kind == TerminalColor.Kind.INDEXED
-        && fgColor.index >= 0 && fgColor.index < 8) {
-      fg = resolveIndexedColor(palette, fgColor.index + 8);
-    }
-    if (style != null && style.dim()) fg = TerminalVisualRules.dim(fg);
-
-    textPaint.setColor(fg);
-    textPaint.setFakeBoldText(bold);
-    textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
+    textPaint.setColor(styleScratch.foreground);
+    textPaint.setFakeBoldText(styleScratch.bold);
+    textPaint.setTextSkewX(styleScratch.italic ? -0.35f : 0f);
 
     float x = geometry.textOriginX(startCol);
     int left = geometry.columnEdgePx(startCol);
@@ -586,34 +574,34 @@ public final class RemoteTerminalRenderer {
     float expectedWidth = text.length() * geometry.cellWidth();
     // The canonical cell path scales each glyph independently. Scaling a whole run changes
     // hinting/anti-aliasing and can visibly shift glyphs, so only batch naturally cell-wide text.
-    if (style == null || !style.hidden()) {
+    if (!styleScratch.hidden) {
       float measuredWidth = textPaint.measureText(text, 0, text.length());
       // Robolectric's legacy Paint shadow reports zero; keep the benchmark capable of observing
       // draw batching while real Android Canvas uses the strict no-scaling check below.
       if (measuredWidth > 0 && Math.abs(measuredWidth - expectedWidth) > 0.01f) return false;
     }
-    int bg = resolveColor(palette, bgColor);
+    int bg = styleScratch.background;
     if (bg != canvasBackground) {
       bgPaint.setColor(bg);
       canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
     }
 
-    if (style == null || !style.hidden()) {
+    if (!styleScratch.hidden) {
       canvas.drawText(text, 0, text.length(), x,
           rowY + geometry.baselineOffset(), textPaint);
     }
 
-    if (style != null && (style.underline() || style.doubleUnderline())) {
-      textPaint.setColor(style.underlineColor() != null
-          ? resolveColor(palette, style.underlineColor()) : fg);
+    if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.SINGLE
+        || styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
+      textPaint.setColor(styleScratch.underlineColor);
       float underlineY = rowY + geometry.lineHeightPx() - 2;
       canvas.drawLine(left, underlineY, right, underlineY, textPaint);
-      if (style.doubleUnderline()) {
+      if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
         canvas.drawLine(left, underlineY - 3, right, underlineY - 3, textPaint);
       }
     }
-    if (style != null && style.strike()) {
-      textPaint.setColor(fg);
+    if (styleScratch.strike) {
+      textPaint.setColor(styleScratch.foreground);
       float strikeY = rowY + geometry.lineHeightPx() * 0.52f;
       canvas.drawLine(left, strikeY, right, strikeY, textPaint);
     }
@@ -625,35 +613,16 @@ public final class RemoteTerminalRenderer {
                         boolean insideCursor, TerminalCursor cursor, boolean preserveAspect,
                         int canvasBackground) {
     StyleValue style = styleOf(cell);
-    TerminalColor fgColor = style != null ? style.fg() : palette.defaultFg;
-    TerminalColor bgColor = style != null ? style.bg() : palette.defaultBg;
     boolean blockCursor = insideCursor && cursor.shape == TerminalCursor.Shape.BLOCK;
-    // Text selection is a view-layer highlight, not an ANSI inverse-video mode.
-    // Reversing every individual cell makes CJK/emoji and styled TUI runs lose
-    // contrast or look clipped when their glyph width differs from a cell.
-    boolean reverse = palette.reverseVideo ^ (style != null && style.reverse()) ^ blockCursor;
-    if (reverse) {
-      TerminalColor swap = fgColor;
-      fgColor = bgColor;
-      bgColor = swap;
-    }
-
-    int fg = resolveColor(palette, fgColor);
-    boolean bold = style != null && (style.bold() || style.blinkSlow() || style.blinkFast());
-    if (bold && fgColor.kind == TerminalColor.Kind.INDEXED
-        && fgColor.index >= 0 && fgColor.index < 8) {
-      fg = resolveIndexedColor(palette, fgColor.index + 8);
-    }
-    if (style != null && style.dim()) fg = TerminalVisualRules.dim(fg);
-    int bg = resolveColor(palette, bgColor);
+    styleResolver.resolveInto(palette, style, blockCursor, styleScratch);
 
     float x = geometry.textOriginX(col);
     int left = geometry.columnEdgePx(col);
     int right = geometry.columnEdgePx(col + (cell.isWideStart() ? 2 : 1));
     float width = right - left;
     float lineHeight = geometry.lineHeightPx();
-    if (bg != canvasBackground) {
-      bgPaint.setColor(bg);
+    if (styleScratch.background != canvasBackground) {
+      bgPaint.setColor(styleScratch.background);
       canvas.drawRect(left, rowY, right, rowY + lineHeight, bgPaint);
     }
 
@@ -673,11 +642,11 @@ public final class RemoteTerminalRenderer {
     // A terminal's common case is an unstyled blank cell. Its background was
     // already handled above, so measuring and drawing a space per cell only
     // burns UI-thread time without changing pixels.
-    boolean drawGlyph = !" ".equals(text) && (style == null || !style.hidden());
+    boolean drawGlyph = !" ".equals(text) && !styleScratch.hidden;
     if (drawGlyph) {
-      textPaint.setColor(fg);
-      textPaint.setFakeBoldText(bold);
-      textPaint.setTextSkewX(style != null && style.italic() ? -0.35f : 0f);
+      textPaint.setColor(styleScratch.foreground);
+      textPaint.setFakeBoldText(styleScratch.bold);
+      textPaint.setTextSkewX(styleScratch.italic ? -0.35f : 0f);
       float expectedWidth = (cell.isWideStart() ? 2 : 1) * geometry.cellWidth();
       float measuredWidth = textPaint.measureText(text);
       boolean scaleGlyph = !preserveAspect && measuredWidth > 0
@@ -695,16 +664,17 @@ public final class RemoteTerminalRenderer {
       if (savedMatrix) canvas.restore();
     }
 
-    if (style != null && (style.underline() || style.doubleUnderline())) {
-      textPaint.setColor(style.underlineColor() != null
-          ? resolveColor(palette, style.underlineColor()) : fg);
+    if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.SINGLE
+        || styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
+      textPaint.setColor(styleScratch.underlineColor);
       float underlineY = rowY + lineHeight - 2;
       canvas.drawLine(left, underlineY, right, underlineY, textPaint);
-      if (style.doubleUnderline()) {
+      if (styleScratch.underlineKind == ResolvedTerminalStyle.UnderlineKind.DOUBLE) {
         canvas.drawLine(left, underlineY - 3, right, underlineY - 3, textPaint);
       }
     }
-    if (style != null && style.strike()) {
+    if (styleScratch.strike) {
+      textPaint.setColor(styleScratch.foreground);
       float strikeY = rowY + lineHeight * 0.52f;
       canvas.drawLine(left, strikeY, right, strikeY, textPaint);
     }
