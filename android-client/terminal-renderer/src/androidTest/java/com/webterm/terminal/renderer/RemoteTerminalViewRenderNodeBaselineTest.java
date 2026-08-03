@@ -26,12 +26,14 @@ import com.webterm.terminal.model.ScreenScroll;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCommit;
 import com.webterm.terminal.model.TerminalCursor;
+import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalStateUpdate;
 import com.webterm.terminal.model.TerminalViewportState;
+import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.capture.CapturedScreenshot;
 
 import java.util.ArrayList;
@@ -245,6 +247,60 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
   }
 
   @Test
+  public void textBlinkDoesNotRerecordStaticRows() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(textBlinkBaseline()));
+    RenderUpdate update = model.consumeRenderUpdate();
+    TerminalViewportState viewport = new TerminalViewportState();
+    AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
+    TerminalRenderMetrics.Snapshot afterFirst;
+    TerminalRenderMetrics.Snapshot afterBlinkOff;
+    AtomicReference<CapturedScreenshot> onShot = new AtomicReference<>();
+    AtomicReference<CapturedScreenshot> offShot = new AtomicReference<>();
+
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      attachView(scenario, viewRef, ViewGroup.LayoutParams.MATCH_PARENT);
+      DrawWaiter firstDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        firstDraw.attach(viewRef.get());
+        viewRef.get().bindModel(model);
+        viewRef.get().applyRenderUpdate(update, viewport);
+      });
+      assertTrue("text blink baseline draw did not complete", firstDraw.await());
+      scenario.onActivity(activity -> {
+        firstDraw.detach(viewRef.get());
+        assertTrue("text blink scheduler must be active",
+            viewRef.get().animationScheduledForTest());
+      });
+      afterFirst = TerminalRenderMetrics.snapshot();
+
+      waitForBlinkState(scenario, viewRef, true, 2_000L);
+      scenario.onActivity(activity -> onShot.set(viewRef.get().captureScreenshot()));
+      waitForBlinkState(scenario, viewRef, false, 2_000L);
+
+      DrawWaiter blinkOffDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        blinkOffDraw.attach(viewRef.get());
+        viewRef.get().invalidate();
+      });
+      assertTrue("text blink off draw did not complete", blinkOffDraw.await());
+      scenario.onActivity(activity -> {
+        blinkOffDraw.detach(viewRef.get());
+        offShot.set(viewRef.get().captureScreenshot());
+      });
+      afterBlinkOff = TerminalRenderMetrics.snapshot();
+    }
+
+    assertEquals("text blink must not rerecord static row nodes", 0L,
+        afterBlinkOff.rowNodeRecordCount - afterFirst.rowNodeRecordCount);
+    assertTrue("text blink frame must draw cached rows",
+        afterBlinkOff.rowCacheHitCount > afterFirst.rowCacheHitCount);
+    assertTrue("text blink phase must change foreground pixels",
+        differentPixels(onShot.get(), offShot.get()) > 0);
+  }
+
+  @Test
   public void selectionChangeDoesNotRerecordStaticRows() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));
@@ -375,6 +431,28 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     return baseline(ROWS, COLS, TerminalCursor.hidden());
   }
 
+  private static ScreenBaseline textBlinkBaseline() {
+    List<ScreenLineContent> screen = new ArrayList<>();
+    StyleValue blink = new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.DEFAULT_BG, null, 1 << 8);
+    for (int row = 0; row < ROWS; row++) {
+      CellValue[] cells = new CellValue[COLS];
+      Arrays.fill(cells, CellValue.EMPTY);
+      cells[0] = row == 0
+          ? new CellValue("B", (byte) 1, blink, null)
+          : new CellValue("row", (byte) 1, null, null);
+      screen.add(new ScreenLineContent(
+          new LineKey(110_000 + row, 1), new LineBody(COLS, false, cells)));
+    }
+    return new ScreenBaseline(
+        "text-blink", "text-blink-instance", 1, 1, 1,
+        ROWS, COLS, TerminalBufferKind.MAIN,
+        HistoryExtent.INITIAL_EMPTY, Collections.emptyList(),
+        screen.stream().map(ScreenLineContent::key).toList(),
+        screen.stream().map(line -> new LineBodyRecord(line.key(), line.body())).toList(),
+        TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults());
+  }
+
   private static ScreenBaseline baseline(int rows, int columns, TerminalCursor cursor) {
     List<ScreenLineContent> screen = new ArrayList<>();
     for (int row = 0; row < rows; row++) {
@@ -451,6 +529,21 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
           ViewGroup.LayoutParams.MATCH_PARENT, height));
     });
     InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+  }
+
+  private static void waitForBlinkState(
+      ActivityScenario<ClipboardTestActivity> scenario,
+      AtomicReference<RemoteTerminalView> viewRef,
+      boolean expected,
+      long timeoutMillis) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+    AtomicReference<Boolean> state = new AtomicReference<>(false);
+    while (System.nanoTime() < deadline) {
+      scenario.onActivity(activity -> state.set(viewRef.get().slowBlinkOnForTest()));
+      if (state.get() == expected) return;
+      Thread.sleep(50L);
+    }
+    assertTrue("text blink did not reach expected phase=" + expected, state.get() == expected);
   }
 
   private static int differentPixels(CapturedScreenshot first, CapturedScreenshot second) {

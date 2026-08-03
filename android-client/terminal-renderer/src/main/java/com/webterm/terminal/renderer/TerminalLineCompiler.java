@@ -131,9 +131,9 @@ final class TerminalLineCompiler {
       styleResolver.resolveInto(palette, cell.style(), false, styleScratch);
       boolean hasDecoration = styleScratch.strike
           || styleScratch.underlineKind != ResolvedTerminalStyle.UnderlineKind.NONE;
+      String text = cell.text().isEmpty() ? " " : cell.text();
       boolean visible = !styleScratch.hidden
-          && (cell.text().isEmpty() || !" ".equals(cell.text())
-              || hasDecoration);
+          && (!" ".equals(text) || hasDecoration);
       if (visible && styleScratch.blinkSlow) kinds |= BLINK_SLOW;
       if (visible && styleScratch.blinkFast) kinds |= BLINK_FAST;
       column += Math.max(1, width);

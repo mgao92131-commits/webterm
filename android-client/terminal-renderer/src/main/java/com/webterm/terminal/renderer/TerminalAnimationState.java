@@ -12,7 +12,8 @@ record TerminalAnimationState(
     boolean fastBlinkOn
 ) {
   static TerminalAnimationState cursorOnly(boolean cursorOn) {
-    return new TerminalAnimationState(cursorOn, false, false);
+    // 兼容旧 render() 重载时，文字 blink 仍保持可见；动态层由 View 入口传入真实相位。
+    return new TerminalAnimationState(cursorOn, true, true);
   }
 
   static TerminalAnimationState staticContent() {

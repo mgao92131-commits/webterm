@@ -239,7 +239,10 @@ public final class TerminalLineRenderNodeCache {
     int saveCount = recordingCanvas.save();
     try {
       recordingCanvas.translate(leftBleedPx, topBleedPx);
-      frameRenderer.drawTerminalLineContent(recordingCanvas, columns, framePalette, line, 0f,
+      CompiledTerminalLine compiled = frameRenderer.compileLine(
+          line, columns, framePalette, frameCanvasBackground);
+      cached.compiledLine = compiled;
+      frameRenderer.drawCompiledLineContent(recordingCanvas, compiled, 0f,
           frameCanvasBackground);
     } finally {
       recordingCanvas.restoreToCount(saveCount);
@@ -286,6 +289,13 @@ public final class TerminalLineRenderNodeCache {
     return cached != null ? cached.node : null;
   }
 
+  @Nullable
+  CompiledTerminalLine compiledLineForLine(@Nullable RenderLine line) {
+    if (line == null) return null;
+    CachedLine cached = lines.get(line.key().lineId());
+    return cached != null && matchesRecordedLine(cached, line) ? cached.compiledLine : null;
+  }
+
   /** 同一不可变行对象是热路径；只有恢复/分页等重建对象时才比较 cells。 */
   private static boolean matchesRecordedLine(
       @NonNull CachedLine cached, @NonNull RenderLine incoming) {
@@ -301,6 +311,7 @@ public final class TerminalLineRenderNodeCache {
     long lineId;
     long lineVersion;
     @Nullable RenderLine recordedLine;
+    @Nullable CompiledTerminalLine compiledLine;
     long lastUsedFrame;
     long lastDrawnFrame = Long.MIN_VALUE;
     boolean recentlyUsed;

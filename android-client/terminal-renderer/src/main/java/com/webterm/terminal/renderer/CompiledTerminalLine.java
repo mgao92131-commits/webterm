@@ -308,4 +308,17 @@ final class CompiledTerminalLine {
     }
     return null;
   }
+
+  int visibleBlinkKinds() {
+    int kinds = 0;
+    for (Span span : spans) {
+      CompiledStyle style = span.style();
+      if (!style.hasBlink() || style.hidden()) continue;
+      // 编译器会保留带 decoration 的空格，但普通空格不会生成 span。
+      if (span instanceof BlankStyleSpan && !style.hasDecoration()) continue;
+      if (style.blinkSlow()) kinds |= TerminalLineCompiler.BLINK_SLOW;
+      if (style.blinkFast()) kinds |= TerminalLineCompiler.BLINK_FAST;
+    }
+    return kinds;
+  }
 }

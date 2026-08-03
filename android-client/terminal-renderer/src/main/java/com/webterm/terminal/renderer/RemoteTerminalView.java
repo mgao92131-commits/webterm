@@ -70,6 +70,35 @@ public final class RemoteTerminalView extends View {
     }
   }
 
+  /** 当前 viewport 内含有可见 blink 前景的行；数组在 View 生命周期内复用。 */
+  private static final class VisibleBlinkRows {
+    int kinds;
+    float contentTop;
+    float rowHeight;
+    long[] axisRows = new long[16];
+    int[] rowKinds = new int[16];
+    int count;
+
+    void reset() {
+      kinds = 0;
+      contentTop = 0f;
+      rowHeight = 0f;
+      count = 0;
+    }
+
+    void add(long axisRow, int rowKind) {
+      if (count == axisRows.length) {
+        int next = axisRows.length * 2;
+        axisRows = java.util.Arrays.copyOf(axisRows, next);
+        rowKinds = java.util.Arrays.copyOf(rowKinds, next);
+      }
+      axisRows[count] = axisRow;
+      rowKinds[count] = rowKind;
+      count++;
+      kinds |= rowKind;
+    }
+  }
+
   private static final int HANDLE_NONE = 0;
   private static final int HANDLE_START = 1;
   private static final int HANDLE_END = 2;
@@ -121,6 +150,9 @@ public final class RemoteTerminalView extends View {
   private final Rect newSelectionDamage = new Rect();
   private final Rect oldHandleDamage = new Rect();
   private final Rect newHandleDamage = new Rect();
+  private final VisibleBlinkRows visibleBlinkRowsScratch = new VisibleBlinkRows();
+  private final float[] animationRangeTops = new float[MAX_PARTIAL_DIRTY_RECTS];
+  private final float[] animationRangeBottoms = new float[MAX_PARTIAL_DIRTY_RECTS];
   // 用于 RenderNode 行缓存的全局视觉 generation；任何影响正文字体的变化都会递增。
   private int fontGeneration;
   private int paletteGeneration;
@@ -179,19 +211,27 @@ public final class RemoteTerminalView extends View {
   private boolean cursorBlinkScheduled;
   private final Runnable animationRunnable = new Runnable() {
     @Override public void run() {
-      int blinkKinds = visibleBlinkKinds();
+      VisibleBlinkRows visibleRows = collectVisibleBlinkRows();
+      int blinkKinds = visibleRows.kinds;
       boolean cursorShouldBlink = shouldBlinkCursor();
       if (!cursorShouldBlink && blinkKinds == 0) {
         stopCursorBlinking();
         return;
       }
       long now = SystemClock.uptimeMillis();
-      cursorBlinkOn = !cursorShouldBlink || blinkPhaseOn(now, 500L);
-      slowBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_SLOW) == 0
+      boolean nextCursorBlinkOn = !cursorShouldBlink || blinkPhaseOn(now, 500L);
+      boolean nextSlowBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_SLOW) == 0
           || blinkPhaseOn(now, 500L);
-      fastBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_FAST) == 0
+      boolean nextFastBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_FAST) == 0
           || blinkPhaseOn(now, 250L);
-      invalidateAnimatedRows(previousCursorRow, currentCursorRow);
+      boolean cursorChanged = cursorBlinkOn != nextCursorBlinkOn;
+      boolean slowChanged = slowBlinkOn != nextSlowBlinkOn;
+      boolean fastChanged = fastBlinkOn != nextFastBlinkOn;
+      cursorBlinkOn = nextCursorBlinkOn;
+      slowBlinkOn = nextSlowBlinkOn;
+      fastBlinkOn = nextFastBlinkOn;
+      invalidateAnimatedRows(previousCursorRow, currentCursorRow, visibleRows,
+          cursorChanged, slowChanged, fastChanged);
       previousCursorRow = currentCursorRow;
       scheduleAnimation(blinkKinds);
     }
@@ -386,6 +426,7 @@ public final class RemoteTerminalView extends View {
     if (this.userTextSizeSp != sizeSp) fontGeneration++;
     this.userTextSizeSp = sizeSp;
     if (requestLayoutIfSizeChanged()) reportVisibleHistoryDemandIfChanged();
+    updateCursorBlinkSchedule();
     invalidate();
   }
 
@@ -393,6 +434,7 @@ public final class RemoteTerminalView extends View {
     if (this.userTypeface != typeface) fontGeneration++;
     this.userTypeface = typeface;
     if (requestLayoutIfSizeChanged()) reportVisibleHistoryDemandIfChanged();
+    updateCursorBlinkSchedule();
     invalidate();
   }
 
@@ -400,6 +442,7 @@ public final class RemoteTerminalView extends View {
   protected void onSizeChanged(int w, int h, int oldw, int oldh) {
     super.onSizeChanged(w, h, oldw, oldh);
     updateSize(w, h);
+    updateCursorBlinkSchedule();
     reportVisibleHistoryDemandIfChanged();
   }
 
@@ -568,6 +611,7 @@ public final class RemoteTerminalView extends View {
         deltaPixels, maxScrollOffsetPixels(), liveScreenExitOffsetPixels());
     historyDemandDirection = deltaPixels > 0 ? -1 : 1;
     reportVisibleHistoryDemandIfChanged();
+    updateCursorBlinkSchedule();
     postInvalidateOnAnimation(0, 0, getWidth(), getHeight());
   }
 
@@ -1690,6 +1734,21 @@ public final class RemoteTerminalView extends View {
         lineHeight(), renderer.getTopInset(), viewportOffset(snapshot));
   }
 
+  @androidx.annotation.VisibleForTesting
+  boolean slowBlinkOnForTest() {
+    return slowBlinkOn;
+  }
+
+  @androidx.annotation.VisibleForTesting
+  boolean fastBlinkOnForTest() {
+    return fastBlinkOn;
+  }
+
+  @androidx.annotation.VisibleForTesting
+  boolean animationScheduledForTest() {
+    return cursorBlinkScheduled;
+  }
+
   private boolean shouldBlinkCursor() {
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (!isAttachedToWindow() || snapshot == null || !isFollowingTail(snapshot)) return false;
@@ -1722,7 +1781,7 @@ public final class RemoteTerminalView extends View {
   }
 
   private void updateCursorBlinkSchedule() {
-    int blinkKinds = visibleBlinkKinds();
+    int blinkKinds = collectVisibleBlinkRows().kinds;
     boolean shouldBlink = shouldBlinkCursor();
     if (!shouldBlink && blinkKinds == 0) {
       stopCursorBlinking();
@@ -1760,10 +1819,43 @@ public final class RemoteTerminalView extends View {
     return (uptimeMillis / periodMillis) % 2L == 0L;
   }
 
-  private int visibleBlinkKinds() {
+  private VisibleBlinkRows collectVisibleBlinkRows() {
+    VisibleBlinkRows result = visibleBlinkRowsScratch;
+    result.reset();
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    if (snapshot == null || !isAttachedToWindow()) return 0;
-    return renderer.visibleBlinkKinds(snapshot, viewport, getHeight());
+    if (snapshot == null || !isAttachedToWindow() || getHeight() <= 0) return result;
+
+    float rowHeight = renderer.getLineHeight();
+    if (rowHeight <= 0f) return result;
+    UnifiedContentAxis axis = snapshot.contentAxis;
+    long historyRowsLong = axis.historyRowCount();
+    int historyRows = (int) Math.min(Integer.MAX_VALUE, historyRowsLong);
+    int maxScrollOffset = Math.round(historyRows * rowHeight);
+    float scrollOffset = viewport.derivedScrollOffsetPixels(
+        snapshot, rowHeight, maxScrollOffset);
+    float contentTop = RemoteTerminalRenderer.contentTopY(
+        getHeight(), historyRows, snapshot.screenView.size(), rowHeight,
+        renderer.getTopInset(), scrollOffset);
+    result.contentTop = contentTop;
+    result.rowHeight = rowHeight;
+    long first = Math.max(0L,
+        (long) Math.floor(-contentTop / rowHeight) - 1L);
+    long last = Math.min(axis.rowCount(),
+        (long) Math.ceil((getHeight() - contentTop) / rowHeight) + 1L);
+    int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
+        snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
+    for (long axisRow = first; axisRow < last; axisRow++) {
+      UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
+      if (item == null
+          || item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE
+          || item.line == null) {
+        continue;
+      }
+      int rowKinds = renderer.visibleBlinkKinds(item.line, snapshot.columns,
+          snapshot.palette, canvasBackground);
+      if (rowKinds != 0) result.add(axisRow, rowKinds);
+    }
+    return result;
   }
 
   private void invalidateCursorRows(int previousRow, int currentRow) {
@@ -1797,34 +1889,70 @@ public final class RemoteTerminalView extends View {
     if (rectCount > 0) TerminalRenderMetrics.partialInvalidate(rectCount);
   }
 
-  private void invalidateAnimatedRows(int previousRow, int currentRow) {
-    invalidateCursorRows(previousRow, currentRow);
-    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
-    if (snapshot == null || getWidth() <= 0 || getHeight() <= 0
-        || visibleBlinkKinds() == 0) return;
-
-    float rowHeight = renderer.getLineHeight();
-    if (rowHeight <= 0f) return;
-    int historyRows = (int) Math.min(Integer.MAX_VALUE,
-        snapshot.contentAxis.historyRowCount());
-    float contentTop = RemoteTerminalRenderer.contentTopY(
-        getHeight(), historyRows, snapshot.screenView.size(), rowHeight,
-        renderer.getTopInset(), viewportOffset(snapshot));
-    long first = Math.max(0L,
-        (long) Math.floor(-contentTop / rowHeight) - 1L);
-    long last = Math.min(snapshot.contentAxis.rowCount(),
-        (long) Math.ceil((getHeight() - contentTop) / rowHeight) + 1L);
-    int rectCount = 0;
-    int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
-        snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
-    for (long axisRow = first; axisRow < last; axisRow++) {
-      UnifiedContentAxis.Item item = snapshot.contentAxis.itemAtRow(axisRow);
-      if (item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE || item.line == null) continue;
-      if (renderer.visibleBlinkKinds(item.line, snapshot.columns,
-          snapshot.palette, canvasBackground) == 0) continue;
-      if (postAnimatedRowDamage(contentTop + axisRow * rowHeight, rowHeight)) rectCount++;
+  private void invalidateAnimatedRows(
+      int previousRow,
+      int currentRow,
+      @NonNull VisibleBlinkRows visibleRows,
+      boolean cursorChanged,
+      boolean slowChanged,
+      boolean fastChanged) {
+    if (cursorChanged) invalidateCursorRows(previousRow, currentRow);
+    if ((!slowChanged && !fastChanged)
+        || visibleRows.count == 0
+        || getWidth() <= 0 || getHeight() <= 0) {
+      return;
     }
-    if (rectCount > 0) TerminalRenderMetrics.partialInvalidate(rectCount);
+
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null) return;
+    float rowHeight = visibleRows.rowHeight;
+    if (rowHeight <= 0f) return;
+    float contentTop = visibleRows.contentTop;
+
+    long rangeStart = -1L;
+    long rangeEnd = -1L;
+    int rangeCount = 0;
+    for (int i = 0; i < visibleRows.count; i++) {
+      int rowKinds = visibleRows.rowKinds[i];
+      boolean affected = (slowChanged && (rowKinds & TerminalLineCompiler.BLINK_SLOW) != 0)
+          || (fastChanged && (rowKinds & TerminalLineCompiler.BLINK_FAST) != 0);
+      if (!affected) continue;
+      long axisRow = visibleRows.axisRows[i];
+      if (rangeStart >= 0L && axisRow == rangeEnd + 1L) {
+        rangeEnd = axisRow;
+        continue;
+      }
+      if (rangeStart >= 0L) {
+        if (rangeCount == MAX_PARTIAL_DIRTY_RECTS) {
+          postAnimatedViewportDamage(contentTop, snapshot.contentAxis.rowCount() * rowHeight);
+          return;
+        }
+        animationRangeTops[rangeCount] = contentTop + rangeStart * rowHeight;
+        animationRangeBottoms[rangeCount] = contentTop + (rangeEnd + 1L) * rowHeight;
+        rangeCount++;
+      }
+      rangeStart = rangeEnd = axisRow;
+    }
+    if (rangeStart >= 0L) {
+      if (rangeCount == MAX_PARTIAL_DIRTY_RECTS) {
+        postAnimatedViewportDamage(contentTop, snapshot.contentAxis.rowCount() * rowHeight);
+        return;
+      }
+      animationRangeTops[rangeCount] = contentTop + rangeStart * rowHeight;
+      animationRangeBottoms[rangeCount] = contentTop + (rangeEnd + 1L) * rowHeight;
+      rangeCount++;
+    }
+
+    for (int i = 0; i < rangeCount; i++) {
+      postAnimatedRangeDamage(animationRangeTops[i], animationRangeBottoms[i]);
+    }
+    if (rangeCount > 0) TerminalRenderMetrics.partialInvalidate(rangeCount);
+  }
+
+  private void postAnimatedViewportDamage(float contentTop, float contentBottom) {
+    int top = damageTop(Math.max(0f, contentTop));
+    int bottom = damageBottom(Math.min(getHeight(), contentBottom));
+    if (bottom > top) postInvalidateOnAnimation(0, top, getWidth(), bottom);
   }
 
   private boolean postCursorRowDamage(int row, float screenTop, float rowHeight) {
@@ -1833,7 +1961,10 @@ public final class RemoteTerminalView extends View {
   }
 
   private boolean postAnimatedRowDamage(float rawTop, float rowHeight) {
-    float rawBottom = rawTop + rowHeight;
+    return postAnimatedRangeDamage(rawTop, rawTop + rowHeight);
+  }
+
+  private boolean postAnimatedRangeDamage(float rawTop, float rawBottom) {
     if (rawBottom <= 0f || rawTop >= getHeight()) return false;
     postInvalidateOnAnimation(0, damageTop(rawTop), getWidth(), damageBottom(rawBottom));
     return true;

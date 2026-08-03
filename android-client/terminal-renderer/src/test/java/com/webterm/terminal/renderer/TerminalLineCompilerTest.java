@@ -141,6 +141,17 @@ public final class TerminalLineCompilerTest {
     assertEquals(1, spans.get(0).startColumn());
   }
 
+  @Test
+  public void emptyWidthOneBlinkCellDoesNotStartAnimation() {
+    StyleValue slowBlink = new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG, null, 1 << 8);
+    RenderLine line = line(new CellValue("", (byte) 1, slowBlink, null));
+    TerminalLineCompiler compiler = new TerminalLineCompiler();
+
+    assertEquals(0, compiler.visibleBlinkKinds(line, 1, PALETTE, BACKGROUND));
+    assertTrue(compiler.compile(line, 1, PALETTE, BACKGROUND).spans().isEmpty());
+  }
+
   private static RenderLine line(CellValue... cells) {
     return new RenderLine(
         new LineKey(1, 1), new LineBody(cells.length, false, Arrays.copyOf(cells, cells.length)));

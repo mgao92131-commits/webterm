@@ -313,6 +313,7 @@ public final class RemoteTerminalRenderer {
         visibleHistoryRows++;
       }
       TerminalLineRenderNodeCache.LineDrawResult cacheResult;
+      CompiledTerminalLine compiledLine = null;
       if (useCache) {
         long nodeStartedNanos = samplePhases ? System.nanoTime() : 0L;
         cacheResult = lineCache.drawOrRecord(canvas, line, y, !active);
@@ -323,17 +324,19 @@ public final class RemoteTerminalRenderer {
         cacheResult = TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
       }
       if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
+        compiledLine = compileLine(line, model.columns, palette, canvasBackground);
         long drawStartedNanos = samplePhases ? System.nanoTime() : 0L;
-        drawTerminalLineContent(canvas, model.columns, palette, line, y, canvasBackground);
+        drawCompiledLineContent(canvas, compiledLine, y, canvasBackground);
         if (samplePhases) {
           canvasDrawNanos += System.nanoTime() - drawStartedNanos;
         }
       }
-      if (line != null && lineCompiler.hasVisibleBlink(
-          line, model.columns, palette, canvasBackground)) {
+      if (compiledLine == null && lineCache != null) {
+        compiledLine = lineCache.compiledLineForLine(line);
+      }
+      if (compiledLine != null && compiledLine.visibleBlinkKinds() != 0) {
         long blinkStartedNanos = samplePhases ? System.nanoTime() : 0L;
-        drawBlinkOverlayForLine(canvas, model.columns, palette, line, y,
-            canvasBackground, animationState);
+        drawBlinkOverlayForLine(canvas, compiledLine, y, animationState);
         if (samplePhases) {
           canvasDrawNanos += System.nanoTime() - blinkStartedNanos;
         }
@@ -435,15 +438,17 @@ public final class RemoteTerminalRenderer {
   void drawTerminalLineContent(Canvas canvas, int columns, TerminalPalette palette,
                                RenderLine line, float y, int canvasBackground) {
     if (line == null) return;
-    CompiledTerminalLine compiled = lineCompiler.compile(
-        line, columns, palette, canvasBackground);
-    drawCompiledLine(canvas, compiled, y, canvasBackground,
-        TerminalAnimationState.staticContent());
+    CompiledTerminalLine compiled = compileLine(line, columns, palette, canvasBackground);
+    drawCompiledLineContent(canvas, compiled, y, canvasBackground);
   }
 
-  private void drawCompiledLine(Canvas canvas, CompiledTerminalLine line,
-                                float rowY, int canvasBackground,
-                                TerminalAnimationState animationState) {
+  CompiledTerminalLine compileLine(RenderLine line, int columns, TerminalPalette palette,
+                                   int canvasBackground) {
+    return lineCompiler.compile(line, columns, palette, canvasBackground);
+  }
+
+  void drawCompiledLineContent(Canvas canvas, CompiledTerminalLine line,
+                               float rowY, int canvasBackground) {
     for (CompiledTerminalLine.Span span : line.spans()) {
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = geometry.columnEdgePx(span.startColumn());
@@ -453,7 +458,7 @@ public final class RemoteTerminalRenderer {
         canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
       }
 
-      if (animationState.foregroundVisible(style)) {
+      if (!style.hidden() && !style.hasBlink()) {
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false);
       }
@@ -461,10 +466,8 @@ public final class RemoteTerminalRenderer {
   }
 
   private void drawBlinkOverlayForLine(
-      Canvas canvas, int columns, TerminalPalette palette, RenderLine line, float rowY,
-      int canvasBackground, TerminalAnimationState animationState) {
-    CompiledTerminalLine compiled = lineCompiler.compile(
-        line, columns, palette, canvasBackground);
+      Canvas canvas, CompiledTerminalLine compiled, float rowY,
+      TerminalAnimationState animationState) {
     for (CompiledTerminalLine.Span span : compiled.spans()) {
       CompiledTerminalLine.CompiledStyle style = span.style();
       if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
