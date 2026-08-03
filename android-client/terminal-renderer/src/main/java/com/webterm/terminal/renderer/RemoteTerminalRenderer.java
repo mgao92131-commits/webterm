@@ -69,6 +69,10 @@ public final class RemoteTerminalRenderer {
     float baselineOffset = -textPaint.ascent();
     float cellWidth = textPaint.measureText("X");
     geometry.update(cellWidth, lineHeight, baselineOffset);
+    Paint.FontMetrics fontMetrics = textPaint.getFontMetrics();
+    geometry.updateRowNodeBleed(new TerminalCellGeometry.PaintMetrics(
+        fontMetrics.top, fontMetrics.bottom, -0.35f,
+        textPaint.getTextSize()));
     // 预热 fallback chain，避免首个 emoji 采用错误的测量宽度。
     textPaint.measureText("😀");
   }
@@ -125,6 +129,10 @@ public final class RemoteTerminalRenderer {
   }
 
   int cellWidthPx(int column, int columns) { return geometry.cellWidthPx(column, columns); }
+  int rowNodeLeftBleedPx() { return geometry.rowNodeLeftBleedPx(); }
+  int rowNodeRightBleedPx() { return geometry.rowNodeRightBleedPx(); }
+  int rowNodeTopBleedPx() { return geometry.rowNodeTopBleedPx(); }
+  int rowNodeBottomBleedPx() { return geometry.rowNodeBottomBleedPx(); }
 
   /** 返回当前 viewport 内需要动态 blink 覆盖层的类型位图。 */
   int visibleBlinkKinds(@NonNull RemoteTerminalModel.RenderSnapshot model,

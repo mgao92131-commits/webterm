@@ -37,9 +37,9 @@ final class RenderNodeTerminalRowNode implements TerminalRowNode {
   }
 
   @Override
-  public void draw(@NonNull Canvas canvas, float y) {
+  public void draw(@NonNull Canvas canvas, float x, float y) {
     canvas.save();
-    canvas.translate(0f, y);
+    canvas.translate(x, y);
     canvas.drawRenderNode(renderNode);
     canvas.restore();
   }

@@ -1185,8 +1185,7 @@ public final class RemoteTerminalView extends View {
     float visibleBottom = Math.min(Math.min(screenTop, getHeight()), rawBottom);
     if (visibleBottom <= visibleTop) return;
     Rect rect = plan.rects[0];
-    rect.set(0, Math.max(0, (int) Math.floor(visibleTop) - 1), getWidth(),
-        Math.min(getHeight(), (int) Math.ceil(visibleBottom) + 1));
+    rect.set(0, damageTop(visibleTop), getWidth(), damageBottom(visibleBottom));
     plan.rectCount = 1;
     long rows = lastIndex - firstIndex + 1L;
     plan.dirtyRowCount = (int) Math.min(Integer.MAX_VALUE, rows);
@@ -1218,8 +1217,7 @@ public final class RemoteTerminalView extends View {
             return;
           }
           Rect rect = plan.rects[plan.rectCount++];
-          rect.set(0, Math.max(0, (int) Math.floor(rawTop) - 1), getWidth(),
-              Math.min(getHeight(), (int) Math.ceil(rawBottom) + 1));
+          rect.set(0, damageTop(rawTop), getWidth(), damageBottom(rawBottom));
           dirtyArea += (long) rect.width() * rect.height();
           plan.dirtyRowCount += previous - runStart + 1;
         }
@@ -1242,12 +1240,21 @@ public final class RemoteTerminalView extends View {
   private void buildScreenRegion(@NonNull InvalidationPlan plan,
                                  float screenTop, float screenBottom) {
     plan.reset();
-    int top = Math.max(0, (int) Math.floor(screenTop) - 1);
-    int bottom = Math.min(getHeight(), (int) Math.ceil(screenBottom) + 1);
+    int top = damageTop(screenTop);
+    int bottom = damageBottom(screenBottom);
     if (bottom <= top) return;
     plan.rects[0].set(0, top, getWidth(), bottom);
     plan.rectCount = 1;
     plan.result = InvalidationResult.SCREEN_REGION;
+  }
+
+  private int damageTop(float rawTop) {
+    return Math.max(0, (int) Math.floor(rawTop) - renderer.rowNodeTopBleedPx() - 1);
+  }
+
+  private int damageBottom(float rawBottom) {
+    return Math.min(getHeight(),
+        (int) Math.ceil(rawBottom) + renderer.rowNodeBottomBleedPx() + 1);
   }
 
   private void startSelectionAt(float x, float y) {
@@ -1828,8 +1835,7 @@ public final class RemoteTerminalView extends View {
   private boolean postAnimatedRowDamage(float rawTop, float rowHeight) {
     float rawBottom = rawTop + rowHeight;
     if (rawBottom <= 0f || rawTop >= getHeight()) return false;
-    postInvalidateOnAnimation(0, Math.max(0, (int) Math.floor(rawTop) - 1), getWidth(),
-        Math.min(getHeight(), (int) Math.ceil(rawBottom) + 1));
+    postInvalidateOnAnimation(0, damageTop(rawTop), getWidth(), damageBottom(rawBottom));
     return true;
   }
 

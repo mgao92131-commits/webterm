@@ -11,12 +11,36 @@ final class TerminalCellGeometry {
   private int lineHeightPx;
   private float baselineOffset;
   private int topInsetPx;
+  private int rowNodeLeftBleedPx = 2;
+  private int rowNodeRightBleedPx = 2;
+  private int rowNodeTopBleedPx = 1;
+  private int rowNodeBottomBleedPx = 1;
 
   void update(float cellWidth, float lineHeight, float baselineOffset) {
     this.cellWidth = Math.max(0f, cellWidth);
     this.lineHeightPx = Math.max(0, Math.round(lineHeight));
     this.baselineOffset = baselineOffset;
     this.topInsetPx = Math.max(0, Math.round(lineHeight - baselineOffset));
+    this.rowNodeLeftBleedPx = 2;
+    this.rowNodeRightBleedPx = 2;
+    this.rowNodeTopBleedPx = 1;
+    this.rowNodeBottomBleedPx = 1;
+  }
+
+  void updateRowNodeBleed(PaintMetrics metrics) {
+    if (metrics == null) return;
+    float skewBleed = Math.abs(metrics.textSkewX) * metrics.textSizePx;
+    rowNodeLeftBleedPx = clampBleed(2 + (int) Math.ceil(skewBleed * 0.5f));
+    rowNodeRightBleedPx = clampBleed(2 + (int) Math.ceil(skewBleed));
+    float topOverhang = Math.max(0f, -(baselineOffset + metrics.fontTop));
+    float bottomOverhang = Math.max(0f,
+        baselineOffset + metrics.fontBottom - lineHeightPx);
+    rowNodeTopBleedPx = clampBleed(1 + (int) Math.ceil(topOverhang));
+    rowNodeBottomBleedPx = clampBleed(1 + (int) Math.ceil(bottomOverhang));
+  }
+
+  private static int clampBleed(int value) {
+    return Math.max(1, Math.min(8, value));
   }
 
   float cellWidth() {
@@ -99,6 +123,26 @@ final class TerminalCellGeometry {
 
   float baselineOffset() {
     return baselineOffset;
+  }
+
+  int rowNodeLeftBleedPx() { return rowNodeLeftBleedPx; }
+  int rowNodeRightBleedPx() { return rowNodeRightBleedPx; }
+  int rowNodeTopBleedPx() { return rowNodeTopBleedPx; }
+  int rowNodeBottomBleedPx() { return rowNodeBottomBleedPx; }
+
+  /** Paint metrics are kept as a tiny value object so geometry remains independent of Paint. */
+  static final class PaintMetrics {
+    final float fontTop;
+    final float fontBottom;
+    final float textSkewX;
+    final float textSizePx;
+
+    PaintMetrics(float fontTop, float fontBottom, float textSkewX, float textSizePx) {
+      this.fontTop = fontTop;
+      this.fontBottom = fontBottom;
+      this.textSkewX = textSkewX;
+      this.textSizePx = textSizePx;
+    }
   }
 
   int rowsThatFit(int availableHeight) {

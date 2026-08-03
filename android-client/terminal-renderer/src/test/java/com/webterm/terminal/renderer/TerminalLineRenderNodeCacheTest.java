@@ -133,6 +133,47 @@ public final class TerminalLineRenderNodeCacheTest {
     assertTrue(cache.victimScannedEntriesForTest() - scannedBefore <= 2);
   }
 
+  @Test
+  public void rowNodeRecordingAndReplayIncludeBleedOffset() {
+    final int[] position = new int[4];
+    final float[] drawPosition = new float[2];
+    TerminalLineRenderNodeCache cache = new TerminalLineRenderNodeCache(name ->
+        new TerminalRowNode() {
+          private boolean recorded;
+
+          @Override public void setPosition(int left, int top, int right, int bottom) {
+            position[0] = left;
+            position[1] = top;
+            position[2] = right;
+            position[3] = bottom;
+          }
+
+          @Override public Canvas beginRecording(int width, int height) {
+            recorded = true;
+            return canvas;
+          }
+
+          @Override public void endRecording() {}
+          @Override public boolean hasDisplayList() { return recorded; }
+
+          @Override public void draw(Canvas target, float x, float y) {
+            drawPosition[0] = x;
+            drawPosition[1] = y;
+          }
+        });
+    RemoteTerminalModel.RenderSnapshot snapshot = snapshot();
+    begin(cache, snapshot);
+    assertEquals(TerminalLineRenderNodeCache.LineDrawResult.RECORDED,
+        cache.drawOrRecord(canvas, line(1, 1, "x"), 20f, false));
+
+    assertEquals(renderer.contentWidthPx(snapshot.columns)
+        + renderer.rowNodeLeftBleedPx() + renderer.rowNodeRightBleedPx(), position[2]);
+    assertEquals(renderer.lineHeightPx()
+        + renderer.rowNodeTopBleedPx() + renderer.rowNodeBottomBleedPx(), position[3]);
+    assertEquals(-renderer.rowNodeLeftBleedPx(), drawPosition[0], 0f);
+    assertEquals(20f - renderer.rowNodeTopBleedPx(), drawPosition[1], 0f);
+  }
+
   private TerminalLineRenderNodeCache cache() {
     return new TerminalLineRenderNodeCache(name -> new TerminalRowNode() {
       private boolean recorded;
@@ -144,7 +185,7 @@ public final class TerminalLineRenderNodeCacheTest {
       }
       @Override public void endRecording() {}
       @Override public boolean hasDisplayList() { return recorded; }
-      @Override public void draw(Canvas target, float y) {}
+      @Override public void draw(Canvas target, float x, float y) {}
     });
   }
 

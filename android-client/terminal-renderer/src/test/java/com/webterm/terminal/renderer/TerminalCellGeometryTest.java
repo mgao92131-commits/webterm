@@ -71,4 +71,16 @@ public final class TerminalCellGeometryTest {
     assertEquals(9, geometry.rowAt(top + line * 20f, 10));
     assertEquals(3, geometry.rowsThatFit(top + line * 3));
   }
+
+  @Test
+  public void rowNodeBleedCoversItalicAndFontVerticalOverhang() {
+    geometry.updateRowNodeBleed(new TerminalCellGeometry.PaintMetrics(
+        -24f, 8f, -0.35f, 24f));
+
+    assertTrue(geometry.rowNodeLeftBleedPx() >= 2);
+    assertTrue(geometry.rowNodeRightBleedPx() >= geometry.rowNodeLeftBleedPx());
+    assertTrue(geometry.rowNodeTopBleedPx() >= 1);
+    assertTrue(geometry.rowNodeBottomBleedPx() >= 1);
+    assertTrue(geometry.rowNodeRightBleedPx() <= 8);
+  }
 }

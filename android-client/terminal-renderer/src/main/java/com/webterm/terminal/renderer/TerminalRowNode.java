@@ -24,5 +24,5 @@ interface TerminalRowNode {
    */
   boolean hasDisplayList();
 
-  void draw(@NonNull Canvas canvas, float y);
+  void draw(@NonNull Canvas canvas, float x, float y);
 }

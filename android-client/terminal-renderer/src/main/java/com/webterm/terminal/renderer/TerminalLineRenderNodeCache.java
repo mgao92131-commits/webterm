@@ -30,6 +30,10 @@ public final class TerminalLineRenderNodeCache {
   private int columns;
   private int widthPx;
   private int heightPx;
+  private int leftBleedPx;
+  private int rightBleedPx;
+  private int topBleedPx;
+  private int bottomBleedPx;
   private int fontGeneration;
   private int paletteGeneration;
   private int styleGeneration;
@@ -69,14 +73,24 @@ public final class TerminalLineRenderNodeCache {
     int nextColumns = snapshot.columns;
     // 行节点高度必须与整数 lineHeight 一致，保证录制内容铺满单元格且与
     // 像素对齐的 translate Y 无缝衔接。
-    int nextHeightPx = Math.max(1, renderer.lineHeightPx());
-    int nextWidthPx = Math.max(1, renderer.contentWidthPx(nextColumns));
+    int nextContentHeightPx = Math.max(1, renderer.lineHeightPx());
+    int nextContentWidthPx = Math.max(1, renderer.contentWidthPx(nextColumns));
+    int nextLeftBleedPx = renderer.rowNodeLeftBleedPx();
+    int nextRightBleedPx = renderer.rowNodeRightBleedPx();
+    int nextTopBleedPx = renderer.rowNodeTopBleedPx();
+    int nextBottomBleedPx = renderer.rowNodeBottomBleedPx();
+    int nextHeightPx = nextContentHeightPx + nextTopBleedPx + nextBottomBleedPx;
+    int nextWidthPx = nextContentWidthPx + nextLeftBleedPx + nextRightBleedPx;
     boolean generationChanged = instanceId == null
         || !instanceId.equals(snapshot.instanceId)
         || layoutEpoch != snapshot.layoutEpoch
         || columns != nextColumns
         || widthPx != nextWidthPx
         || heightPx != nextHeightPx
+        || leftBleedPx != nextLeftBleedPx
+        || rightBleedPx != nextRightBleedPx
+        || topBleedPx != nextTopBleedPx
+        || bottomBleedPx != nextBottomBleedPx
         || this.fontGeneration != fontGeneration
         || this.paletteGeneration != paletteGeneration
         || this.styleGeneration != styleGeneration;
@@ -89,6 +103,10 @@ public final class TerminalLineRenderNodeCache {
     columns = nextColumns;
     widthPx = nextWidthPx;
     heightPx = nextHeightPx;
+    leftBleedPx = nextLeftBleedPx;
+    rightBleedPx = nextRightBleedPx;
+    topBleedPx = nextTopBleedPx;
+    bottomBleedPx = nextBottomBleedPx;
     this.fontGeneration = fontGeneration;
     this.paletteGeneration = paletteGeneration;
     this.styleGeneration = styleGeneration;
@@ -121,7 +139,7 @@ public final class TerminalLineRenderNodeCache {
       cached.recentlyUsed = true;
       frameRowHits++;
       if (historyLine) frameHistoryHits++;
-      cached.node.draw(canvas, rowTop);
+      cached.node.draw(canvas, -leftBleedPx, rowTop - topBleedPx);
       return LineDrawResult.HIT;
     }
 
@@ -141,7 +159,7 @@ public final class TerminalLineRenderNodeCache {
     cached.lastUsedFrame = frameNumber;
     cached.lastDrawnFrame = frameNumber;
     if (historyLine) frameHistoryMisses++;
-    cached.node.draw(canvas, rowTop);
+    cached.node.draw(canvas, -leftBleedPx, rowTop - topBleedPx);
     return LineDrawResult.RECORDED;
   }
 
@@ -218,10 +236,13 @@ public final class TerminalLineRenderNodeCache {
     cached.node.setPosition(0, 0, widthPx, heightPx);
     long startedNanos = System.nanoTime();
     Canvas recordingCanvas = cached.node.beginRecording(widthPx, heightPx);
+    int saveCount = recordingCanvas.save();
     try {
+      recordingCanvas.translate(leftBleedPx, topBleedPx);
       frameRenderer.drawTerminalLineContent(recordingCanvas, columns, framePalette, line, 0f,
           frameCanvasBackground);
     } finally {
+      recordingCanvas.restoreToCount(saveCount);
       cached.node.endRecording();
       TerminalRenderMetrics.renderNodeRecordDuration(System.nanoTime() - startedNanos);
     }
