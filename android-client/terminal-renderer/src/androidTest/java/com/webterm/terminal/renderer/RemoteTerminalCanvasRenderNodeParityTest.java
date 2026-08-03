@@ -1,13 +1,16 @@
 package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
 import android.view.PixelCopy;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -25,7 +28,9 @@ import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.TerminalBufferKind;
+import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
@@ -35,6 +40,7 @@ import com.webterm.terminal.model.capture.CapturedViewState;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -52,6 +58,9 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
   private static final int COLUMNS = 16;
   private static final int VIEW_HEIGHT = 240;
   private static final int BACKGROUND = 0xFF000000;
+  private static final int CHANNEL_TOLERANCE = 48;
+  private static final float MAX_DIFF_RATIO = 0.15f;
+  private static final int INK_EDGE_TOLERANCE = 3;
 
   @Test
   public void directCanvasAndHardwareRenderNodeHaveComparableGeometry() throws Exception {
@@ -102,6 +111,12 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       int height = viewRef.get().getHeight();
       direct = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
       RemoteTerminalRenderer directRenderer = new RemoteTerminalRenderer();
+      float textSizePx = TypedValue.applyDimension(
+          TypedValue.COMPLEX_UNIT_SP,
+          state.fontSizeSp,
+          InstrumentationRegistry.getInstrumentation().getTargetContext()
+              .getResources().getDisplayMetrics());
+      directRenderer.updateFont(textSizePx, Typeface.MONOSPACE);
       directRenderer.setFontMetrics(state.cellWidth, state.lineHeight, state.baseline);
       directRenderer.render(new Canvas(direct), model.renderSnapshot(), viewport, true);
 
@@ -121,11 +136,11 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     int terminalBottom = Math.min(direct.getHeight(),
         topInset + (int) Math.ceil(state.lineHeight) + 2);
     Rect terminalBounds = new Rect(0, 0, terminalRight, terminalBottom);
-    Diff diff = diff(direct, hardware, terminalBounds, 48);
-    File artifactDir = saveArtifacts(direct, hardware, terminalBounds, 48);
+    Diff diff = diff(direct, hardware, terminalBounds, CHANNEL_TOLERANCE);
+    File artifactDir = saveArtifacts(direct, hardware, terminalBounds, CHANNEL_TOLERANCE);
     assertBackgroundOutsideTerminal(direct, hardware, terminalBounds);
     assertTrue("Canvas/RenderNode difference is too large: " + diff,
-        diff.differentPixels <= diff.totalPixels * 0.35f);
+        diff.differentPixels <= diff.totalPixels * MAX_DIFF_RATIO);
     assertTrue("Canvas/RenderNode difference must remain in the terminal row: " + diff,
         diff.bounds == null || diff.bounds.bottom <= terminalBottom + 1);
 
@@ -138,8 +153,13 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
           Math.round(column * state.cellWidth), topInset,
           Math.min(terminalRight, Math.round((column + widthColumns) * state.cellWidth)),
           terminalBottom);
+      Rect directInk = findInkBounds(direct, cellBounds);
+      Rect hardwareInk = findInkBounds(hardware, cellBounds);
       assertEquals("glyph presence mismatch at cell " + column,
-          hasInk(direct, cellBounds), hasInk(hardware, cellBounds));
+          directInk != null, hardwareInk != null);
+      if (directInk != null && hardwareInk != null) {
+        assertInkBoundsClose("cell " + column, directInk, hardwareInk);
+      }
       if (cell.isWideStart()) column++;
     }
 
@@ -156,18 +176,175 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     hardware.recycle();
   }
 
+  @Test
+  public void edgeCellsHaveComparableInkBounds() throws Exception {
+    List<String> knownClippingCases = new ArrayList<>();
+    for (EdgeCase edge : edgeCases()) {
+      ParityCapture capture = captureParity(
+          new CellValue[][] {edge.cells}, COLUMNS, VIEW_HEIGHT);
+      try {
+        CapturedViewState state = capture.state;
+        int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
+        int scanLeft = Math.round(edge.startColumn * state.cellWidth);
+        Rect scan = new Rect(scanLeft, 0, capture.direct.getWidth(), capture.direct.getHeight());
+        Rect directInk = findInkBounds(capture.direct, scan);
+        Rect hardwareInk = findInkBounds(capture.hardware, scan);
+        assertNotNull(edge.name + " direct Canvas ink is missing", directInk);
+        assertNotNull(edge.name + " RenderNode ink is missing", hardwareInk);
+        int directInkPixels = countInk(capture.direct, scan);
+        int hardwareInkPixels = countInk(capture.hardware, scan);
+        double inkCountDeltaRatio = directInkPixels == 0 ? 0.0
+            : Math.abs(directInkPixels - hardwareInkPixels) / (double) directInkPixels;
+        if (inkBoundsClose(directInk, hardwareInk)) {
+          System.out.println("PARITY_EDGE name=" + edge.name
+              + " known=none direct_ink_bounds=" + directInk
+              + " hardware_ink_bounds=" + hardwareInk
+              + " direct_ink_pixels=" + directInkPixels
+              + " hardware_ink_pixels=" + hardwareInkPixels
+              + " ink_count_delta_ratio=" + inkCountDeltaRatio);
+        } else if (isExpectedRenderNodeClipping(edge, directInk, hardwareInk, state)) {
+          knownClippingCases.add(edge.name);
+          System.out.println("PARITY_EDGE name=" + edge.name
+              + " known=KNOWN-05 direct_ink_bounds=" + directInk
+              + " hardware_ink_bounds=" + hardwareInk
+              + " direct_ink_pixels=" + directInkPixels
+              + " hardware_ink_pixels=" + hardwareInkPixels
+              + " ink_count_delta_ratio=" + inkCountDeltaRatio);
+        } else {
+          assertInkBoundsClose(edge.name, directInk, hardwareInk);
+        }
+        assertTrue(edge.name + " must reach the last cell row",
+            directInk.bottom >= topInset + 1);
+      } finally {
+        capture.recycle();
+      }
+    }
+    System.out.println("PARITY_EDGE_SUMMARY known=KNOWN-05 cases=" + knownClippingCases);
+  }
+
+  @Test
+  public void multiRowRenderNodeHasNoBoundarySeams() throws Exception {
+    int columns = 8;
+    int[] colors = {0xFFCC2222, 0xFF22AA44, 0xFF2255CC};
+    CellValue[][] rows = new CellValue[colors.length][];
+    for (int row = 0; row < colors.length; row++) {
+      rows[row] = backgroundRow(columns, colors[row]);
+    }
+
+    ParityCapture capture = captureParity(rows, columns, VIEW_HEIGHT);
+    try {
+      CapturedViewState state = capture.state;
+      int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
+      int terminalRight = Math.min(capture.direct.getWidth(),
+          (int) Math.ceil(columns * state.cellWidth));
+      for (int row = 1; row < colors.length; row++) {
+        int boundary = Math.round(topInset + row * state.lineHeight);
+        for (int y = Math.max(0, boundary - 1);
+             y <= Math.min(capture.direct.getHeight() - 1, boundary + 1); y++) {
+          int expected = y < boundary ? colors[row - 1] : colors[row];
+          for (int x = 0; x < terminalRight; x++) {
+            assertEquals("direct Canvas seam at row=" + row + " x=" + x + " y=" + y,
+                expected, capture.direct.getPixel(x, y));
+            assertEquals("RenderNode seam at row=" + row + " x=" + x + " y=" + y,
+                expected, capture.hardware.getPixel(x, y));
+          }
+        }
+      }
+    } finally {
+      capture.recycle();
+    }
+  }
+
   private static RemoteTerminalModel model() {
-    CellValue[] cells = cells();
-    LineKey key = new LineKey(1, 1);
-    LineBody body = new LineBody(COLUMNS, false, cells);
+    return parityModel(new CellValue[][] {cells()}, COLUMNS);
+  }
+
+  private static RemoteTerminalModel parityModel(CellValue[][] rows, int columns) {
+    List<LineKey> keys = new java.util.ArrayList<>();
+    List<LineBodyRecord> bodies = new java.util.ArrayList<>();
+    for (int row = 0; row < rows.length; row++) {
+      LineKey key = new LineKey(1000 + row, 1);
+      keys.add(key);
+      bodies.add(new LineBodyRecord(key,
+          new LineBody(columns, false, Arrays.copyOf(rows[row], rows[row].length))));
+    }
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(new ScreenBaseline(
         "parity", "parity-instance", 1, 1, 1,
-        1, COLUMNS, TerminalBufferKind.MAIN,
+        rows.length, columns, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY, Collections.emptyList(),
-        List.of(key), List.of(new LineBodyRecord(key, body)),
+        keys, bodies,
         TerminalCursor.hidden(), TerminalModes.defaults(), TerminalPalette.defaults())));
     return model;
+  }
+
+  private static ParityCapture captureParity(CellValue[][] rows, int columns, int viewHeight)
+      throws Exception {
+    RemoteTerminalModel model = parityModel(rows, columns);
+    RenderUpdate update = model.consumeRenderUpdate();
+    TerminalViewportState viewport = new TerminalViewportState();
+    AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
+    AtomicReference<CapturedViewState> stateRef = new AtomicReference<>();
+    AtomicReference<Window> windowRef = new AtomicReference<>();
+    AtomicReference<int[]> viewLocationRef = new AtomicReference<>();
+    AtomicReference<int[]> windowSizeRef = new AtomicReference<>();
+    Bitmap hardware;
+    Bitmap direct;
+
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      scenario.onActivity(activity -> {
+        RemoteTerminalView view = new RemoteTerminalView(activity);
+        viewRef.set(view);
+        windowRef.set(activity.getWindow());
+        activity.setContentView(view, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, viewHeight));
+      });
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+      DrawWaiter draw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        RemoteTerminalView view = viewRef.get();
+        assertTrue(view.isHardwareAccelerated());
+        assertTrue(view.getWidth() > 0 && view.getHeight() > 0);
+        draw.attach(view);
+        view.bindModel(model);
+        view.applyRenderUpdate(update, viewport);
+        stateRef.set(view.captureDiagnostics());
+        int[] location = new int[2];
+        view.getLocationInWindow(location);
+        viewLocationRef.set(location);
+        windowSizeRef.set(new int[] {
+            activity.getWindow().getDecorView().getWidth(),
+            activity.getWindow().getDecorView().getHeight()
+        });
+      });
+      assertTrue("RenderNode parity frame did not draw", draw.await());
+      scenario.onActivity(activity -> draw.detach(viewRef.get()));
+
+      CapturedViewState state = stateRef.get();
+      int width = viewRef.get().getWidth();
+      int height = viewRef.get().getHeight();
+      direct = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+      RemoteTerminalRenderer directRenderer = new RemoteTerminalRenderer();
+      float textSizePx = TypedValue.applyDimension(
+          TypedValue.COMPLEX_UNIT_SP,
+          state.fontSizeSp,
+          InstrumentationRegistry.getInstrumentation().getTargetContext()
+              .getResources().getDisplayMetrics());
+      directRenderer.updateFont(textSizePx, Typeface.MONOSPACE);
+      directRenderer.setFontMetrics(state.cellWidth, state.lineHeight, state.baseline);
+      directRenderer.render(new Canvas(direct), model.renderSnapshot(), viewport, true);
+
+      int[] windowSize = windowSizeRef.get();
+      Bitmap windowPixels = Bitmap.createBitmap(
+          windowSize[0], windowSize[1], Bitmap.Config.ARGB_8888);
+      copyWindowPixels(windowRef.get(), windowPixels);
+      int[] location = viewLocationRef.get();
+      hardware = Bitmap.createBitmap(windowPixels, location[0], location[1], width, height);
+      windowPixels.recycle();
+      return new ParityCapture(direct, hardware, state);
+    }
   }
 
   private static CellValue[] cells() {
@@ -186,6 +363,39 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     cells[13] = new CellValue("\uE0B0", (byte) 1, null, null);
     cells[14] = new CellValue("e\u0301", (byte) 1, null, null);
     cells[15] = new CellValue("A", (byte) 1, null, null);
+    return cells;
+  }
+
+  private static List<EdgeCase> edgeCases() {
+    return List.of(
+        new EdgeCase("last-italic-f", 15, edgeLine(15, italic("f"))),
+        new EdgeCase("last-italic-W", 15, edgeLine(15, italic("W"))),
+        new EdgeCase("last-two-emoji", 14, edgeLine(14, new CellValue("😀", (byte) 2, null, null))),
+        new EdgeCase("last-two-cjk", 14, edgeLine(14, new CellValue("界", (byte) 2, null, null))),
+        new EdgeCase("last-italic-overhang", 15, edgeLine(15, italic("/"))));
+  }
+
+  private static CellValue[] edgeLine(int startColumn, CellValue cell) {
+    CellValue[] cells = new CellValue[COLUMNS];
+    Arrays.fill(cells, CellValue.EMPTY);
+    cells[startColumn] = cell;
+    if (cell.isWideStart()) cells[startColumn + 1] = CellValue.SPACER;
+    return cells;
+  }
+
+  private static CellValue italic(String text) {
+    StyleValue style = new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG, null, 1 << 2);
+    return new CellValue(text, (byte) 1, style, null);
+  }
+
+  private static CellValue[] backgroundRow(int columns, int background) {
+    StyleValue style = new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.rgb(background & 0x00FFFFFF), null, 0);
+    CellValue[] cells = new CellValue[columns];
+    for (int column = 0; column < columns; column++) {
+      cells[column] = new CellValue(" ", (byte) 1, style, null);
+    }
     return cells;
   }
 
@@ -221,15 +431,60 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     assertEquals(0, different);
   }
 
-  private static boolean hasInk(Bitmap bitmap, Rect bounds) {
+  private static Rect findInkBounds(Bitmap bitmap, Rect bounds) {
     Rect clipped = new Rect(bounds);
-    clipped.intersect(0, 0, bitmap.getWidth(), bitmap.getHeight());
+    if (!clipped.intersect(0, 0, bitmap.getWidth(), bitmap.getHeight())) return null;
+    Rect result = null;
     for (int y = clipped.top; y < clipped.bottom; y++) {
       for (int x = clipped.left; x < clipped.right; x++) {
-        if (bitmap.getPixel(x, y) != BACKGROUND) return true;
+        if (bitmap.getPixel(x, y) != BACKGROUND) {
+          if (result == null) result = new Rect(x, y, x + 1, y + 1);
+          else result.union(x, y, x + 1, y + 1);
+        }
       }
     }
-    return false;
+    return result;
+  }
+
+  private static int countInk(Bitmap bitmap, Rect bounds) {
+    Rect clipped = new Rect(bounds);
+    if (!clipped.intersect(0, 0, bitmap.getWidth(), bitmap.getHeight())) return 0;
+    int count = 0;
+    for (int y = clipped.top; y < clipped.bottom; y++) {
+      for (int x = clipped.left; x < clipped.right; x++) {
+        if (bitmap.getPixel(x, y) != BACKGROUND) count++;
+      }
+    }
+    return count;
+  }
+
+  private static boolean inkBoundsClose(Rect direct, Rect hardware) {
+    return Math.abs(direct.left - hardware.left) <= INK_EDGE_TOLERANCE
+        && Math.abs(direct.top - hardware.top) <= INK_EDGE_TOLERANCE
+        && Math.abs(direct.right - hardware.right) <= INK_EDGE_TOLERANCE
+        && Math.abs(direct.bottom - hardware.bottom) <= INK_EDGE_TOLERANCE;
+  }
+
+  private static boolean isExpectedRenderNodeClipping(EdgeCase edge, Rect direct,
+                                                       Rect hardware, CapturedViewState state) {
+    int terminalRight = (int) Math.ceil(COLUMNS * state.cellWidth);
+    return Math.abs(direct.left - hardware.left) <= INK_EDGE_TOLERANCE
+        && Math.abs(direct.top - hardware.top) <= INK_EDGE_TOLERANCE
+        && Math.abs(direct.bottom - hardware.bottom) <= INK_EDGE_TOLERANCE
+        && direct.right > terminalRight
+        && hardware.right == terminalRight
+        && edge.startColumn + (edge.cells[edge.startColumn].isWideStart() ? 2 : 1) == COLUMNS;
+  }
+
+  private static void assertInkBoundsClose(String label, Rect direct, Rect hardware) {
+    assertTrue(label + " left edge diverged: direct=" + direct + " hardware=" + hardware,
+        Math.abs(direct.left - hardware.left) <= INK_EDGE_TOLERANCE);
+    assertTrue(label + " top edge diverged: direct=" + direct + " hardware=" + hardware,
+        Math.abs(direct.top - hardware.top) <= INK_EDGE_TOLERANCE);
+    assertTrue(label + " right edge diverged: direct=" + direct + " hardware=" + hardware,
+        Math.abs(direct.right - hardware.right) <= INK_EDGE_TOLERANCE);
+    assertTrue(label + " bottom edge diverged: direct=" + direct + " hardware=" + hardware,
+        Math.abs(direct.bottom - hardware.bottom) <= INK_EDGE_TOLERANCE);
   }
 
   private static Diff diff(Bitmap first, Bitmap second, Rect bounds, int tolerance) {
@@ -316,6 +571,35 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     public String toString() {
       return differentPixels + "/" + totalPixels + " max=" + maxChannelDiff
           + " bounds=" + bounds;
+    }
+  }
+
+  private static final class EdgeCase {
+    final String name;
+    final int startColumn;
+    final CellValue[] cells;
+
+    EdgeCase(String name, int startColumn, CellValue[] cells) {
+      this.name = name;
+      this.startColumn = startColumn;
+      this.cells = cells;
+    }
+  }
+
+  private static final class ParityCapture {
+    final Bitmap direct;
+    final Bitmap hardware;
+    final CapturedViewState state;
+
+    ParityCapture(Bitmap direct, Bitmap hardware, CapturedViewState state) {
+      this.direct = direct;
+      this.hardware = hardware;
+      this.state = state;
+    }
+
+    void recycle() {
+      direct.recycle();
+      hardware.recycle();
     }
   }
 
