@@ -7,6 +7,8 @@ import android.graphics.Paint;
 final class TerminalTextPainter {
   static final float RUN_ALIGNMENT_TOLERANCE_PX = 0.25f;
   private static final String DISABLED_LIGATURE_FEATURES = "'liga' 0, 'clig' 0, 'calt' 0";
+  private final TerminalGlyphFitter glyphFitter = new TerminalGlyphFitter();
+  private final TerminalGlyphFitter.FitResult fitScratch = new TerminalGlyphFitter.FitResult();
 
   void configureFont(@androidx.annotation.NonNull Paint paint) {
     // 保留 rlig/ccmp/mark/mkmk 等 shaping 特性，只关闭会跨终端 cell 合并的常见
@@ -66,6 +68,9 @@ final class TerminalTextPainter {
     String text = span.text();
     float runStartX = geometry.textOriginX(span.startColumn());
     for (int cluster = 0; cluster < span.clusterCount(); cluster++) {
+      if (span.clusterFitMode(cluster) != TerminalGlyphFitter.ClusterFitMode.GRID_START) {
+        return false;
+      }
       int end = span.clusterUtf16End(cluster);
       float actualAdvance = prefixAdvance(paint, text, end);
       if (actualAdvance <= 0f) {
@@ -84,7 +89,7 @@ final class TerminalTextPainter {
     return true;
   }
 
-  private static void drawClusters(
+  private void drawClusters(
       Canvas canvas,
       CompiledTerminalLine.TextSpan span,
       TerminalCellGeometry geometry,
@@ -97,23 +102,23 @@ final class TerminalTextPainter {
       int start = span.clusterUtf16Start(cluster);
       int end = span.clusterUtf16End(cluster);
       float x = geometry.textOriginX(span.clusterColumn(cluster));
-      float expectedWidth = span.clusterWidth(cluster) * geometry.cellWidth();
+      float expectedWidth = geometry.columnEdgePx(
+          span.clusterColumn(cluster) + span.clusterWidth(cluster))
+          - geometry.columnEdgePx(span.clusterColumn(cluster));
       float measuredWidth = clusterAdvance(paint, text, start, end, contextStart, contextEnd);
       if (measuredWidth <= 0f) {
         measuredWidth = paint.measureText(text, start, end);
       }
 
-      boolean scaleGlyph = !span.clusterPreserveAspect(cluster)
-          && measuredWidth > 0f
-          && Math.abs(measuredWidth - expectedWidth) > 0.01f;
-      boolean savedMatrix = false;
-      float drawX = x;
-      if (scaleGlyph) {
+      glyphFitter.fit(fitScratch, measuredWidth, expectedWidth, x,
+          rowY + geometry.baselineOffset(), span.clusterFitMode(cluster));
+      float drawX = fitScratch.drawX;
+      boolean savedMatrix = fitScratch.scale < 0.999999f;
+      if (savedMatrix) {
         canvas.save();
-        float scaleX = expectedWidth / measuredWidth;
-        canvas.scale(scaleX, 1f);
-        drawX = x / scaleX;
-        savedMatrix = true;
+        canvas.translate(drawX, fitScratch.baselineY);
+        canvas.scale(fitScratch.scale, fitScratch.scale);
+        canvas.translate(-drawX, -fitScratch.baselineY);
       }
       canvas.drawTextRun(
           text,
@@ -122,7 +127,7 @@ final class TerminalTextPainter {
           contextStart,
           contextEnd,
           drawX,
-          rowY + geometry.baselineOffset(),
+          fitScratch.baselineY,
           false,
           paint);
       if (savedMatrix) canvas.restore();

@@ -4,7 +4,6 @@ import androidx.annotation.NonNull;
 
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.RenderLine;
-import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.TerminalPalette;
 
 import java.util.ArrayList;
@@ -92,8 +91,8 @@ final class TerminalLineCompiler {
           graphemeStart,
           column,
           (byte) width,
-          TerminalVisualRules.shouldPreserveGlyphAspect(
-              codePoint, width, hasRightPadding(line, column, width, cell.style())),
+          (byte) (TerminalGlyphFitter.fitMode(text, width)
+              == TerminalGlyphFitter.ClusterFitMode.CENTERED ? 1 : 0),
           defaultVisualBlank);
       textBuilder.endColumn = column + width;
       column += width;
@@ -152,16 +151,6 @@ final class TerminalLineCompiler {
         && style.background == canvasBackground;
   }
 
-  private static boolean hasRightPadding(
-      RenderLine line, int column, int width, StyleValue style) {
-    int nextColumn = column + width;
-    if (nextColumn >= line.length()) return false;
-    CellValue next = line.at(nextColumn);
-    return next != null && !next.isSpacer()
-        && java.util.Objects.equals(next.style(), style)
-        && (next.text().isEmpty() || " ".equals(next.text()));
-  }
-
   private static TextSpanBuilder flushText(
       TextSpanBuilder builder, ArrayList<CompiledTerminalLine.Span> spans) {
     if (builder == null) return null;
@@ -196,7 +185,7 @@ final class TerminalLineCompiler {
     int[] clusterUtf16Offsets = new int[8];
     int[] clusterColumns = new int[8];
     byte[] clusterWidths = new byte[8];
-    boolean[] preserveAspect = new boolean[8];
+    byte[] fitModes = new byte[8];
     boolean[] trimEligible = new boolean[8];
     int clusterCount;
     int endColumn;
@@ -211,13 +200,13 @@ final class TerminalLineCompiler {
         int utf16Offset,
         int column,
         byte width,
-        boolean preserve,
+        byte fitMode,
         boolean trim) {
       ensureCapacity(clusterCount + 1);
       clusterUtf16Offsets[clusterCount] = utf16Offset;
       clusterColumns[clusterCount] = column;
       clusterWidths[clusterCount] = width;
-      preserveAspect[clusterCount] = preserve;
+      fitModes[clusterCount] = fitMode;
       trimEligible[clusterCount] = trim;
       clusterCount++;
     }
@@ -236,13 +225,13 @@ final class TerminalLineCompiler {
       int[] keptOffsets = new int[keptCount];
       int[] keptColumns = new int[keptCount];
       byte[] keptWidths = new byte[keptCount];
-      boolean[] keptPreserve = new boolean[keptCount];
+      byte[] keptFitModes = new byte[keptCount];
       for (int i = 0; i < keptCount; i++) {
         int source = first + i;
         keptOffsets[i] = clusterUtf16Offsets[source] - textStart;
         keptColumns[i] = clusterColumns[source];
         keptWidths[i] = clusterWidths[source];
-        keptPreserve[i] = preserveAspect[source];
+        keptFitModes[i] = fitModes[source];
       }
       return new CompiledTerminalLine.TextSpan(
           clusterColumns[first],
@@ -252,7 +241,7 @@ final class TerminalLineCompiler {
           keptOffsets,
           keptColumns,
           keptWidths,
-          keptPreserve);
+          keptFitModes);
     }
 
     private void ensureCapacity(int required) {
@@ -261,7 +250,7 @@ final class TerminalLineCompiler {
       clusterUtf16Offsets = java.util.Arrays.copyOf(clusterUtf16Offsets, next);
       clusterColumns = java.util.Arrays.copyOf(clusterColumns, next);
       clusterWidths = java.util.Arrays.copyOf(clusterWidths, next);
-      preserveAspect = java.util.Arrays.copyOf(preserveAspect, next);
+      fitModes = java.util.Arrays.copyOf(fitModes, next);
       trimEligible = java.util.Arrays.copyOf(trimEligible, next);
     }
   }

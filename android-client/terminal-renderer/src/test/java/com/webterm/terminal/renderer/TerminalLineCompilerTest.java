@@ -115,6 +115,24 @@ public final class TerminalLineCompilerTest {
   }
 
   @Test
+  public void wideGraphemeFitDoesNotDependOnRightNeighbor() {
+    CompiledTerminalLine.TextSpan padded = (CompiledTerminalLine.TextSpan)
+        new TerminalLineCompiler().compile(line(
+            new CellValue("界", (byte) 2, null, null),
+            CellValue.SPACER,
+            CellValue.EMPTY), 3, PALETTE, BACKGROUND).spans().get(0);
+    CompiledTerminalLine.TextSpan adjacentText = (CompiledTerminalLine.TextSpan)
+        new TerminalLineCompiler().compile(line(
+            new CellValue("界", (byte) 2, null, null),
+            CellValue.SPACER,
+            new CellValue("X", (byte) 1, null, null)), 3, PALETTE, BACKGROUND)
+        .spans().get(0);
+
+    assertEquals(TerminalGlyphFitter.ClusterFitMode.CENTERED, padded.clusterFitMode(0));
+    assertEquals(padded.clusterFitMode(0), adjacentText.clusterFitMode(0));
+  }
+
+  @Test
   public void malformedSpacerDoesNotCreateTextOrCrash() {
     RenderLine line = line(CellValue.SPACER, new CellValue("x", (byte) 1, null, null));
     List<CompiledTerminalLine.Span> spans =

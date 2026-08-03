@@ -109,7 +109,7 @@ final class CompiledTerminalLine {
     private final int[] clusterUtf16Offsets;
     private final int[] clusterColumns;
     private final byte[] clusterWidths;
-    private final boolean[] preserveAspect;
+    private final byte[] fitModes;
 
     TextSpan(
         int startColumn,
@@ -120,6 +120,19 @@ final class CompiledTerminalLine {
         int[] clusterColumns,
         byte[] clusterWidths,
         boolean[] preserveAspect) {
+      this(startColumn, columnCount, style, text, clusterUtf16Offsets, clusterColumns,
+          clusterWidths, toFitModes(preserveAspect));
+    }
+
+    TextSpan(
+        int startColumn,
+        int columnCount,
+        CompiledStyle style,
+        String text,
+        int[] clusterUtf16Offsets,
+        int[] clusterColumns,
+        byte[] clusterWidths,
+        byte[] fitModes) {
       if (startColumn < 0 || columnCount <= 0 || text == null || style == null) {
         throw new IllegalArgumentException("invalid text span");
       }
@@ -127,7 +140,7 @@ final class CompiledTerminalLine {
       if (clusterCount == 0
           || clusterColumns.length != clusterCount
           || clusterWidths.length != clusterCount
-          || preserveAspect.length != clusterCount) {
+          || fitModes.length != clusterCount) {
         throw new IllegalArgumentException("invalid text cluster mapping");
       }
       this.startColumn = startColumn;
@@ -137,7 +150,7 @@ final class CompiledTerminalLine {
       this.clusterUtf16Offsets = Arrays.copyOf(clusterUtf16Offsets, clusterCount);
       this.clusterColumns = Arrays.copyOf(clusterColumns, clusterCount);
       this.clusterWidths = Arrays.copyOf(clusterWidths, clusterCount);
-      this.preserveAspect = Arrays.copyOf(preserveAspect, clusterCount);
+      this.fitModes = Arrays.copyOf(fitModes, clusterCount);
     }
 
     @Override
@@ -181,7 +194,21 @@ final class CompiledTerminalLine {
     }
 
     boolean clusterPreserveAspect(int index) {
-      return preserveAspect[index];
+      return clusterFitMode(index) == TerminalGlyphFitter.ClusterFitMode.CENTERED;
+    }
+
+    TerminalGlyphFitter.ClusterFitMode clusterFitMode(int index) {
+      return fitModes[index] == 0
+          ? TerminalGlyphFitter.ClusterFitMode.GRID_START
+          : TerminalGlyphFitter.ClusterFitMode.CENTERED;
+    }
+
+    private static byte[] toFitModes(boolean[] preserveAspect) {
+      byte[] fitModes = new byte[preserveAspect.length];
+      for (int i = 0; i < preserveAspect.length; i++) {
+        fitModes[i] = preserveAspect[i] ? (byte) 1 : (byte) 0;
+      }
+      return fitModes;
     }
 
     int clusterIndexContainingColumn(int column) {
