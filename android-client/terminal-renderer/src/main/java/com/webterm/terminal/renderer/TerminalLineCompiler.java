@@ -16,6 +16,15 @@ final class TerminalLineCompiler {
 
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
+  private final TerminalFontResolver fontResolver;
+
+  TerminalLineCompiler() {
+    this(TerminalFontResolver.mainOnly());
+  }
+
+  TerminalLineCompiler(@NonNull TerminalFontResolver fontResolver) {
+    this.fontResolver = fontResolver;
+  }
 
   @NonNull
   CompiledTerminalLine compile(
@@ -79,11 +88,13 @@ final class TerminalLineCompiler {
       }
 
       blankBuilder = flushBlank(blankBuilder, spans);
+      TerminalFontRole fontRole = fontResolver.resolve(text);
       if (textBuilder == null
           || textBuilder.style != currentStyle
+          || textBuilder.fontRole != fontRole
           || textBuilder.endColumn != column) {
         textBuilder = flushText(textBuilder, spans);
-        textBuilder = new TextSpanBuilder(column, currentStyle);
+        textBuilder = new TextSpanBuilder(column, currentStyle, fontRole);
       }
       int graphemeStart = textBuilder.text.length();
       textBuilder.text.append(text);
@@ -91,7 +102,7 @@ final class TerminalLineCompiler {
           graphemeStart,
           column,
           (byte) width,
-          (byte) (TerminalGlyphFitter.fitMode(text, width)
+          (byte) (TerminalGlyphFitter.fitMode(fontRole)
               == TerminalGlyphFitter.ClusterFitMode.CENTERED ? 1 : 0),
           defaultVisualBlank);
       textBuilder.endColumn = column + width;
@@ -180,6 +191,7 @@ final class TerminalLineCompiler {
   private static final class TextSpanBuilder {
     final int startColumn;
     final CompiledTerminalLine.CompiledStyle style;
+    final TerminalFontRole fontRole;
     final StringBuilder text = new StringBuilder();
     int[] clusterUtf16Offsets = new int[8];
     int[] clusterColumns = new int[8];
@@ -189,9 +201,13 @@ final class TerminalLineCompiler {
     int clusterCount;
     int endColumn;
 
-    TextSpanBuilder(int startColumn, CompiledTerminalLine.CompiledStyle style) {
+    TextSpanBuilder(
+        int startColumn,
+        CompiledTerminalLine.CompiledStyle style,
+        TerminalFontRole fontRole) {
       this.startColumn = startColumn;
       this.style = style;
+      this.fontRole = fontRole;
       this.endColumn = startColumn;
     }
 
@@ -236,6 +252,7 @@ final class TerminalLineCompiler {
           clusterColumns[first],
           clusterColumns[last] + clusterWidths[last] - clusterColumns[first],
           style,
+          fontRole,
           text.substring(textStart, textEnd),
           keptOffsets,
           keptColumns,

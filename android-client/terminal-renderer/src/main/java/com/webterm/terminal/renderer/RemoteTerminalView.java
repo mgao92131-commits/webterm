@@ -140,7 +140,7 @@ public final class RemoteTerminalView extends View {
     void onAlternateScreenScroll(int rowsDown);
   }
 
-  private final RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+  private final RemoteTerminalRenderer renderer;
   private final TerminalLineRenderNodeCache lineCache = new TerminalLineRenderNodeCache();
   private final GestureAndScaleRecognizer gestureRecognizer;
   private final Scroller scroller;
@@ -251,6 +251,7 @@ public final class RemoteTerminalView extends View {
 
   public RemoteTerminalView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
     super(context, attrs, defStyleAttr);
+    this.renderer = new RemoteTerminalRenderer(TerminalFontSet.fromContext(context));
     setFocusableInTouchMode(true);
     setFocusable(true);
     this.scroller = new Scroller(context);

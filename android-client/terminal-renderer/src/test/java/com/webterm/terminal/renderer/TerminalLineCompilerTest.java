@@ -128,7 +128,7 @@ public final class TerminalLineCompilerTest {
             new CellValue("X", (byte) 1, null, null)), 3, PALETTE, BACKGROUND)
         .spans().get(0);
 
-    assertEquals(TerminalGlyphFitter.ClusterFitMode.CENTERED, padded.clusterFitMode(0));
+    assertEquals(TerminalGlyphFitter.ClusterFitMode.GRID_START, padded.clusterFitMode(0));
     assertEquals(padded.clusterFitMode(0), adjacentText.clusterFitMode(0));
   }
 

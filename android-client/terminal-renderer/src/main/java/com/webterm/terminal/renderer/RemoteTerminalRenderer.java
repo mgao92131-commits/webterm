@@ -32,7 +32,10 @@ public final class RemoteTerminalRenderer {
 
   static final int SELECTION_OVERLAY = 0x665B92F3;
 
-  private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Paint mainTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Paint unicodeSymbolPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Paint nerdSymbolPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Paint emojiPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Paint bgPaint = new Paint();
   private final Paint selectionPaint = new Paint();
   private final Paint placeholderPaint = new Paint();
@@ -41,40 +44,48 @@ public final class RemoteTerminalRenderer {
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
   private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
-  private final TerminalLineCompiler lineCompiler = new TerminalLineCompiler();
+  private final TerminalFontSet fontSet;
+  private final TerminalLineCompiler lineCompiler;
   private final TerminalTextPainter textPainter = new TerminalTextPainter();
   private final TerminalSpecialGlyphPainter specialGlyphPainter =
       new TerminalSpecialGlyphPainter();
   private int phaseMetricsFrame;
 
   private int textSizeSp = 14;
-  @Nullable private Typeface typeface = Typeface.MONOSPACE;
+  @Nullable private Typeface typeface;
 
   public RemoteTerminalRenderer() {
+    this(TerminalFontSet.mainOnly());
+  }
+
+  RemoteTerminalRenderer(@NonNull TerminalFontSet fontSet) {
+    this.fontSet = fontSet;
+    this.lineCompiler = new TerminalLineCompiler(fontSet.resolver);
     applyFont();
   }
 
   public void updateFont(float textSizePx, @Nullable Typeface tf) {
     typeface = tf;
-    textPaint.setTextSize(textSizePx);
-    textPaint.setTypeface(tf != null ? tf : Typeface.MONOSPACE);
-    textPainter.configureFont(textPaint);
+    configurePaint(mainTextPaint, textSizePx, mainTypeface());
+    configurePaint(unicodeSymbolPaint, textSizePx, fontSet.unicodeSymbols);
+    configurePaint(nerdSymbolPaint, textSizePx, fontSet.nerdSymbols);
+    configurePaint(emojiPaint, textSizePx, fontSet.emoji);
     // ceil 保证行高落在整数像素；与像素对齐的 topInset 一起，使相邻行
     // RenderNode 的上下边界都落在整数 Y，避免硬件合成时出现 1px 暗缝。
-    float lineHeight = (float) Math.ceil(textPaint.getFontSpacing());
+    float lineHeight = (float) Math.ceil(mainTextPaint.getFontSpacing());
     // rowY is the top of a terminal cell. Match Termux TerminalRenderer:
     // its baseline is the cell top minus Paint.ascent(), not the full line
     // spacing. Using lineHeight here lowered glyphs within their cells and
     // made a full-cell block cursor appear visibly too high.
-    float baselineOffset = -textPaint.ascent();
-    float cellWidth = textPaint.measureText("X");
+    float baselineOffset = -mainTextPaint.ascent();
+    float cellWidth = mainTextPaint.measureText("X");
     geometry.update(cellWidth, lineHeight, baselineOffset);
-    Paint.FontMetrics fontMetrics = textPaint.getFontMetrics();
+    Paint.FontMetrics fontMetrics = mainTextPaint.getFontMetrics();
     geometry.updateRowNodeBleed(new TerminalCellGeometry.PaintMetrics(
         fontMetrics.top, fontMetrics.bottom, -0.35f,
-        textPaint.getTextSize()));
+        mainTextPaint.getTextSize()));
     // 预热 fallback chain，避免首个 emoji 采用错误的测量宽度。
-    textPaint.measureText("😀");
+    emojiPaint.measureText("😀");
   }
 
   public void setFontMetrics(float cellWidth, float lineHeight, float baselineOffset) {
@@ -188,9 +199,34 @@ public final class RemoteTerminalRenderer {
   }
 
   private void applyFont() {
-    textPaint.setTextSize(textSizeSp);
-    textPaint.setTypeface(typeface != null ? typeface : Typeface.MONOSPACE);
-    textPainter.configureFont(textPaint);
+    configurePaint(mainTextPaint, textSizeSp, mainTypeface());
+    configurePaint(unicodeSymbolPaint, textSizeSp, fontSet.unicodeSymbols);
+    configurePaint(nerdSymbolPaint, textSizeSp, fontSet.nerdSymbols);
+    configurePaint(emojiPaint, textSizeSp, fontSet.emoji);
+  }
+
+  private Typeface mainTypeface() {
+    return typeface != null ? typeface : fontSet.mainText;
+  }
+
+  private void configurePaint(Paint paint, float textSizePx, Typeface typeface) {
+    paint.setTextSize(textSizePx);
+    paint.setTypeface(typeface);
+    textPainter.configureFont(paint);
+  }
+
+  private Paint paintFor(TerminalFontRole role) {
+    switch (role) {
+      case UNICODE_SYMBOL:
+        return unicodeSymbolPaint;
+      case NERD_SYMBOL:
+        return nerdSymbolPaint;
+      case EMOJI:
+        return emojiPaint;
+      case MAIN_TEXT:
+      default:
+        return mainTextPaint;
+    }
   }
 
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
@@ -345,7 +381,7 @@ public final class RemoteTerminalRenderer {
       drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
           historySeq, screenRow, normalizedSelection, canvasBackground);
       if (active && cursorVisible && cursor.row == screenRow) {
-        drawCursorOverlayForRow(canvas, model.columns, palette, line, y,
+        drawCursorOverlayForRow(canvas, model.columns, palette, line, compiledLine, y,
             screenRow, cursor, canvasBackground, animationState);
       }
       if (samplePhases) {
@@ -488,8 +524,10 @@ public final class RemoteTerminalRenderer {
     int left = geometry.columnEdgePx(span.startColumn());
     int right = geometry.columnEdgePx(span.endColumn());
     if (span instanceof CompiledTerminalLine.TextSpan) {
-      textPainter.draw(canvas, (CompiledTerminalLine.TextSpan) span,
-          geometry, rowY, textPaint, foreground, overrideForeground);
+      CompiledTerminalLine.TextSpan textSpan =
+          (CompiledTerminalLine.TextSpan) span;
+      textPainter.draw(canvas, textSpan, geometry, rowY,
+          paintFor(textSpan.fontRole()), foreground, overrideForeground);
     } else if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
       CompiledTerminalLine.SpecialGlyphSpan special =
           (CompiledTerminalLine.SpecialGlyphSpan) span;
@@ -544,7 +582,9 @@ public final class RemoteTerminalRenderer {
 
   /** 在已绘制的行上追加光标覆盖层。 */
   private void drawCursorOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
-                                       RenderLine line, float y, int screenRow,
+                                       RenderLine line,
+                                       @Nullable CompiledTerminalLine compiledLine,
+                                       float y, int screenRow,
                                        TerminalCursor cursor, int canvasBackground,
                                        TerminalAnimationState animationState) {
     if (line == null || cursor == null || !cursor.visible || screenRow != cursor.row
@@ -583,13 +623,12 @@ public final class RemoteTerminalRenderer {
       cursorResolver.resolveInto(palette, cell.style(), true, styleScratch);
       int cursorForeground = styleScratch.foreground;
       int cursorUnderlineColor = styleScratch.underlineColor;
-      CompiledTerminalLine compiled = lineCompiler.compile(
-          line, columns, palette, canvasBackground);
       int saveCount = canvas.save();
       canvas.clipRect(left, Math.round(y), right,
           Math.round(y) + geometry.lineHeightPx());
       try {
-        for (CompiledTerminalLine.Span span : compiled.spans()) {
+        if (compiledLine == null) return;
+        for (CompiledTerminalLine.Span span : compiledLine.spans()) {
           if (!span.intersectsColumns(col, col + columnWidth)) continue;
           if (!animationState.foregroundVisible(span.style())) continue;
           drawSpanForeground(canvas, span, y, cursorForeground,

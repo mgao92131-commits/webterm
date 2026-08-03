@@ -9,13 +9,13 @@ public final class TerminalGlyphFitterTest {
   @Test
   public void presentationModeUsesWholeGraphemeAndServerWidth() {
     assertEquals(TerminalGlyphFitter.ClusterFitMode.GRID_START,
-        TerminalGlyphFitter.fitMode("A", 1));
+        TerminalGlyphFitter.fitMode(TerminalFontRole.MAIN_TEXT));
+    assertEquals(TerminalGlyphFitter.ClusterFitMode.GRID_START,
+        TerminalGlyphFitter.fitMode(TerminalFontRole.MAIN_TEXT));
     assertEquals(TerminalGlyphFitter.ClusterFitMode.CENTERED,
-        TerminalGlyphFitter.fitMode("界", 2));
+        TerminalGlyphFitter.fitMode(TerminalFontRole.EMOJI));
     assertEquals(TerminalGlyphFitter.ClusterFitMode.CENTERED,
-        TerminalGlyphFitter.fitMode("👨‍👩‍👧‍👦", 2));
-    assertEquals(TerminalGlyphFitter.ClusterFitMode.CENTERED,
-        TerminalGlyphFitter.fitMode("1️⃣", 1));
+        TerminalGlyphFitter.fitMode(TerminalFontRole.EMOJI));
   }
 
   @Test

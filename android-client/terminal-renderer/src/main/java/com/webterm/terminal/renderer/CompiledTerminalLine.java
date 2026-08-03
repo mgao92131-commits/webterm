@@ -105,6 +105,7 @@ final class CompiledTerminalLine {
     private final int startColumn;
     private final int columnCount;
     private final CompiledStyle style;
+    private final TerminalFontRole fontRole;
     private final String text;
     private final int[] clusterUtf16Offsets;
     private final int[] clusterColumns;
@@ -120,7 +121,21 @@ final class CompiledTerminalLine {
         int[] clusterColumns,
         byte[] clusterWidths,
         boolean[] preserveAspect) {
-      this(startColumn, columnCount, style, text, clusterUtf16Offsets, clusterColumns,
+      this(startColumn, columnCount, style, TerminalFontRole.MAIN_TEXT, text,
+          clusterUtf16Offsets, clusterColumns, clusterWidths, preserveAspect);
+    }
+
+    TextSpan(
+        int startColumn,
+        int columnCount,
+        CompiledStyle style,
+        TerminalFontRole fontRole,
+        String text,
+        int[] clusterUtf16Offsets,
+        int[] clusterColumns,
+        byte[] clusterWidths,
+        boolean[] preserveAspect) {
+      this(startColumn, columnCount, style, fontRole, text, clusterUtf16Offsets, clusterColumns,
           clusterWidths, toFitModes(preserveAspect));
     }
 
@@ -133,7 +148,22 @@ final class CompiledTerminalLine {
         int[] clusterColumns,
         byte[] clusterWidths,
         byte[] fitModes) {
-      if (startColumn < 0 || columnCount <= 0 || text == null || style == null) {
+      this(startColumn, columnCount, style, TerminalFontRole.MAIN_TEXT, text,
+          clusterUtf16Offsets, clusterColumns, clusterWidths, fitModes);
+    }
+
+    TextSpan(
+        int startColumn,
+        int columnCount,
+        CompiledStyle style,
+        TerminalFontRole fontRole,
+        String text,
+        int[] clusterUtf16Offsets,
+        int[] clusterColumns,
+        byte[] clusterWidths,
+        byte[] fitModes) {
+      if (startColumn < 0 || columnCount <= 0 || text == null || style == null
+          || fontRole == null) {
         throw new IllegalArgumentException("invalid text span");
       }
       int clusterCount = clusterUtf16Offsets.length;
@@ -146,6 +176,7 @@ final class CompiledTerminalLine {
       this.startColumn = startColumn;
       this.columnCount = columnCount;
       this.style = style;
+      this.fontRole = fontRole;
       this.text = text;
       this.clusterUtf16Offsets = Arrays.copyOf(clusterUtf16Offsets, clusterCount);
       this.clusterColumns = Arrays.copyOf(clusterColumns, clusterCount);
@@ -166,6 +197,10 @@ final class CompiledTerminalLine {
     @Override
     public CompiledStyle style() {
       return style;
+    }
+
+    TerminalFontRole fontRole() {
+      return fontRole;
     }
 
     String text() {

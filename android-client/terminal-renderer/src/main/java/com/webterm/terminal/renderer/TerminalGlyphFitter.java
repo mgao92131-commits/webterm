@@ -18,13 +18,11 @@ final class TerminalGlyphFitter {
     float baselineY;
   }
 
-  static ClusterFitMode fitMode(String grapheme, int serverWidth) {
-    if (serverWidth >= 2) return ClusterFitMode.CENTERED;
-    if (grapheme == null || grapheme.isEmpty()) return ClusterFitMode.GRID_START;
-    for (int offset = 0; offset < grapheme.length(); ) {
-      int codePoint = grapheme.codePointAt(offset);
-      if (isCenteredPresentation(codePoint)) return ClusterFitMode.CENTERED;
-      offset += Character.charCount(codePoint);
+  static ClusterFitMode fitMode(TerminalFontRole role) {
+    if (role == TerminalFontRole.UNICODE_SYMBOL
+        || role == TerminalFontRole.NERD_SYMBOL
+        || role == TerminalFontRole.EMOJI) {
+      return ClusterFitMode.CENTERED;
     }
     return ClusterFitMode.GRID_START;
   }
@@ -45,15 +43,4 @@ final class TerminalGlyphFitter {
     }
   }
 
-  private static boolean isCenteredPresentation(int codePoint) {
-    return (codePoint >= 0x1F000 && codePoint <= 0x1FAFF)
-        || (codePoint >= 0x1F1E6 && codePoint <= 0x1F1FF)
-        || (codePoint >= 0x2600 && codePoint <= 0x27BF)
-        || (codePoint >= 0xE000 && codePoint <= 0xF8FF)
-        || (codePoint >= 0xF0000 && codePoint <= 0xFFFFD)
-        || codePoint == 0x200D
-        || codePoint == 0x20E3
-        || (codePoint >= 0xFE00 && codePoint <= 0xFE0F)
-        || (codePoint >= 0x1F3FB && codePoint <= 0x1F3FF);
-  }
 }
