@@ -453,7 +453,7 @@ public final class RemoteTerminalRenderer {
     int col = cursor.col;
     CellValue cell = col < line.length() ? line.at(col) : null;
     // 光标落在宽字符右半（spacer 列）时归一到宽字符起始格：整格 2 列高亮，
-    // 与 drawCell 旧路径 `cursor.col == col + 1` 的块光标行为一致。
+    // 与 legacy block-cursor 路径 `cursor.col == col + 1` 的行为一致。
     if (cell != null && cell.isSpacer() && col > 0) {
       CellValue left = line.at(col - 1);
       if (left != null && left.isWideStart()) {
@@ -475,7 +475,7 @@ public final class RemoteTerminalRenderer {
       // 空 cell（或左侧无宽字符起始格的异常 spacer）没有字形可重绘，只画光标矩形。
       canvas.drawRect(left, y, right, y + lineHeight, bgPaint);
     } else {
-      // BLOCK 光标：复用 drawCell 的 insideCursor 路径——先画反色背景与不透明光标矩形，
+      // BLOCK 光标：复用 legacy cell 路径——先画反色背景与不透明光标矩形，
       // 再以反色前景重绘字形，保证块光标下的字符可见（对齐旧 drawLine 路径）。
       int codePoint = cell.text().isEmpty() ? ' ' : cell.text().codePointAt(0);
       boolean preserveAspect = TerminalVisualRules.shouldPreserveGlyphAspect(codePoint,
