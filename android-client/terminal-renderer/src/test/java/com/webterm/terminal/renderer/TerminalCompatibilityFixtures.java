@@ -75,8 +75,14 @@ final class TerminalCompatibilityFixtures {
     fixtures.add(indic());
     fixtures.add(emoji());
     fixtures.addAll(boxDrawing());
+    fixtures.add(codePointRange("box-drawing-full-range", Category.BOX_DRAWING,
+        0x2500, 0x257F));
     fixtures.addAll(blockElements());
+    fixtures.add(codePointRange("block-elements-full-range", Category.BLOCK_ELEMENTS,
+        0x2580, 0x259F));
     fixtures.add(braille());
+    fixtures.add(codePointRange("braille-full-range", Category.BRAILLE,
+        0x2800, 0x28FF));
     fixtures.add(powerline());
     fixtures.addAll(ansiStyles());
     fixtures.addAll(edgeCases());
@@ -319,6 +325,17 @@ final class TerminalCompatibilityFixtures {
       cells[i] = cell(String.valueOf(text.charAt(i)), 1);
     }
     return cells;
+  }
+
+  /** 固化一个服务端已经决定为 width=1 的 BMP code point 范围。 */
+  private static Fixture codePointRange(String name, Category category,
+                                        int firstCodePoint, int lastCodePoint) {
+    int count = lastCodePoint - firstCodePoint + 1;
+    CellValue[] cells = new CellValue[count];
+    for (int index = 0; index < count; index++) {
+      cells[index] = cell(String.valueOf((char) (firstCodePoint + index)), 1);
+    }
+    return new Fixture(name, count, cells, category);
   }
 
   private static CellValue[] blankCells(int columns) {

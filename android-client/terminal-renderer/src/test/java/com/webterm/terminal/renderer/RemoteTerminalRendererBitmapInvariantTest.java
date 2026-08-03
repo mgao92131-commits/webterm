@@ -167,6 +167,116 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
         COLUMNS * (int) CELL_WIDTH, bitmap.getWidth());
   }
 
+  @Test
+  public void specialGlyphUsesResolvedColorsAndHiddenKeepsOnlyBackground() {
+    StyleValue colored = new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 0);
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("█", (byte) 1, colored, null);
+    Bitmap bitmap = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertEquals("special glyph must use resolved foreground", 0xFFFF0000,
+        bitmap.getPixel(5, 15));
+    bitmap.recycle();
+
+    StyleValue hidden = new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 1 << 11);
+    cells[0] = new CellValue("█", (byte) 1, hidden, null);
+    bitmap = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertEquals("hidden special glyph must retain its background", 0xFF0000FF,
+        bitmap.getPixel(5, 15));
+    bitmap.recycle();
+  }
+
+  @Test
+  public void reverseAndDimApplyToSpecialGlyphsWithoutFontMetrics() {
+    StyleValue reverse = new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 1 << 10);
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("─", (byte) 1, reverse, null);
+    Bitmap bitmap = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertEquals("reverse background must be the original foreground", 0xFFFF0000,
+        bitmap.getPixel(5, 8));
+    assertEquals("reverse special foreground must be the original background", 0xFF0000FF,
+        bitmap.getPixel(5, 15));
+    bitmap.recycle();
+
+    StyleValue dim = new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG, null, 1 << 1);
+    cells[0] = new CellValue("█", (byte) 1, dim, null);
+    bitmap = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertEquals("dim must affect special foreground", 0xFFAAAAAA,
+        bitmap.getPixel(5, 15));
+    bitmap.recycle();
+  }
+
+  @Test
+  public void wideSpecialGlyphUsesTheServerProvidedTwoColumnSpan() {
+    CellValue[] cells = blankCells();
+    cells[2] = new CellValue("█", (byte) 2, null, null);
+    cells[3] = CellValue.SPACER;
+    Bitmap bitmap = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    assertEquals(0xFFFFFFFF, bitmap.getPixel(29, 15));
+    assertEquals(0xFFFFFFFF, bitmap.getPixel(39, 15));
+    assertEquals(BACKGROUND, bitmap.getPixel(41, 15));
+    bitmap.recycle();
+  }
+
+  @Test
+  public void blockCursorRecolorsSpecialGlyphUsingResolvedInverseStyle() {
+    StyleValue style = new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x0000FF), null, 0);
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("─", (byte) 1, style, null);
+    Bitmap bitmap = render(cells, new TerminalViewportState(),
+        new TerminalCursor(0, 0, true, TerminalCursor.Shape.BLOCK, false));
+    assertEquals("block cursor must provide the cursor background behind the glyph", 0xFFFFFFFF,
+        bitmap.getPixel(5, 8));
+    assertEquals("block cursor must invert the special glyph foreground", 0xFF0000FF,
+        bitmap.getPixel(5, 15));
+    bitmap.recycle();
+  }
+
+  @Test
+  public void decorationIsDrawnAfterSpecialGlyphInsideTheSameCell() {
+    StyleValue style = new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG,
+        TerminalColor.rgb(0x00FF00), 1 << 3);
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("─", (byte) 1, style, null);
+    Bitmap bitmap = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    boolean foundUnderline = false;
+    for (int y = 20; y < 25 && !foundUnderline; y++) {
+      for (int x = 0; x < 10; x++) {
+        int pixel = bitmap.getPixel(x, y) & 0x00FFFFFF;
+        int red = (pixel >> 16) & 0xFF;
+        int green = (pixel >> 8) & 0xFF;
+        int blue = pixel & 0xFF;
+        if (green > red && green > blue) {
+          foundUnderline = true;
+          break;
+        }
+      }
+    }
+    assertTrue("special glyph decoration must be visible after glyph drawing", foundUnderline);
+    bitmap.recycle();
+  }
+
+  @Test
+  public void selectionOverlaysSpecialGlyphAfterItsGeometryIsDrawn() {
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("█", (byte) 1, null, null);
+    Bitmap plain = render(cells, new TerminalViewportState(), TerminalCursor.hidden());
+    TerminalViewportState viewport = new TerminalViewportState();
+    viewport.selection = new TerminalSelection(
+        new TerminalSelection.Anchor(0, 0, 0),
+        new TerminalSelection.Anchor(0, 0, 1));
+    Bitmap selected = render(cells, viewport, TerminalCursor.hidden());
+    assertNotEquals("selection overlay must change the special glyph pixels",
+        plain.getPixel(5, 15), selected.getPixel(5, 15));
+    plain.recycle();
+    selected.recycle();
+  }
+
   private static Bitmap render(CellValue[] cells, TerminalViewportState viewport,
                                TerminalCursor cursor) {
     return render(cells, viewport, cursor, CELL_WIDTH);

@@ -42,6 +42,8 @@ public final class RemoteTerminalRenderer {
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
   private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
+  private final TerminalSpecialGlyphPainter specialGlyphPainter =
+      new TerminalSpecialGlyphPainter();
   /** Reused on the UI thread for the common, plain-ASCII output path. */
   private final StringBuilder plainAsciiRun = new StringBuilder();
   private int phaseMetricsFrame;
@@ -629,30 +631,35 @@ public final class RemoteTerminalRenderer {
     // already handled above, so measuring and drawing a space per cell only
     // burns UI-thread time without changing pixels.
     boolean drawGlyph = !" ".equals(text) && !styleScratch.hidden;
+    int rowTop = Math.round(rowY);
+    int rowBottom = rowTop + geometry.lineHeightPx();
     if (drawGlyph) {
-      textPaint.setColor(styleScratch.foreground);
-      textPaint.setFakeBoldText(styleScratch.bold);
-      textPaint.setTextSkewX(styleScratch.italic ? -0.35f : 0f);
-      float expectedWidth = (cell.isWideStart() ? 2 : 1) * geometry.cellWidth();
-      float measuredWidth = textPaint.measureText(text);
-      boolean scaleGlyph = !preserveAspect && measuredWidth > 0
-          && Math.abs(measuredWidth - expectedWidth) > 0.01f;
-      boolean savedMatrix = false;
-      float drawX = x;
-      if (scaleGlyph) {
-        canvas.save();
-        float scaleX = expectedWidth / measuredWidth;
-        canvas.scale(scaleX, 1f);
-        drawX = x / scaleX;
-        savedMatrix = true;
+      boolean specialGlyphDrawn = specialGlyphPainter.drawIfSupported(
+          canvas, text, left, rowTop, right, rowBottom, styleScratch.foreground);
+      if (!specialGlyphDrawn) {
+        textPaint.setColor(styleScratch.foreground);
+        textPaint.setFakeBoldText(styleScratch.bold);
+        textPaint.setTextSkewX(styleScratch.italic ? -0.35f : 0f);
+        float expectedWidth = (cell.isWideStart() ? 2 : 1) * geometry.cellWidth();
+        float measuredWidth = textPaint.measureText(text);
+        boolean scaleGlyph = !preserveAspect && measuredWidth > 0
+            && Math.abs(measuredWidth - expectedWidth) > 0.01f;
+        boolean savedMatrix = false;
+        float drawX = x;
+        if (scaleGlyph) {
+          canvas.save();
+          float scaleX = expectedWidth / measuredWidth;
+          canvas.scale(scaleX, 1f);
+          drawX = x / scaleX;
+          savedMatrix = true;
+        }
+        canvas.drawText(text, drawX, rowY + geometry.baselineOffset(), textPaint);
+        if (savedMatrix) canvas.restore();
       }
-      canvas.drawText(text, drawX, rowY + geometry.baselineOffset(), textPaint);
-      if (savedMatrix) canvas.restore();
     }
 
-    int rowTop = Math.round(rowY);
     decorationPainter.draw(canvas, styleScratch, left, right, rowTop,
-        rowTop + geometry.lineHeightPx());
+        rowBottom);
 
     if (selected) {
       // Draw after the complete glyph run so selection never replaces text with
