@@ -126,6 +126,44 @@ public final class RemoteTerminalRenderer {
 
   int cellWidthPx(int column, int columns) { return geometry.cellWidthPx(column, columns); }
 
+  /** 返回当前 viewport 内需要动态 blink 覆盖层的类型位图。 */
+  int visibleBlinkKinds(@NonNull RemoteTerminalModel.RenderSnapshot model,
+                        @NonNull TerminalViewportState viewport,
+                        int viewportHeight) {
+    float lineHeight = geometry.lineHeightPx();
+    if (lineHeight <= 0f || viewportHeight <= 0) return 0;
+    UnifiedContentAxis axis = model.contentAxis;
+    long historyRowsLong = axis.historyRowCount();
+    int historyRows = (int) Math.min(Integer.MAX_VALUE, historyRowsLong);
+    int screenRows = model.screenView.size();
+    int maxScrollOffset = Math.round(historyRows * lineHeight);
+    float scrollOffset = viewport.derivedScrollOffsetPixels(
+        model, lineHeight, maxScrollOffset);
+    float contentTop = contentTopY(viewportHeight, historyRows, screenRows,
+        lineHeight, getTopInset(), scrollOffset);
+    long first = Math.max(0L, (long) Math.floor(-contentTop / lineHeight) - 1L);
+    long last = Math.min(axis.rowCount(),
+        (long) Math.ceil((viewportHeight - contentTop) / lineHeight) + 1L);
+    int kinds = 0;
+    for (long row = first; row < last; row++) {
+      UnifiedContentAxis.Item item = axis.itemAtRow(row);
+      if (item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE || item.line == null) continue;
+      kinds |= lineCompiler.visibleBlinkKinds(
+          item.line, model.columns, model.palette,
+          resolveColor(model.palette,
+              model.palette.reverseVideo ? model.palette.defaultFg : model.palette.defaultBg));
+      if (kinds == (TerminalLineCompiler.BLINK_SLOW | TerminalLineCompiler.BLINK_FAST)) {
+        return kinds;
+      }
+    }
+    return kinds;
+  }
+
+  int visibleBlinkKinds(@NonNull RenderLine line, int columns,
+                        @NonNull TerminalPalette palette, int canvasBackground) {
+    return lineCompiler.visibleBlinkKinds(line, columns, palette, canvasBackground);
+  }
+
   static int liveScreenExitOffsetPixels(int viewportHeight, float topInset) {
     return Math.max(
         0, (int) Math.ceil(Math.max(0f, viewportHeight - topInset)));

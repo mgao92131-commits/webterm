@@ -7,6 +7,7 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.HapticFeedbackConstants;
@@ -171,19 +172,28 @@ public final class RemoteTerminalView extends View {
   private boolean autoScrollScheduled;
   private final Runnable selectionAutoScrollRunnable = this::runSelectionAutoScrollFrame;
   private boolean cursorBlinkOn = true;
+  private boolean slowBlinkOn = true;
+  private boolean fastBlinkOn = true;
   private int previousCursorRow = -1;
   private int currentCursorRow = -1;
   private boolean cursorBlinkScheduled;
-  private final Runnable cursorBlinkRunnable = new Runnable() {
+  private final Runnable animationRunnable = new Runnable() {
     @Override public void run() {
-      if (!shouldBlinkCursor()) {
+      int blinkKinds = visibleBlinkKinds();
+      boolean cursorShouldBlink = shouldBlinkCursor();
+      if (!cursorShouldBlink && blinkKinds == 0) {
         stopCursorBlinking();
         return;
       }
-      cursorBlinkOn = !cursorBlinkOn;
-      invalidateCursorRows(previousCursorRow, currentCursorRow);
+      long now = SystemClock.uptimeMillis();
+      cursorBlinkOn = !cursorShouldBlink || blinkPhaseOn(now, 500L);
+      slowBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_SLOW) == 0
+          || blinkPhaseOn(now, 500L);
+      fastBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_FAST) == 0
+          || blinkPhaseOn(now, 250L);
+      invalidateAnimatedRows(previousCursorRow, currentCursorRow);
       previousCursorRow = currentCursorRow;
-      postOnAnimationDelayed(this, 500L);
+      scheduleAnimation(blinkKinds);
     }
   };
 
@@ -422,7 +432,8 @@ public final class RemoteTerminalView extends View {
           fontGeneration, paletteGeneration, styleGeneration);
     }
     try {
-      renderer.render(canvas, snapshot, viewport, cursorBlinkOn, cache);
+      renderer.render(canvas, snapshot, viewport,
+          new TerminalAnimationState(cursorBlinkOn, slowBlinkOn, fastBlinkOn), cache);
       drawSelectionHandles(canvas, snapshot);
     } finally {
       if (cache != null) cache.endFrame();
@@ -1689,9 +1700,7 @@ public final class RemoteTerminalView extends View {
     TerminalCursor currentCursor =
         nextSnapshot != null ? nextSnapshot.cursor : null;
     if (!java.util.Objects.equals(previousCursor, currentCursor)) {
-      removeCallbacks(cursorBlinkRunnable);
-      cursorBlinkScheduled = false;
-      cursorBlinkOn = true;
+      stopCursorBlinking();
     }
   }
 
@@ -1706,20 +1715,48 @@ public final class RemoteTerminalView extends View {
   }
 
   private void updateCursorBlinkSchedule() {
+    int blinkKinds = visibleBlinkKinds();
     boolean shouldBlink = shouldBlinkCursor();
-    if (!shouldBlink) {
+    if (!shouldBlink && blinkKinds == 0) {
       stopCursorBlinking();
-    } else if (!cursorBlinkScheduled) {
-      cursorBlinkOn = true;
-      cursorBlinkScheduled = true;
-      postOnAnimationDelayed(cursorBlinkRunnable, 500L);
+      return;
     }
+    if (!cursorBlinkScheduled) {
+      long now = SystemClock.uptimeMillis();
+      cursorBlinkOn = !shouldBlink || blinkPhaseOn(now, 500L);
+      slowBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_SLOW) == 0
+          || blinkPhaseOn(now, 500L);
+      fastBlinkOn = (blinkKinds & TerminalLineCompiler.BLINK_FAST) == 0
+          || blinkPhaseOn(now, 250L);
+      cursorBlinkScheduled = true;
+    }
+    scheduleAnimation(blinkKinds);
   }
 
   private void stopCursorBlinking() {
-    removeCallbacks(cursorBlinkRunnable);
+    removeCallbacks(animationRunnable);
     cursorBlinkScheduled = false;
     cursorBlinkOn = true;
+    slowBlinkOn = true;
+    fastBlinkOn = true;
+  }
+
+  private void scheduleAnimation(int blinkKinds) {
+    removeCallbacks(animationRunnable);
+    long period = (blinkKinds & TerminalLineCompiler.BLINK_FAST) != 0 ? 250L : 500L;
+    long now = SystemClock.uptimeMillis();
+    long nextBoundary = ((now / period) + 1L) * period;
+    postOnAnimationDelayed(animationRunnable, Math.max(1L, nextBoundary - now));
+  }
+
+  private static boolean blinkPhaseOn(long uptimeMillis, long periodMillis) {
+    return (uptimeMillis / periodMillis) % 2L == 0L;
+  }
+
+  private int visibleBlinkKinds() {
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null || !isAttachedToWindow()) return 0;
+    return renderer.visibleBlinkKinds(snapshot, viewport, getHeight());
   }
 
   private void invalidateCursorRows(int previousRow, int currentRow) {
@@ -1753,8 +1790,42 @@ public final class RemoteTerminalView extends View {
     if (rectCount > 0) TerminalRenderMetrics.partialInvalidate(rectCount);
   }
 
+  private void invalidateAnimatedRows(int previousRow, int currentRow) {
+    invalidateCursorRows(previousRow, currentRow);
+    RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
+    if (snapshot == null || getWidth() <= 0 || getHeight() <= 0
+        || visibleBlinkKinds() == 0) return;
+
+    float rowHeight = renderer.getLineHeight();
+    if (rowHeight <= 0f) return;
+    int historyRows = (int) Math.min(Integer.MAX_VALUE,
+        snapshot.contentAxis.historyRowCount());
+    float contentTop = RemoteTerminalRenderer.contentTopY(
+        getHeight(), historyRows, snapshot.screenView.size(), rowHeight,
+        renderer.getTopInset(), viewportOffset(snapshot));
+    long first = Math.max(0L,
+        (long) Math.floor(-contentTop / rowHeight) - 1L);
+    long last = Math.min(snapshot.contentAxis.rowCount(),
+        (long) Math.ceil((getHeight() - contentTop) / rowHeight) + 1L);
+    int rectCount = 0;
+    int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
+        snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
+    for (long axisRow = first; axisRow < last; axisRow++) {
+      UnifiedContentAxis.Item item = snapshot.contentAxis.itemAtRow(axisRow);
+      if (item.kind == UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE || item.line == null) continue;
+      if (renderer.visibleBlinkKinds(item.line, snapshot.columns,
+          snapshot.palette, canvasBackground) == 0) continue;
+      if (postAnimatedRowDamage(contentTop + axisRow * rowHeight, rowHeight)) rectCount++;
+    }
+    if (rectCount > 0) TerminalRenderMetrics.partialInvalidate(rectCount);
+  }
+
   private boolean postCursorRowDamage(int row, float screenTop, float rowHeight) {
     float rawTop = screenTop + row * rowHeight;
+    return postAnimatedRowDamage(rawTop, rowHeight);
+  }
+
+  private boolean postAnimatedRowDamage(float rawTop, float rowHeight) {
     float rawBottom = rawTop + rowHeight;
     if (rawBottom <= 0f || rawTop >= getHeight()) return false;
     postInvalidateOnAnimation(0, Math.max(0, (int) Math.floor(rawTop) - 1), getWidth(),

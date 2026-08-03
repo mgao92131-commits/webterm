@@ -12,6 +12,9 @@ import java.util.List;
 
 /** 把服务端语义 cell 编译成有序的行内绘制 Span。 */
 final class TerminalLineCompiler {
+  static final int BLINK_SLOW = 1;
+  static final int BLINK_FAST = 1 << 1;
+
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
 
@@ -109,7 +112,16 @@ final class TerminalLineCompiler {
       int columns,
       @NonNull TerminalPalette palette,
       int canvasBackground) {
+    return visibleBlinkKinds(line, columns, palette, canvasBackground) != 0;
+  }
+
+  int visibleBlinkKinds(
+      @NonNull RenderLine line,
+      int columns,
+      @NonNull TerminalPalette palette,
+      int canvasBackground) {
     int lineLength = Math.min(line.length(), Math.max(0, columns));
+    int kinds = 0;
     for (int column = 0; column < lineLength; ) {
       CellValue cell = line.at(column);
       if (cell == null || cell.isSpacer()) {
@@ -124,10 +136,11 @@ final class TerminalLineCompiler {
           && (cell.text().isEmpty() || !" ".equals(cell.text())
               || styleScratch.background != canvasBackground
               || hasDecoration);
-      if (visible && (styleScratch.blinkSlow || styleScratch.blinkFast)) return true;
+      if (visible && styleScratch.blinkSlow) kinds |= BLINK_SLOW;
+      if (visible && styleScratch.blinkFast) kinds |= BLINK_FAST;
       column += Math.max(1, width);
     }
-    return false;
+    return kinds;
   }
 
   private static boolean isDefaultVisualBlank(
