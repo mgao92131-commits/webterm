@@ -8,13 +8,14 @@
 `d2330ad4c515eee5e4ed20be272c89004a60d4c3`
 
 阶段二从第一阶段分支 `agent/android-renderer-phase1-baseline` 的
-`8cc5d18b235c6dd6af2ea9eb259efdb01ba84d64` 继续，当前实现包含五个代码提交：
+`8cc5d18b235c6dd6af2ea9eb259efdb01ba84d64` 继续，当前实现包含六个代码提交：
 
 - `18553c10` `refactor(renderer): introduce shared terminal cell geometry`
 - `12e96ae5` `refactor(renderer): centralize resolved terminal styles`
 - `faf625da` `fix(renderer): complete ANSI decoration rendering`
 - `6f6251ce` `fix(renderer): eliminate resolved style hot-path allocations`
 - `222e4341` `fix(renderer): stabilize decoration phase and complete integer geometry usage`
+- `f86ffc8c` `perf(renderer): skip empty decoration canvas state`
 
 当前分支：`agent/android-renderer-phase2-geometry-style`。
 
@@ -85,7 +86,8 @@ cursor 的 BAR、UNDERLINE、BLOCK 矩形也使用累计取整后的 `left/right
 路径。single、double、curly、dotted、dashed 五种 underline 均绘制在 cell/span 范围
 内，strike 与 underline color 隔离，hidden 不绘制装饰。curly、dotted、dashed 使用
 固定绝对 X 相位，并在 span 内严格 clip；run 拆分只允许产生抗锯齿颜色差异，不改变
-最终 decoration mask。
+最终 decoration mask。没有 underline 或 strike 的普通样式在进入 Canvas 状态操作前
+直接返回，不执行 `save`、`clipRect` 或 `restoreToCount`。
 
 ## 测试命令与结果
 
@@ -104,7 +106,7 @@ cd android-client
 
 | 检查 | 结果 |
 | --- | --- |
-| JVM/Robolectric | 69/69 通过，0 skipped，0 failed，0 error |
+| JVM/Robolectric | 70/70 通过，0 skipped，0 failed，0 error |
 | `assembleDebug` | 通过 |
 | API 36 `connectedDebugAndroidTest` | 22/22 通过，0 skipped，0 failed |
 | API 29 | 未验证 |
@@ -112,7 +114,8 @@ cd android-client
 | 运行时依赖 | 未增加 |
 
 新增 JVM 覆盖包括 `TerminalCellGeometryTest`、`TerminalStyleResolverTest`、
-`TerminalDecorationPainterTest` 和 renderer decoration Bitmap 测试；其中包含小数
+`TerminalDecorationPainterTest` 和 renderer decoration Bitmap 测试；其中包含 plain style
+跳过 Canvas 状态操作、小数
 cellWidth 的 cursor 边界、累计 edge 的 dotted clip 和 4-cell decoration run 拆分
 mask 对照。新增设备覆盖包括装饰 Direct Canvas/RenderNode 对照和生产累计 edge；第一
 阶段的末列 ink bounds、多行接缝和缓存基线测试继续运行。
@@ -126,10 +129,10 @@ mask 对照。新增设备覆盖包括装饰 Direct Canvas/RenderNode 对照和�
 | --- | --- |
 | 8 × 80 首帧 | `rowNodeRecordCount=8`，`rowCacheMissCount=8`，`rowCacheHitCount=0` |
 | 单行 patch | 录制增量 `1`，缓存命中增量 `7`，miss 增量 `1` |
-| 同画面第二帧 | 录制增量 `0`，缓存命中增量 `8`，miss 增量 `0`，render duration 增量 `72,916 ns` |
+| 同画面第二帧 | 录制增量 `0`，缓存命中增量 `8`，miss 增量 `0`，render duration 增量 `82,500 ns` |
 | cursor blink | 录制增量 `0`，缓存命中增量 `8`，miss 增量 `0` |
 | selection 改变 | 录制增量 `0`，缓存命中增量 `8`，miss 增量 `0`，变化像素 `2,380` |
-| 40 × 120 混合 Unicode | `records=40`，`visible_rows=40`，`recordable_rows=40`，`misses=40`，`hits=0`，`render_duration=23,696,084 ns` |
+| 40 × 120 混合 Unicode | `records=40`，`visible_rows=40`，`recordable_rows=40`，`misses=40`，`hits=0`，`render_duration=11,767,333 ns` |
 
 这些结果保持第一阶段的缓存不变量。几何、style resolver 和 decoration painter 的
 热路径均复用已有对象；空 cell 仍跳过 glyph 绘制，ASCII batching 判定和行级缓存
@@ -183,6 +186,7 @@ Canvas 路径先将 sp 按设备 density 转成 px。PixelCopy 对照结果：
 - cursor 和 selection handle 使用浮点文字 origin 的几何偏差；
 - decoration run 拆分导致的周期重启和 dotted 右边界泄漏；
 - 设备 parity 使用四舍五入后整数 cellWidth 的测试盲区，以及 glyph 误满足 strike 断言。
+- 无 decoration 普通文字仍执行 Canvas 状态操作。
 
 本阶段仍保留：
 
@@ -197,6 +201,6 @@ Canvas 路径先将 sp 按设备 density 转成 px。PixelCopy 对照结果：
 
 在已执行的 API 36 环境中，几何共享、ANSI 样式语义、五种 underline、strike/underline
 color 隔离、hidden 背景保留、Canvas/RenderNode 装饰对照和 RenderNode 缓存不变量均已
-通过；本次审查指出的两个代码级修复项也已分别提交并验证。API 29 和真实设备仍需要
+通过；本次审查指出的代码级修复项和无 decoration 快速路径也已提交并验证。API 29 和真实设备仍需要
 在可用设备上补跑，不能由本报告中的 API 36 结果代替；当前分支也没有新增 GitHub
 Actions workflow 或 PR。
