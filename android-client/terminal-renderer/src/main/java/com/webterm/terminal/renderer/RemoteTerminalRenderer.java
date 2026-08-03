@@ -721,7 +721,7 @@ public final class RemoteTerminalRenderer {
     }
   }
 
-  private static int resolveIndexedColor(TerminalPalette palette, int index) {
+  static int resolveIndexedColor(TerminalPalette palette, int index) {
     Integer override = palette.indexedColors.get(index);
     return override != null ? 0xFF000000 | override : TerminalVisualRules.ansiColor(index);
   }

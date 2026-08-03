@@ -1,5 +1,6 @@
 package com.webterm.terminal.renderer;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.webterm.terminal.model.StyleValue;
@@ -8,14 +9,13 @@ import com.webterm.terminal.model.TerminalPalette;
 
 /** 把 CellValue 的 ANSI 属性解析成绘制阶段唯一使用的最终样式。 */
 final class TerminalStyleResolver {
-  void resolveInto(@Nullable TerminalPalette palette, @Nullable StyleValue source,
+  void resolveInto(@NonNull TerminalPalette palette, @Nullable StyleValue source,
                    boolean invertForBlockCursor, ResolvedTerminalStyle out) {
-    TerminalPalette effectivePalette = palette != null ? palette : TerminalPalette.defaults();
     TerminalColor foreground = source != null && source.fg() != null
-        ? source.fg() : effectivePalette.defaultFg;
+        ? source.fg() : palette.defaultFg;
     TerminalColor background = source != null && source.bg() != null
-        ? source.bg() : effectivePalette.defaultBg;
-    boolean reverse = effectivePalette.reverseVideo
+        ? source.bg() : palette.defaultBg;
+    boolean reverse = palette.reverseVideo
         ^ (source != null && source.reverse())
         ^ invertForBlockCursor;
     if (reverse) {
@@ -32,19 +32,19 @@ final class TerminalStyleResolver {
     out.blinkSlow = source != null && source.blinkSlow();
     out.blinkFast = source != null && source.blinkFast();
 
-    int resolvedForeground = RemoteTerminalRenderer.resolveColor(effectivePalette, foreground);
+    int resolvedForeground = RemoteTerminalRenderer.resolveColor(palette, foreground);
     if (out.bold && foreground != null && foreground.kind == TerminalColor.Kind.INDEXED
         && foreground.index >= 0 && foreground.index < 8) {
-      resolvedForeground = RemoteTerminalRenderer.resolveColor(
-          effectivePalette, TerminalColor.indexed(foreground.index + 8));
+      resolvedForeground = RemoteTerminalRenderer.resolveIndexedColor(
+          palette, foreground.index + 8);
     }
     if (out.dim) resolvedForeground = TerminalVisualRules.dim(resolvedForeground);
     out.foreground = resolvedForeground;
-    out.background = RemoteTerminalRenderer.resolveColor(effectivePalette, background);
+    out.background = RemoteTerminalRenderer.resolveColor(palette, background);
 
     TerminalColor explicitUnderlineColor = source != null ? source.underlineColor() : null;
     out.underlineColor = explicitUnderlineColor != null
-        ? RemoteTerminalRenderer.resolveColor(effectivePalette, explicitUnderlineColor)
+        ? RemoteTerminalRenderer.resolveColor(palette, explicitUnderlineColor)
         : out.foreground;
     out.underlineKind = underlineKind(source);
   }
