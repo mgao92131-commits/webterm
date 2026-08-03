@@ -252,6 +252,27 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
   }
 
   @Test
+  public void blinkHidesOnlyForegroundAndKeepsBackgroundStable() {
+    CellValue[] cells = blankCells();
+    cells[0] = new CellValue("A", (byte) 1, new StyleValue(
+        TerminalColor.rgb(0xFF0000), TerminalColor.rgb(0x102030), null, 1 << 8), null);
+    Bitmap off = render(cells, new TerminalViewportState(), TerminalCursor.hidden(), CELL_WIDTH,
+        new TerminalAnimationState(true, false, false));
+    Bitmap on = render(cells, new TerminalViewportState(), TerminalCursor.hidden(), CELL_WIDTH,
+        new TerminalAnimationState(true, true, false));
+
+    assertEquals("blink off must retain its static background",
+        0xFF102030, off.getPixel(5, 5));
+    assertEquals("blink on must retain the same background",
+        off.getPixel(5, 5), on.getPixel(5, 5));
+    assertEquals("blink off must not draw the foreground at the cell center",
+        0xFF102030, off.getPixel(5, 15));
+    assertContainsExactColor("blink on foreground", on, 0xFFFF0000);
+    off.recycle();
+    on.recycle();
+  }
+
+  @Test
   public void wideSpecialGlyphUsesTheServerProvidedTwoColumnSpan() {
     CellValue[] cells = blankCells();
     cells[2] = new CellValue("█", (byte) 2, null, null);
@@ -349,12 +370,19 @@ public final class RemoteTerminalRendererBitmapInvariantTest {
 
   private static Bitmap render(CellValue[] cells, TerminalViewportState viewport,
                                TerminalCursor cursor, float cellWidth) {
+    return render(cells, viewport, cursor, cellWidth,
+        TerminalAnimationState.cursorOnly(true));
+  }
+
+  private static Bitmap render(CellValue[] cells, TerminalViewportState viewport,
+                               TerminalCursor cursor, float cellWidth,
+                               TerminalAnimationState animationState) {
     Bitmap bitmap = Bitmap.createBitmap(
         Math.round(COLUMNS * cellWidth), 40, Bitmap.Config.ARGB_8888);
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
     renderer.setFontMetrics(cellWidth, LINE_HEIGHT, BASELINE_OFFSET);
     RemoteTerminalModel model = model(cells, cursor);
-    renderer.render(new Canvas(bitmap), model.renderSnapshot(), viewport, true);
+    renderer.render(new Canvas(bitmap), model.renderSnapshot(), viewport, animationState, null);
     return bitmap;
   }
 
