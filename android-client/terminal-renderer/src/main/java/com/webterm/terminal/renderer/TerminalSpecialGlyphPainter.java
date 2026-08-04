@@ -84,6 +84,16 @@ final class TerminalSpecialGlyphPainter {
     return isEnabled(familyForCodePoint(codePoint));
   }
 
+  static Family familyFromPreparedCode(byte familyCode) {
+    switch (familyCode) {
+      case 1: return Family.BOX_DRAWING;
+      case 2: return Family.BLOCK_ELEMENTS;
+      case 3: return Family.BRAILLE;
+      case 4: return Family.POWERLINE;
+      default: return Family.NONE;
+    }
+  }
+
   boolean drawIfSupported(Canvas canvas, String grapheme,
                           int left, int top, int right, int bottom, int foreground) {
     return drawIfSupported(canvas, grapheme, left, top, right, bottom, foreground,
@@ -119,15 +129,22 @@ final class TerminalSpecialGlyphPainter {
                                    int phaseX, int phaseY, int column,
                                    float nominalCellWidth) {
     Family family = familyForCodePoint(codePoint);
+    return drawCodePointWithFamily(
+        canvas, codePoint, family, left, top, right, bottom, foreground,
+        phaseX, phaseY, column, nominalCellWidth);
+  }
+
+  /** Prepared run 已经在编译阶段完成 family 分类，避免再次按 code point 分派。 */
+  boolean drawCodePointWithFamily(Canvas canvas, int codePoint, Family family,
+                                  int left, int top, int right, int bottom, int foreground,
+                                  int phaseX, int phaseY, int column,
+                                  float nominalCellWidth) {
     if (!isEnabled(family) || left >= right || top >= bottom) return false;
 
     if (workStats != null) {
       workStats.specialGlyphCount++;
-      // Round 3 baseline: the old implementation has one run and one clip per glyph.
-      workStats.specialGlyphRunCount++;
       workStats.specialGlyphFamilyDispatchCount++;
       workStats.specialGlyphCellClipCount++;
-      workStats.specialGlyphRunClipCount++;
     }
 
     int saveCount = canvas.save();

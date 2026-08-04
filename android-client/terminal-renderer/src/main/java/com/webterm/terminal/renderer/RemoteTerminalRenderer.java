@@ -640,6 +640,7 @@ public final class RemoteTerminalRenderer {
     CompiledTerminalLine line = prepared.compiledLine;
     PreparedLineDrawPlan plan = prepared.drawPlan;
     int backgroundRunIndex = 0;
+    int staticSpecialRunIndex = 0;
     for (int i = 0; i < line.spans().size(); i++) {
       if (workStats != null) workStats.preparedSpanVisitCount++;
       CompiledTerminalLine.Span span = line.spans().get(i);
@@ -657,6 +658,16 @@ public final class RemoteTerminalRenderer {
             plan.backgroundStartPx[backgroundRunIndex], rowY,
             plan.backgroundEndPx[backgroundRunIndex], rowY + geometry.lineHeightPx(), bgPaint);
         backgroundRunIndex++;
+      }
+      if (staticSpecialRunIndex < plan.staticSpecialGlyphRuns.length
+          && plan.staticSpecialGlyphRuns[staticSpecialRunIndex].startSpanIndex == i) {
+        PreparedSpecialGlyphRun run = plan.staticSpecialGlyphRuns[staticSpecialRunIndex++];
+        if (workStats != null) {
+          workStats.preparedSpanVisitCount += run.glyphCount() - 1L;
+        }
+        drawPreparedSpecialGlyphRun(canvas, run, rowY);
+        i = run.endSpanIndexExclusive - 1;
+        continue;
       }
       if (!style.hidden() && !style.hasBlink()) {
         if (workStats != null) {
@@ -709,6 +720,7 @@ public final class RemoteTerminalRenderer {
     for (int i = 0; i < compiled.spans().size(); i++) {
       CompiledTerminalLine.Span span = compiled.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
+      if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) continue;
       if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
         if (workStats != null) {
           if (style.blinkFast()) workStats.fastBlinkForegroundOpCount++;
@@ -723,10 +735,35 @@ public final class RemoteTerminalRenderer {
       }
     }
     if (animationState.slowBlinkOn()) {
+      drawPreparedSpecialGlyphRuns(canvas, plan.slowBlinkSpecialGlyphRuns, rowY);
       drawPreparedDecorationRuns(canvas, plan.slowBlinkDecorationRuns, rowY);
     }
     if (animationState.fastBlinkOn()) {
+      drawPreparedSpecialGlyphRuns(canvas, plan.fastBlinkSpecialGlyphRuns, rowY);
       drawPreparedDecorationRuns(canvas, plan.fastBlinkDecorationRuns, rowY);
+    }
+  }
+
+  private void drawPreparedSpecialGlyphRun(
+      Canvas canvas, PreparedSpecialGlyphRun run, float rowY) {
+    if (workStats != null) {
+      workStats.specialGlyphRunCount++;
+      workStats.specialGlyphRunClipCount++;
+    }
+    for (int i = 0; i < run.glyphCount(); i++) {
+      specialGlyphPainter.drawCodePointWithFamily(
+          canvas, run.codePoints[i],
+          TerminalSpecialGlyphPainter.familyFromPreparedCode(run.families[i]),
+          run.glyphLeftPx[i], Math.round(rowY), run.glyphRightPx[i],
+          Math.round(rowY) + geometry.lineHeightPx(), run.style.foreground(),
+          0, 0, run.columns[i], geometry.cellWidth());
+    }
+  }
+
+  private void drawPreparedSpecialGlyphRuns(
+      Canvas canvas, PreparedSpecialGlyphRun[] runs, float rowY) {
+    for (PreparedSpecialGlyphRun run : runs) {
+      drawPreparedSpecialGlyphRun(canvas, run, rowY);
     }
   }
 
@@ -805,6 +842,10 @@ public final class RemoteTerminalRenderer {
     } else if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
       CompiledTerminalLine.SpecialGlyphSpan special =
           (CompiledTerminalLine.SpecialGlyphSpan) span;
+      if (workStats != null) {
+        workStats.specialGlyphRunCount++;
+        workStats.specialGlyphRunClipCount++;
+      }
       specialGlyphPainter.drawCodePointIfSupported(
           canvas,
           special.codePoint(),

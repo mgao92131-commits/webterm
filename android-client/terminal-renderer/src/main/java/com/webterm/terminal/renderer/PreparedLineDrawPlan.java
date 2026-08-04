@@ -27,6 +27,9 @@ final class PreparedLineDrawPlan {
   final PreparedDecorationRun[] staticDecorationRuns;
   final PreparedDecorationRun[] slowBlinkDecorationRuns;
   final PreparedDecorationRun[] fastBlinkDecorationRuns;
+  final PreparedSpecialGlyphRun[] staticSpecialGlyphRuns;
+  final PreparedSpecialGlyphRun[] slowBlinkSpecialGlyphRuns;
+  final PreparedSpecialGlyphRun[] fastBlinkSpecialGlyphRuns;
 
   private final long estimatedBytes;
 
@@ -45,7 +48,10 @@ final class PreparedLineDrawPlan {
       int[] specialGlyphSpanIndexes,
       PreparedDecorationRun[] staticDecorationRuns,
       PreparedDecorationRun[] slowBlinkDecorationRuns,
-      PreparedDecorationRun[] fastBlinkDecorationRuns) {
+      PreparedDecorationRun[] fastBlinkDecorationRuns,
+      PreparedSpecialGlyphRun[] staticSpecialGlyphRuns,
+      PreparedSpecialGlyphRun[] slowBlinkSpecialGlyphRuns,
+      PreparedSpecialGlyphRun[] fastBlinkSpecialGlyphRuns) {
     this.spanLeftPx = spanLeftPx;
     this.spanRightPx = spanRightPx;
     this.staticForegroundSpanIndexes = staticForegroundSpanIndexes;
@@ -61,6 +67,9 @@ final class PreparedLineDrawPlan {
     this.staticDecorationRuns = staticDecorationRuns;
     this.slowBlinkDecorationRuns = slowBlinkDecorationRuns;
     this.fastBlinkDecorationRuns = fastBlinkDecorationRuns;
+    this.staticSpecialGlyphRuns = staticSpecialGlyphRuns;
+    this.slowBlinkSpecialGlyphRuns = slowBlinkSpecialGlyphRuns;
+    this.fastBlinkSpecialGlyphRuns = fastBlinkSpecialGlyphRuns;
     estimatedBytes = 64L
         + arrayBytes(spanLeftPx)
         + arrayBytes(spanRightPx)
@@ -76,7 +85,10 @@ final class PreparedLineDrawPlan {
         + arrayBytes(specialGlyphSpanIndexes)
         + objectArrayBytes(staticDecorationRuns)
         + objectArrayBytes(slowBlinkDecorationRuns)
-        + objectArrayBytes(fastBlinkDecorationRuns);
+        + objectArrayBytes(fastBlinkDecorationRuns)
+        + objectArrayBytes(staticSpecialGlyphRuns)
+        + objectArrayBytes(slowBlinkSpecialGlyphRuns)
+        + objectArrayBytes(fastBlinkSpecialGlyphRuns);
   }
 
   static PreparedLineDrawPlan build(
@@ -94,6 +106,9 @@ final class PreparedLineDrawPlan {
     int staticDecorationRunCount = 0;
     int slowDecorationRunCount = 0;
     int fastDecorationRunCount = 0;
+    int staticSpecialRunCount = 0;
+    int slowSpecialRunCount = 0;
+    int fastSpecialRunCount = 0;
     int previousBackgroundSpan = -1;
     int previousBackgroundRight = 0;
     int previousBackgroundColor = 0;
@@ -149,6 +164,17 @@ final class PreparedLineDrawPlan {
         previousBlinkKind = CompiledTerminalLine.BlinkKind.NONE;
       }
       if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) specialCount++;
+      if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
+        boolean sameRun = i > 0
+            && spans.get(i - 1) instanceof CompiledTerminalLine.SpecialGlyphSpan
+            && spans.get(i - 1).endColumn() == span.startColumn()
+            && spans.get(i - 1).style().equals(style);
+        if (!sameRun) {
+          if (style.blinkKind() == CompiledTerminalLine.BlinkKind.FAST) fastSpecialRunCount++;
+          else if (style.blinkKind() == CompiledTerminalLine.BlinkKind.SLOW) slowSpecialRunCount++;
+          else staticSpecialRunCount++;
+        }
+      }
     }
 
     int[] left = new int[spanCount];
@@ -169,6 +195,12 @@ final class PreparedLineDrawPlan {
         new PreparedDecorationRun[slowDecorationRunCount];
     PreparedDecorationRun[] fastDecorationRuns =
         new PreparedDecorationRun[fastDecorationRunCount];
+    PreparedSpecialGlyphRun[] staticSpecialRuns =
+        new PreparedSpecialGlyphRun[staticSpecialRunCount];
+    PreparedSpecialGlyphRun[] slowSpecialRuns =
+        new PreparedSpecialGlyphRun[slowSpecialRunCount];
+    PreparedSpecialGlyphRun[] fastSpecialRuns =
+        new PreparedSpecialGlyphRun[fastSpecialRunCount];
     int staticIndex = 0;
     int slowIndex = 0;
     int fastIndex = 0;
@@ -240,11 +272,39 @@ final class PreparedLineDrawPlan {
         specialIndexes[specialIndex++] = i;
       }
     }
+    int staticSpecialIndex = 0;
+    int slowSpecialIndex = 0;
+    int fastSpecialIndex = 0;
+    for (int start = 0; start < spanCount; ) {
+      if (!(spans.get(start) instanceof CompiledTerminalLine.SpecialGlyphSpan)) {
+        start++;
+        continue;
+      }
+      CompiledTerminalLine.Span first = spans.get(start);
+      int end = start + 1;
+      while (end < spanCount
+          && spans.get(end) instanceof CompiledTerminalLine.SpecialGlyphSpan
+          && spans.get(end - 1).endColumn() == spans.get(end).startColumn()
+          && first.style().equals(spans.get(end).style())) {
+        end++;
+      }
+      PreparedSpecialGlyphRun run = PreparedSpecialGlyphRun.build(
+          spans, start, end, left, right);
+      if (first.style().blinkKind() == CompiledTerminalLine.BlinkKind.FAST) {
+        fastSpecialRuns[fastSpecialIndex++] = run;
+      } else if (first.style().blinkKind() == CompiledTerminalLine.BlinkKind.SLOW) {
+        slowSpecialRuns[slowSpecialIndex++] = run;
+      } else {
+        staticSpecialRuns[staticSpecialIndex++] = run;
+      }
+      start = end;
+    }
     return new PreparedLineDrawPlan(
         left, right, staticIndexes, slowIndexes, fastIndexes, backgroundIndexes,
         backgroundEndIndexes,
         backgroundStart, backgroundEnd, backgroundColors, decorationIndexes, specialIndexes,
-        staticDecorationRuns, slowDecorationRuns, fastDecorationRuns);
+        staticDecorationRuns, slowDecorationRuns, fastDecorationRuns,
+        staticSpecialRuns, slowSpecialRuns, fastSpecialRuns);
   }
 
   long estimatedBytes() {
@@ -260,6 +320,8 @@ final class PreparedLineDrawPlan {
     for (Object value : array) {
       if (value instanceof PreparedDecorationRun) {
         bytes += ((PreparedDecorationRun) value).estimatedBytes();
+      } else if (value instanceof PreparedSpecialGlyphRun) {
+        bytes += ((PreparedSpecialGlyphRun) value).estimatedBytes();
       }
     }
     return bytes;
