@@ -10,6 +10,9 @@ final class TerminalTextPainter {
   private final TerminalGlyphFitter glyphFitter = new TerminalGlyphFitter();
   private final TerminalGlyphFitter.FitResult fitScratch = new TerminalGlyphFitter.FitResult();
   @androidx.annotation.Nullable private final RendererFrameWorkStats workStats;
+  private char[] textChars = new char[32];
+  private float[] utf16Advances = new float[32];
+  private float[] prefixAdvances = new float[33];
 
   TerminalTextPainter() {
     this(null);
@@ -46,7 +49,8 @@ final class TerminalTextPainter {
     applyStyle(textPaint, style, foregroundOverride, useForegroundOverride);
     if (style.hidden()) return;
 
-    if (canDrawWholeRun(span, geometry, textPaint)) {
+    boolean batchAvailable = prepareBatchAdvances(span.text(), textPaint);
+    if (batchAvailable && canDrawWholeRun(span, geometry, prefixAdvances)) {
       canvas.drawTextRun(
           span.text(),
           0,
@@ -60,7 +64,28 @@ final class TerminalTextPainter {
       return;
     }
 
-    drawClusters(canvas, span, geometry, rowY, textPaint);
+    if (batchAvailable) {
+      if (workStats != null) workStats.clusterFallbackCount++;
+      drawClusters(canvas, span, geometry, rowY, textPaint, true);
+      return;
+    }
+
+    if (canDrawWholeRunLegacy(span, geometry, textPaint)) {
+      canvas.drawTextRun(
+          span.text(),
+          0,
+          span.text().length(),
+          0,
+          span.text().length(),
+          geometry.textOriginX(span.startColumn()),
+          rowY + geometry.baselineOffset(),
+          false,
+          textPaint);
+      return;
+    }
+
+    if (workStats != null) workStats.clusterFallbackCount++;
+    drawClusters(canvas, span, geometry, rowY, textPaint, false);
   }
 
   private static void applyStyle(Paint paint, CompiledTerminalLine.CompiledStyle style,
@@ -70,7 +95,28 @@ final class TerminalTextPainter {
     paint.setTextSkewX(style.italic() ? -0.35f : 0f);
   }
 
-  private boolean canDrawWholeRun(
+  private static boolean canDrawWholeRun(
+      CompiledTerminalLine.TextSpan span,
+      TerminalCellGeometry geometry,
+      float[] prefixes) {
+    String text = span.text();
+    float runStartX = geometry.textOriginX(span.startColumn());
+    for (int cluster = 0; cluster < span.clusterCount(); cluster++) {
+      if (span.clusterFitMode(cluster) != TerminalGlyphFitter.ClusterFitMode.GRID_START) {
+        return false;
+      }
+      int end = span.clusterUtf16End(cluster);
+      float actualAdvance = prefixes[end];
+      float expectedAdvance = geometry.textOriginX(
+          span.clusterColumn(cluster) + span.clusterWidth(cluster)) - runStartX;
+      if (Math.abs(actualAdvance - expectedAdvance) > RUN_ALIGNMENT_TOLERANCE_PX) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean canDrawWholeRunLegacy(
       CompiledTerminalLine.TextSpan span,
       TerminalCellGeometry geometry,
       Paint paint) {
@@ -82,12 +128,6 @@ final class TerminalTextPainter {
       }
       int end = span.clusterUtf16End(cluster);
       float actualAdvance = prefixAdvance(paint, text, end);
-      if (actualAdvance <= 0f) {
-        actualAdvance = paint.measureText(text, 0, end);
-      }
-      // Robolectric and a few old platform shadows can report no advance. In that case the
-      // renderer keeps the natural run path; the hardware/device path still performs the
-      // strict boundary check with the real Paint implementation.
       if (actualAdvance <= 0f) continue;
       float expectedAdvance = geometry.textOriginX(
           span.clusterColumn(cluster) + span.clusterWidth(cluster)) - runStartX;
@@ -103,7 +143,8 @@ final class TerminalTextPainter {
       CompiledTerminalLine.TextSpan span,
       TerminalCellGeometry geometry,
       float rowY,
-      Paint paint) {
+      Paint paint,
+      boolean useBatchAdvances) {
     String text = span.text();
     int contextStart = 0;
     int contextEnd = text.length();
@@ -114,10 +155,10 @@ final class TerminalTextPainter {
       float expectedWidth = geometry.columnEdgePx(
           span.clusterColumn(cluster) + span.clusterWidth(cluster))
           - geometry.columnEdgePx(span.clusterColumn(cluster));
-      float measuredWidth = clusterAdvance(paint, text, start, end, contextStart, contextEnd);
-      if (measuredWidth <= 0f) {
-        measuredWidth = paint.measureText(text, start, end);
-      }
+      float measuredWidth = useBatchAdvances
+          ? prefixAdvances[end] - prefixAdvances[start]
+          : clusterAdvance(paint, text, start, end, contextStart, contextEnd);
+      if (measuredWidth <= 0f) measuredWidth = paint.measureText(text, start, end);
 
       glyphFitter.fit(fitScratch, measuredWidth, expectedWidth, x,
           rowY + geometry.baselineOffset(), span.clusterFitMode(cluster));
@@ -140,6 +181,39 @@ final class TerminalTextPainter {
           false,
           paint);
       if (savedMatrix) canvas.restore();
+    }
+  }
+
+  private boolean prepareBatchAdvances(CharSequence text, Paint paint) {
+    int textLength = text.length();
+    ensureAdvanceCapacity(textLength);
+    text.toString().getChars(0, textLength, textChars, 0);
+    if (workStats != null) workStats.batchAdvanceCallCount++;
+    float totalAdvance = paint.getTextRunAdvances(
+        textChars, 0, textLength, 0, textLength, false, utf16Advances, 0);
+    prefixAdvances[0] = 0f;
+    boolean hasUsableAdvance = Float.isFinite(totalAdvance) && totalAdvance > 0f;
+    for (int i = 0; i < textLength; i++) {
+      float advance = utf16Advances[i];
+      if (!Float.isFinite(advance)) return false;
+      prefixAdvances[i + 1] = prefixAdvances[i] + advance;
+      if (advance != 0f) hasUsableAdvance = true;
+    }
+    return hasUsableAdvance;
+  }
+
+  private void ensureAdvanceCapacity(int textLength) {
+    if (textChars.length < textLength) {
+      int next = Math.max(textLength, textChars.length * 2);
+      textChars = new char[next];
+    }
+    if (utf16Advances.length < textLength) {
+      int next = Math.max(textLength, utf16Advances.length * 2);
+      utf16Advances = new float[next];
+    }
+    if (prefixAdvances.length < textLength + 1) {
+      int next = Math.max(textLength + 1, prefixAdvances.length * 2);
+      prefixAdvances = new float[next];
     }
   }
 

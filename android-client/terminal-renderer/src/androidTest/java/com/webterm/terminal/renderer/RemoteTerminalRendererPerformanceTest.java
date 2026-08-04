@@ -26,7 +26,9 @@ import java.util.Arrays;
 public final class RemoteTerminalRendererPerformanceTest {
   private static final int WARMUP_SAMPLES = 10;
   private static final int MEASURED_SAMPLES = 30;
-  private static final int BACKGROUND = 0xFF101010;
+  // 与 TerminalPalette.defaults() 的 DEFAULT_BG 一致，保证 CellValue.EMPTY 真正属于
+  // default blank fast path，而不是被测试背景人为变成带背景的 styled blank。
+  private static final int BACKGROUND = 0xFF000000;
 
   @Test
   public void coldRenderNodeScenariosProduceRepeatableBaseline() {
@@ -49,15 +51,22 @@ public final class RemoteTerminalRendererPerformanceTest {
       }
 
       long[] durations = new long[MEASURED_SAMPLES];
+      long[] compileDurations = new long[MEASURED_SAMPLES];
+      long[] drawDurations = new long[MEASURED_SAMPLES];
       RendererFrameWorkStats.Snapshot aggregate = zeroStats();
       for (int i = 0; i < MEASURED_SAMPLES; i++) {
         renderer.resetWorkStatsForTest();
         long started = System.nanoTime();
         recordOnce(renderer, lines, palette);
         durations[i] = Math.max(0L, System.nanoTime() - started);
-        aggregate = add(aggregate, renderer.workStatsForTest());
+        RendererFrameWorkStats.Snapshot sample = renderer.workStatsForTest();
+        compileDurations[i] = sample.compileNanos();
+        drawDurations[i] = sample.compiledLineDrawNanos();
+        aggregate = add(aggregate, sample);
       }
       Arrays.sort(durations);
+      Arrays.sort(compileDurations);
+      Arrays.sort(drawDurations);
       RendererFrameWorkStats.Snapshot average = divide(aggregate, MEASURED_SAMPLES);
       System.out.println("{\"scenario\":\"" + scenario.name().toLowerCase()
           + "\",\"samples\":" + MEASURED_SAMPLES
@@ -65,7 +74,11 @@ public final class RemoteTerminalRendererPerformanceTest {
           + ",\"render_p90_ns\":" + percentile(durations, 0.90)
           + ",\"render_p95_ns\":" + percentile(durations, 0.95)
           + ",\"render_max_ns\":" + durations[durations.length - 1]
+          + ",\"compile_p50_ns\":" + percentile(compileDurations, 0.50)
+          + ",\"compile_p95_ns\":" + percentile(compileDurations, 0.95)
           + ",\"compile_avg_ns\":" + average.compileNanos()
+          + ",\"draw_p50_ns\":" + percentile(drawDurations, 0.50)
+          + ",\"draw_p95_ns\":" + percentile(drawDurations, 0.95)
           + ",\"draw_avg_ns\":" + average.compiledLineDrawNanos()
           + ",\"input_cells\":" + average.inputCellCount()
           + ",\"default_cells\":" + average.defaultCellCount()
@@ -73,7 +86,9 @@ public final class RemoteTerminalRendererPerformanceTest {
           + ",\"emitted_clusters\":" + average.emittedClusterCount()
           + ",\"font_resolve\":" + average.fontResolveCount()
           + ",\"emoji_classify\":" + average.emojiClassificationCount()
+          + ",\"batch_advance\":" + average.batchAdvanceCallCount()
           + ",\"legacy_run_advance\":" + average.legacyRunAdvanceCallCount()
+          + ",\"cluster_fallback\":" + average.clusterFallbackCount()
           + "}");
     }
   }
