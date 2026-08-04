@@ -2,6 +2,7 @@ package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.view.View;
@@ -377,7 +378,9 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     RenderUpdate initial = normalModel.consumeRenderUpdate();
 
     RemoteTerminalModel blinkModel = new RemoteTerminalModel();
-    assertTrue(blinkModel.applyBaseline(textBlinkBaseline()));
+    // 保持 instance/layout/LineKey 不变，只改变正文样式；避免测试仅因 instance 变化
+    // 清空 Prepared Cache 而偶然通过。
+    assertTrue(blinkModel.applyBaseline(textBlinkBaseline("i1", 100_000)));
     RenderUpdate blinkBaseline = blinkModel.consumeRenderUpdate();
     RenderDirtyState stylesDirty = new RenderDirtyState();
     stylesDirty.stylesChanged = true;
@@ -419,6 +422,83 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
             viewRef.get().animationScheduledForTest());
       });
     }
+  }
+
+  @Test
+  public void preparedEvictionWithSurvivingRenderNodeRehydratesBlinkOverlay() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(textBlinkBaseline("i1", 100_000)));
+    RenderUpdate update = model.consumeRenderUpdate();
+    TerminalViewportState viewport = new TerminalViewportState();
+    TerminalPreparedLineCache tinyCache = new TerminalPreparedLineCache(1, 1);
+    AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
+    TerminalRenderMetrics.Snapshot afterFirst;
+    TerminalRenderMetrics.Snapshot afterOff;
+    TerminalRenderMetrics.Snapshot afterOn;
+    AtomicReference<CapturedScreenshot> offShot = new AtomicReference<>();
+    AtomicReference<CapturedScreenshot> onShot = new AtomicReference<>();
+
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      scenario.onActivity(activity -> {
+        RemoteTerminalView view = new RemoteTerminalView(activity, tinyCache);
+        viewRef.set(view);
+        activity.setContentView(view, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+      });
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+      DrawWaiter firstDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        firstDraw.attach(viewRef.get());
+        viewRef.get().bindModel(model);
+        viewRef.get().applyRenderUpdate(update, viewport);
+      });
+      assertTrue("small-cache baseline draw did not complete", firstDraw.await());
+      scenario.onActivity(activity -> {
+        firstDraw.detach(viewRef.get());
+        assertEquals("the injected cache must retain only one prepared entry", 1,
+            tinyCache.sizeForTest());
+        assertNull("the first row's prepared entry must have been evicted",
+            tinyCache.get(update.snapshot.screenView.lineAt(0)));
+        assertTrue("text blink scheduler must be active",
+            viewRef.get().animationScheduledForTest());
+      });
+      afterFirst = TerminalRenderMetrics.snapshot();
+
+      waitForBlinkState(scenario, viewRef, false, 2_000L);
+      DrawWaiter offDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        offDraw.attach(viewRef.get());
+        viewRef.get().invalidate();
+      });
+      assertTrue("small-cache blink off draw did not complete", offDraw.await());
+      scenario.onActivity(activity -> {
+        offDraw.detach(viewRef.get());
+        offShot.set(viewRef.get().captureScreenshot());
+      });
+      afterOff = TerminalRenderMetrics.snapshot();
+
+      waitForBlinkState(scenario, viewRef, true, 2_000L);
+      DrawWaiter onDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        onDraw.attach(viewRef.get());
+        viewRef.get().invalidate();
+      });
+      assertTrue("small-cache blink on draw did not complete", onDraw.await());
+      scenario.onActivity(activity -> {
+        onDraw.detach(viewRef.get());
+        onShot.set(viewRef.get().captureScreenshot());
+      });
+      afterOn = TerminalRenderMetrics.snapshot();
+    }
+
+    assertEquals("prepared eviction must not rerecord surviving RenderNodes", 0L,
+        afterOff.rowNodeRecordCount - afterFirst.rowNodeRecordCount);
+    assertEquals("prepared eviction must not rerecord surviving RenderNodes", 0L,
+        afterOn.rowNodeRecordCount - afterOff.rowNodeRecordCount);
+    assertTrue("blink overlay must still change pixels after prepared eviction",
+        differentPixels(offShot.get(), onShot.get()) > 0);
   }
 
   @Test
@@ -553,6 +633,10 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
   }
 
   private static ScreenBaseline textBlinkBaseline() {
+    return textBlinkBaseline("text-blink-instance", 110_000);
+  }
+
+  private static ScreenBaseline textBlinkBaseline(String instanceId, long firstLineId) {
     List<ScreenLineContent> screen = new ArrayList<>();
     StyleValue blink = new StyleValue(
         TerminalColor.rgb(0xFF0000), TerminalColor.DEFAULT_BG, null, 1 << 8);
@@ -563,10 +647,10 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
           ? new CellValue("B", (byte) 1, blink, null)
           : new CellValue("row", (byte) 1, null, null);
       screen.add(new ScreenLineContent(
-          new LineKey(110_000 + row, 1), new LineBody(COLS, false, cells)));
+          new LineKey(firstLineId + row, 1), new LineBody(COLS, false, cells)));
     }
     return new ScreenBaseline(
-        "text-blink", "text-blink-instance", 1, 1, 1,
+        "s1", instanceId, 1, 1, 1,
         ROWS, COLS, TerminalBufferKind.MAIN,
         HistoryExtent.INITIAL_EMPTY, Collections.emptyList(),
         screen.stream().map(ScreenLineContent::key).toList(),

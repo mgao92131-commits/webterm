@@ -142,7 +142,7 @@ public final class RemoteTerminalView extends View {
 
   private final RemoteTerminalRenderer renderer;
   private final TerminalLineRenderNodeCache lineCache = new TerminalLineRenderNodeCache();
-  private final TerminalPreparedLineCache preparedLineCache = new TerminalPreparedLineCache();
+  private final TerminalPreparedLineCache preparedLineCache;
   private final GestureAndScaleRecognizer gestureRecognizer;
   private final Scroller scroller;
   private final Paint selectionHandlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -243,7 +243,7 @@ public final class RemoteTerminalView extends View {
   };
 
   public RemoteTerminalView(Context context) {
-    this(context, null);
+    this(context, (AttributeSet) null);
   }
 
   public RemoteTerminalView(Context context, @Nullable AttributeSet attrs) {
@@ -251,8 +251,22 @@ public final class RemoteTerminalView extends View {
   }
 
   public RemoteTerminalView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
+    this(context, attrs, defStyleAttr, new TerminalPreparedLineCache());
+  }
+
+  /** 仅供 renderer instrumentation 注入小预算 CPU cache，验证 RenderNode 独立生命周期。 */
+  RemoteTerminalView(Context context, TerminalPreparedLineCache preparedLineCache) {
+    this(context, null, 0, preparedLineCache);
+  }
+
+  private RemoteTerminalView(
+      Context context,
+      @Nullable AttributeSet attrs,
+      int defStyleAttr,
+      TerminalPreparedLineCache preparedLineCache) {
     super(context, attrs, defStyleAttr);
     this.renderer = new RemoteTerminalRenderer(TerminalFontRegistry.get(context));
+    this.preparedLineCache = preparedLineCache;
     setFocusableInTouchMode(true);
     setFocusable(true);
     this.scroller = new Scroller(context);
