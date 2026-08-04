@@ -404,12 +404,22 @@ public final class RemoteTerminalRenderer {
           canvasDrawNanos += System.nanoTime() - drawStartedNanos;
         }
       }
-      if (preparedLine == null && preparedLineCache != null) {
-        preparedLine = preparedLineCache.get(line);
-        if (preparedLine != null) compiledLine = preparedLine.compiledLine;
-      }
       if (compiledLine == null && lineCache != null) {
         compiledLine = lineCache.compiledLineForLine(line);
+      }
+      if (preparedLine == null && compiledLine == null && preparedLineCache != null) {
+        boolean blockCursorNeedsLine = active
+            && cursorVisible
+            && cursor.row == screenRow
+            && cursor.shape == TerminalCursor.Shape.BLOCK;
+        // RenderNode entry 只保存 display list；Prepared entry 可能先被独立预算淘汰。
+        // 只有动态层确实需要 CPU layout 时才重新 prepare，普通静态 HIT 不制造抖动。
+        preparedLine = preparedLineCache.getForDynamicOverlay(
+            line, this, model.columns, palette, canvasBackground,
+            animationState, blockCursorNeedsLine);
+        if (preparedLine != null) {
+          compiledLine = preparedLine.compiledLine;
+        }
       }
       if (preparedLine != null && preparedLine.visibleBlinkKinds != 0) {
         long blinkStartedNanos = samplePhases ? System.nanoTime() : 0L;

@@ -1,6 +1,7 @@
 package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
@@ -16,8 +17,10 @@ import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.ScreenBaseline;
+import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCursor;
+import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 
@@ -120,6 +123,57 @@ public final class TerminalPreparedLineCacheTest {
     assertTrue(cache.metadataHitCountForTest() == 1);
   }
 
+  @Test
+  public void evictedPreparedBlinkLineCanBeRehydratedForDynamicOverlay() {
+    TerminalPreparedLineCache cache = new TerminalPreparedLineCache(1, 1);
+    cache.beginFrame(snapshot, renderer, 0xFF000000, 1, 1, 1);
+    RenderLine blinkLine = blinkLine(1, 1, "blink");
+    PreparedTerminalLine first = cache.getOrPrepare(
+        blinkLine, renderer, snapshot.columns, palette, 0xFF000000);
+
+    // 只有一个 entry 的极小预算会淘汰仍可能被 RenderNode 持有的 CPU 结果。
+    cache.getOrPrepare(
+        line(2, 1, "other"), renderer, snapshot.columns, palette, 0xFF000000);
+    assertTrue(cache.get(blinkLine) == null);
+
+    PreparedTerminalLine restored = cache.getForDynamicOverlay(
+        blinkLine,
+        renderer,
+        snapshot.columns,
+        palette,
+        0xFF000000,
+        new TerminalAnimationState(true, true, false),
+        false);
+
+    assertNotNull(restored);
+    assertNotSame(first, restored);
+    assertEquals(first.visibleBlinkKinds, restored.visibleBlinkKinds);
+  }
+
+  @Test
+  public void evictedPreparedPlainLineCanBeRehydratedForBlockCursor() {
+    TerminalPreparedLineCache cache = new TerminalPreparedLineCache(1, 1);
+    cache.beginFrame(snapshot, renderer, 0xFF000000, 1, 1, 1);
+    RenderLine plainLine = line(3, 1, "plain");
+    PreparedTerminalLine first = cache.getOrPrepare(
+        plainLine, renderer, snapshot.columns, palette, 0xFF000000);
+    cache.getOrPrepare(
+        line(4, 1, "other"), renderer, snapshot.columns, palette, 0xFF000000);
+
+    PreparedTerminalLine restored = cache.getForDynamicOverlay(
+        plainLine,
+        renderer,
+        snapshot.columns,
+        palette,
+        0xFF000000,
+        new TerminalAnimationState(true, false, false),
+        true);
+
+    assertNotNull(restored);
+    assertNotSame(first, restored);
+    assertEquals(0, restored.visibleBlinkKinds);
+  }
+
   private static ScreenBaseline baseline(String instance, long layoutEpoch) {
     RenderLine line = line(1, 1, "x");
     List<LineKey> screenRows = Collections.singletonList(line.key());
@@ -137,6 +191,16 @@ public final class TerminalPreparedLineCacheTest {
         new LineKey(id, version),
         new LineBody(1, false, new CellValue[] {
             new CellValue(text, (byte) 1, null, null)
+        }));
+  }
+
+  private static RenderLine blinkLine(long id, long version, String text) {
+    StyleValue slowBlink = new StyleValue(
+        TerminalColor.rgb(0xFFFFFF), TerminalColor.DEFAULT_BG, null, 1 << 8);
+    return new RenderLine(
+        new LineKey(id, version),
+        new LineBody(1, false, new CellValue[] {
+            new CellValue(text, (byte) 1, slowBlink, null)
         }));
   }
 }

@@ -174,6 +174,41 @@ final class TerminalPreparedLineCache {
     return kinds;
   }
 
+  /**
+   * 为动态覆盖层按需恢复 CPU 行结果。
+   *
+   * <p>RenderNode 的 display list 可以仍然命中，但对应的 PreparedTerminalLine 可能已经
+   * 被独立的 CPU 缓存预算淘汰。普通静态命中不需要重新 prepare；只有 block cursor 或当前
+   * blink phase 确实需要重放前景时，才恢复完整的 prepared line。</p>
+   */
+  @Nullable
+  PreparedTerminalLine getForDynamicOverlay(
+      @NonNull RenderLine line,
+      @NonNull RemoteTerminalRenderer renderer,
+      int columns,
+      @NonNull TerminalPalette palette,
+      int canvasBackground,
+      @NonNull TerminalAnimationState animationState,
+      boolean blockCursorNeedsLine) {
+    PreparedTerminalLine prepared = get(line);
+    if (prepared != null) {
+      return blockCursorNeedsLine
+          || blinkVisible(prepared.visibleBlinkKinds, animationState)
+          ? prepared : null;
+    }
+
+    if (blockCursorNeedsLine) {
+      return getOrPrepare(line, renderer, columns, palette, canvasBackground);
+    }
+
+    int blinkKinds = visibleBlinkKinds(
+        line, renderer, columns, palette, canvasBackground);
+    if (!blockCursorNeedsLine && !blinkVisible(blinkKinds, animationState)) {
+      return null;
+    }
+    return getOrPrepare(line, renderer, columns, palette, canvasBackground);
+  }
+
   void clear() {
     entries.clear();
     clockHand = 0;
@@ -273,6 +308,14 @@ final class TerminalPreparedLineCache {
 
   private static boolean same(@Nullable String first, @Nullable String second) {
     return first == null ? second == null : first.equals(second);
+  }
+
+  private static boolean blinkVisible(
+      int blinkKinds, @NonNull TerminalAnimationState animationState) {
+    return ((blinkKinds & TerminalLineCompiler.BLINK_SLOW) != 0
+            && animationState.slowBlinkOn())
+        || ((blinkKinds & TerminalLineCompiler.BLINK_FAST) != 0
+            && animationState.fastBlinkOn());
   }
 
   private static int clamp(int value, int min, int max) {
