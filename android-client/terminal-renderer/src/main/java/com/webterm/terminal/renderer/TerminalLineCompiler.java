@@ -17,13 +17,21 @@ final class TerminalLineCompiler {
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
   private final TerminalFontResolver fontResolver;
+  private final RendererFrameWorkStats workStats;
 
   TerminalLineCompiler() {
-    this(TerminalFontResolver.mainOnly());
+    this(TerminalFontResolver.mainOnly(), null);
   }
 
   TerminalLineCompiler(@NonNull TerminalFontResolver fontResolver) {
+    this(fontResolver, null);
+  }
+
+  TerminalLineCompiler(
+      @NonNull TerminalFontResolver fontResolver,
+      RendererFrameWorkStats workStats) {
     this.fontResolver = fontResolver;
+    this.workStats = workStats;
   }
 
   @NonNull
@@ -32,9 +40,11 @@ final class TerminalLineCompiler {
       int columns,
       @NonNull TerminalPalette palette,
       int canvasBackground) {
+    if (workStats != null) workStats.compiledLineCount++;
     if (columns <= 0 || line.length() == 0) return CompiledTerminalLine.empty();
 
     int lineLength = Math.min(line.length(), columns);
+    if (workStats != null) workStats.inputCellCount += lineLength;
     ArrayList<CompiledTerminalLine.Span> spans = new ArrayList<>();
     TextSpanBuilder textBuilder = null;
     BlankSpanBuilder blankBuilder = null;
@@ -74,6 +84,7 @@ final class TerminalLineCompiler {
 
       boolean defaultVisualBlank = isDefaultVisualBlank(
           text, styleScratch, canvasBackground);
+      if (defaultVisualBlank && workStats != null) workStats.defaultCellCount++;
       if (styleScratch.hidden || (!defaultVisualBlank && " ".equals(text))) {
         textBuilder = flushText(textBuilder, spans);
         if (blankBuilder == null
@@ -88,7 +99,8 @@ final class TerminalLineCompiler {
       }
 
       blankBuilder = flushBlank(blankBuilder, spans);
-      TerminalFontRole fontRole = fontResolver.resolve(text);
+      if (workStats != null) workStats.fontResolveCount++;
+      TerminalFontRole fontRole = fontResolver.resolve(text, workStats);
       if (textBuilder == null
           || textBuilder.style != currentStyle
           || textBuilder.fontRole != fontRole
@@ -111,6 +123,16 @@ final class TerminalLineCompiler {
 
     textBuilder = flushText(textBuilder, spans);
     blankBuilder = flushBlank(blankBuilder, spans);
+    if (workStats != null) {
+      workStats.emittedSpanCount += spans.size();
+      for (CompiledTerminalLine.Span span : spans) {
+        if (span instanceof CompiledTerminalLine.TextSpan) {
+          workStats.emittedTextSpanCount++;
+          workStats.emittedClusterCount +=
+              ((CompiledTerminalLine.TextSpan) span).clusterCount();
+        }
+      }
+    }
     return new CompiledTerminalLine(spans);
   }
 

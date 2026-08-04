@@ -44,7 +44,16 @@ final class TerminalFontResolver {
 
   @NonNull
   TerminalFontRole resolve(@NonNull String grapheme) {
+    return resolve(grapheme, null);
+  }
+
+  @NonNull
+  TerminalFontRole resolve(
+      @NonNull String grapheme, RendererFrameWorkStats workStats) {
     if (!enabled) return TerminalFontRole.MAIN_TEXT;
+    if (workStats != null && !isAscii(grapheme)) {
+      workStats.emojiClassificationCount++;
+    }
     if (emojiClassifier.isEmojiPresentation(grapheme)) {
       return TerminalFontRole.EMOJI;
     }
@@ -62,6 +71,10 @@ final class TerminalFontResolver {
       return TerminalFontRole.UNICODE_SYMBOL;
     }
     return TerminalFontRole.MAIN_TEXT;
+  }
+
+  private static boolean isAscii(String text) {
+    return text.length() == 1 && text.charAt(0) < 0x80;
   }
 
   private static int singleCodePoint(String text) {

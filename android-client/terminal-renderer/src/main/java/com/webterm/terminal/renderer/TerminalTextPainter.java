@@ -9,6 +9,15 @@ final class TerminalTextPainter {
   private static final String DISABLED_LIGATURE_FEATURES = "'liga' 0, 'clig' 0, 'calt' 0";
   private final TerminalGlyphFitter glyphFitter = new TerminalGlyphFitter();
   private final TerminalGlyphFitter.FitResult fitScratch = new TerminalGlyphFitter.FitResult();
+  @androidx.annotation.Nullable private final RendererFrameWorkStats workStats;
+
+  TerminalTextPainter() {
+    this(null);
+  }
+
+  TerminalTextPainter(@androidx.annotation.Nullable RendererFrameWorkStats workStats) {
+    this.workStats = workStats;
+  }
 
   void configureFont(@androidx.annotation.NonNull Paint paint) {
     // 保留 rlig/ccmp/mark/mkmk 等 shaping 特性，只关闭会跨终端 cell 合并的常见
@@ -61,7 +70,7 @@ final class TerminalTextPainter {
     paint.setTextSkewX(style.italic() ? -0.35f : 0f);
   }
 
-  private static boolean canDrawWholeRun(
+  private boolean canDrawWholeRun(
       CompiledTerminalLine.TextSpan span,
       TerminalCellGeometry geometry,
       Paint paint) {
@@ -134,13 +143,15 @@ final class TerminalTextPainter {
     }
   }
 
-  private static float prefixAdvance(Paint paint, CharSequence text, int offset) {
+  private float prefixAdvance(Paint paint, CharSequence text, int offset) {
+    if (workStats != null) workStats.legacyRunAdvanceCallCount++;
     return paint.getRunAdvance(
         text, 0, text.length(), 0, text.length(), false, offset);
   }
 
-  private static float clusterAdvance(
+  private float clusterAdvance(
       Paint paint, CharSequence text, int start, int end, int contextStart, int contextEnd) {
+    if (workStats != null) workStats.legacyRunAdvanceCallCount++;
     return paint.getRunAdvance(text, start, end, contextStart, contextEnd, false, end);
   }
 }

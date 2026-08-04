@@ -45,8 +45,9 @@ public final class RemoteTerminalRenderer {
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
   private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
   private final TerminalFontSet fontSet;
+  private final RendererFrameWorkStats workStats = new RendererFrameWorkStats();
   private final TerminalLineCompiler lineCompiler;
-  private final TerminalTextPainter textPainter = new TerminalTextPainter();
+  private final TerminalTextPainter textPainter;
   private final TerminalSpecialGlyphPainter specialGlyphPainter =
       new TerminalSpecialGlyphPainter();
   private int phaseMetricsFrame;
@@ -60,7 +61,8 @@ public final class RemoteTerminalRenderer {
 
   RemoteTerminalRenderer(@NonNull TerminalFontSet fontSet) {
     this.fontSet = fontSet;
-    this.lineCompiler = new TerminalLineCompiler(fontSet.resolver);
+    this.lineCompiler = new TerminalLineCompiler(fontSet.resolver, workStats);
+    this.textPainter = new TerminalTextPainter(workStats);
     applyFont();
   }
 
@@ -249,6 +251,7 @@ public final class RemoteTerminalRenderer {
               @NonNull TerminalViewportState viewport,
               @NonNull TerminalAnimationState animationState,
               @Nullable TerminalLineRenderNodeCache lineCache) {
+    workStats.reset();
     long renderStartedNanos = System.nanoTime();
     boolean samplePhases = (++phaseMetricsFrame & 63) == 1;
     long viewportCalculationNanos = 0L;
@@ -480,11 +483,27 @@ public final class RemoteTerminalRenderer {
 
   CompiledTerminalLine compileLine(RenderLine line, int columns, TerminalPalette palette,
                                    int canvasBackground) {
-    return lineCompiler.compile(line, columns, palette, canvasBackground);
+    long startedNanos = System.nanoTime();
+    CompiledTerminalLine compiled = lineCompiler.compile(line, columns, palette, canvasBackground);
+    long elapsedNanos = Math.max(0L, System.nanoTime() - startedNanos);
+    workStats.compileNanos += elapsedNanos;
+    workStats.compileMaxNanos = Math.max(workStats.compileMaxNanos, elapsedNanos);
+    return compiled;
   }
 
   void drawCompiledLineContent(Canvas canvas, CompiledTerminalLine line,
                                float rowY, int canvasBackground) {
+    long startedNanos = System.nanoTime();
+    try {
+      drawCompiledLineContentMeasured(canvas, line, rowY, canvasBackground);
+    } finally {
+      workStats.compiledLineDrawCount++;
+      workStats.compiledLineDrawNanos += Math.max(0L, System.nanoTime() - startedNanos);
+    }
+  }
+
+  private void drawCompiledLineContentMeasured(
+      Canvas canvas, CompiledTerminalLine line, float rowY, int canvasBackground) {
     for (CompiledTerminalLine.Span span : line.spans()) {
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = geometry.columnEdgePx(span.startColumn());
@@ -499,6 +518,14 @@ public final class RemoteTerminalRenderer {
             style.underlineColor(), false);
       }
     }
+  }
+
+  RendererFrameWorkStats.Snapshot workStatsForTest() {
+    return workStats.snapshot();
+  }
+
+  void resetWorkStatsForTest() {
+    workStats.reset();
   }
 
   private void drawBlinkOverlayForLine(
