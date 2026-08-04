@@ -26,6 +26,11 @@ final class TerminalSpecialGlyphPainter {
     POWERLINE
   }
 
+  enum ClipPolicy {
+    RUN_CLIP_SAFE,
+    CELL_CLIP_REQUIRED
+  }
+
   static Family familyFor(String grapheme) {
     int codePoint = singleCodePoint(grapheme);
     if (codePoint < 0) return Family.NONE;
@@ -94,6 +99,19 @@ final class TerminalSpecialGlyphPainter {
     }
   }
 
+  static ClipPolicy clipPolicy(Family family) {
+    switch (family) {
+      case BLOCK_ELEMENTS:
+      case BRAILLE:
+        return ClipPolicy.RUN_CLIP_SAFE;
+      case BOX_DRAWING:
+      case POWERLINE:
+      case NONE:
+      default:
+        return ClipPolicy.CELL_CLIP_REQUIRED;
+    }
+  }
+
   boolean drawIfSupported(Canvas canvas, String grapheme,
                           int left, int top, int right, int bottom, int foreground) {
     return drawIfSupported(canvas, grapheme, left, top, right, bottom, foreground,
@@ -131,7 +149,7 @@ final class TerminalSpecialGlyphPainter {
     Family family = familyForCodePoint(codePoint);
     return drawCodePointWithFamily(
         canvas, codePoint, family, left, top, right, bottom, foreground,
-        phaseX, phaseY, column, nominalCellWidth);
+        phaseX, phaseY, column, nominalCellWidth, true);
   }
 
   /** Prepared run 已经在编译阶段完成 family 分类，避免再次按 code point 分派。 */
@@ -139,16 +157,27 @@ final class TerminalSpecialGlyphPainter {
                                   int left, int top, int right, int bottom, int foreground,
                                   int phaseX, int phaseY, int column,
                                   float nominalCellWidth) {
+    return drawCodePointWithFamily(canvas, codePoint, family, left, top, right, bottom,
+        foreground, phaseX, phaseY, column, nominalCellWidth, true);
+  }
+
+  boolean drawCodePointWithFamily(Canvas canvas, int codePoint, Family family,
+                                  int left, int top, int right, int bottom, int foreground,
+                                  int phaseX, int phaseY, int column,
+                                  float nominalCellWidth, boolean clipCell) {
     if (!isEnabled(family) || left >= right || top >= bottom) return false;
 
     if (workStats != null) {
       workStats.specialGlyphCount++;
       workStats.specialGlyphFamilyDispatchCount++;
-      workStats.specialGlyphCellClipCount++;
+      if (clipCell) workStats.specialGlyphCellClipCount++;
     }
 
-    int saveCount = canvas.save();
-    canvas.clipRect(left, top, right, bottom);
+    int saveCount = -1;
+    if (clipCell) {
+      saveCount = canvas.save();
+      canvas.clipRect(left, top, right, bottom);
+    }
     try {
       boolean drawn = false;
       switch (family) {
@@ -171,7 +200,7 @@ final class TerminalSpecialGlyphPainter {
       }
       return drawn;
     } finally {
-      canvas.restoreToCount(saveCount);
+      if (clipCell) canvas.restoreToCount(saveCount);
     }
   }
 

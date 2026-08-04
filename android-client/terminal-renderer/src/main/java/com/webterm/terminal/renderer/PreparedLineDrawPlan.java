@@ -168,7 +168,13 @@ final class PreparedLineDrawPlan {
         boolean sameRun = i > 0
             && spans.get(i - 1) instanceof CompiledTerminalLine.SpecialGlyphSpan
             && spans.get(i - 1).endColumn() == span.startColumn()
-            && spans.get(i - 1).style().equals(style);
+            && spans.get(i - 1).style().equals(style)
+            && TerminalSpecialGlyphPainter.clipPolicy(
+                TerminalSpecialGlyphPainter.familyForCodePoint(
+                    ((CompiledTerminalLine.SpecialGlyphSpan) spans.get(i - 1)).codePoint()))
+                == TerminalSpecialGlyphPainter.clipPolicy(
+                TerminalSpecialGlyphPainter.familyForCodePoint(
+                    ((CompiledTerminalLine.SpecialGlyphSpan) span).codePoint()));
         if (!sameRun) {
           if (style.blinkKind() == CompiledTerminalLine.BlinkKind.FAST) fastSpecialRunCount++;
           else if (style.blinkKind() == CompiledTerminalLine.BlinkKind.SLOW) slowSpecialRunCount++;
@@ -285,7 +291,13 @@ final class PreparedLineDrawPlan {
       while (end < spanCount
           && spans.get(end) instanceof CompiledTerminalLine.SpecialGlyphSpan
           && spans.get(end - 1).endColumn() == spans.get(end).startColumn()
-          && first.style().equals(spans.get(end).style())) {
+          && first.style().equals(spans.get(end).style())
+          && TerminalSpecialGlyphPainter.clipPolicy(
+              TerminalSpecialGlyphPainter.familyForCodePoint(
+                  ((CompiledTerminalLine.SpecialGlyphSpan) spans.get(end - 1)).codePoint()))
+              == TerminalSpecialGlyphPainter.clipPolicy(
+              TerminalSpecialGlyphPainter.familyForCodePoint(
+                  ((CompiledTerminalLine.SpecialGlyphSpan) spans.get(end)).codePoint()))) {
         end++;
       }
       PreparedSpecialGlyphRun run = PreparedSpecialGlyphRun.build(

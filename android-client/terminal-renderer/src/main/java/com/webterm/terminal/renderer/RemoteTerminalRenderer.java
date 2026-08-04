@@ -748,15 +748,26 @@ public final class RemoteTerminalRenderer {
       Canvas canvas, PreparedSpecialGlyphRun run, float rowY) {
     if (workStats != null) {
       workStats.specialGlyphRunCount++;
-      workStats.specialGlyphRunClipCount++;
     }
-    for (int i = 0; i < run.glyphCount(); i++) {
-      specialGlyphPainter.drawCodePointWithFamily(
-          canvas, run.codePoints[i],
-          TerminalSpecialGlyphPainter.familyFromPreparedCode(run.families[i]),
-          run.glyphLeftPx[i], Math.round(rowY), run.glyphRightPx[i],
-          Math.round(rowY) + geometry.lineHeightPx(), run.style.foreground(),
-          0, 0, run.columns[i], geometry.cellWidth());
+    boolean runClip = run.clipPolicy == TerminalSpecialGlyphPainter.ClipPolicy.RUN_CLIP_SAFE;
+    int saveCount = -1;
+    if (runClip) {
+      saveCount = canvas.save();
+      canvas.clipRect(run.leftPx, Math.round(rowY), run.rightPx,
+          Math.round(rowY) + geometry.lineHeightPx());
+      if (workStats != null) workStats.specialGlyphRunClipCount++;
+    }
+    try {
+      for (int i = 0; i < run.glyphCount(); i++) {
+        specialGlyphPainter.drawCodePointWithFamily(
+            canvas, run.codePoints[i],
+            TerminalSpecialGlyphPainter.familyFromPreparedCode(run.families[i]),
+            run.glyphLeftPx[i], Math.round(rowY), run.glyphRightPx[i],
+            Math.round(rowY) + geometry.lineHeightPx(), run.style.foreground(),
+            0, 0, run.columns[i], geometry.cellWidth(), !runClip);
+      }
+    } finally {
+      if (runClip) canvas.restoreToCount(saveCount);
     }
   }
 

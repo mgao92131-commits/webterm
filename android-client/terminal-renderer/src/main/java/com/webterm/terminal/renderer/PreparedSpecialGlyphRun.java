@@ -11,6 +11,7 @@ final class PreparedSpecialGlyphRun {
   final int leftPx;
   final int rightPx;
   final CompiledTerminalLine.CompiledStyle style;
+  final TerminalSpecialGlyphPainter.ClipPolicy clipPolicy;
   final int[] codePoints;
   final byte[] families;
   final int[] columns;
@@ -23,6 +24,7 @@ final class PreparedSpecialGlyphRun {
       int leftPx,
       int rightPx,
       CompiledTerminalLine.CompiledStyle style,
+      TerminalSpecialGlyphPainter.ClipPolicy clipPolicy,
       int[] codePoints,
       byte[] families,
       int[] columns,
@@ -33,6 +35,7 @@ final class PreparedSpecialGlyphRun {
     this.leftPx = leftPx;
     this.rightPx = rightPx;
     this.style = style;
+    this.clipPolicy = clipPolicy;
     this.codePoints = codePoints;
     this.families = families;
     this.columns = columns;
@@ -52,6 +55,9 @@ final class PreparedSpecialGlyphRun {
     int[] columns = new int[count];
     int[] left = new int[count];
     int[] right = new int[count];
+    TerminalSpecialGlyphPainter.ClipPolicy clipPolicy =
+        TerminalSpecialGlyphPainter.clipPolicy(
+            TerminalSpecialGlyphPainter.familyFromPreparedCode(families[0]));
     for (int i = 0; i < count; i++) {
       CompiledTerminalLine.SpecialGlyphSpan span =
           (CompiledTerminalLine.SpecialGlyphSpan) spans.get(start + i);
@@ -64,7 +70,7 @@ final class PreparedSpecialGlyphRun {
     }
     return new PreparedSpecialGlyphRun(
         start, end, spanLeftPx[start], spanRightPx[end - 1], spans.get(start).style(),
-        codePoints, families, columns, left, right);
+        clipPolicy, codePoints, families, columns, left, right);
   }
 
   int glyphCount() {
