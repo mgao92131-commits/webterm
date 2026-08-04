@@ -252,6 +252,9 @@ public final class RemoteTerminalModel {
           paletteChanged, false, false, modesChanged, bufferChanged);
       if (delta.historyChanged()) {
         historyTopologyKnown = false;
+        // Baseline 的兼容拓扑复用只对当前 pending publication 有效；一旦队尾又
+        // 合并了会改变历史拓扑的 commit，不能把旧 HistoryPart 带进最终快照。
+        reuseHistoryTopologyForNextPublish = false;
         HistoryExtent newExtent = next.mainSurface.historyCatalog.extent();
         mergeExtentDirty(oldExtent, newExtent);
         if (commit.history != null) {
