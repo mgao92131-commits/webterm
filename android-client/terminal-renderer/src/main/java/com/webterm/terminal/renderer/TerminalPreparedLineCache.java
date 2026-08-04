@@ -192,6 +192,20 @@ final class TerminalPreparedLineCache {
   float frameLineHeightForTest() { return frameLineHeight; }
 
   private void addEntry(@NonNull Entry entry) {
+    // 同一 lineId 的旧版本可能仍在表中。LongSparseArray.put() 会覆盖它，但不会
+    // 自动扣除旧 entry 的预算；先移除，避免版本更新后 estimatedBytes 虚高。
+    int existingIndex = entries.indexOfKey(entry.lineId);
+    if (existingIndex >= 0) {
+      estimatedBytes -= entries.valueAt(existingIndex).estimatedBytes;
+      entries.removeAt(existingIndex);
+      if (entries.size() == 0) {
+        clockHand = 0;
+      } else if (clockHand > existingIndex) {
+        clockHand--;
+      } else if (clockHand >= entries.size()) {
+        clockHand = 0;
+      }
+    }
     evictFor(entry.estimatedBytes);
     entries.put(entry.lineId, entry);
     estimatedBytes += entry.estimatedBytes;

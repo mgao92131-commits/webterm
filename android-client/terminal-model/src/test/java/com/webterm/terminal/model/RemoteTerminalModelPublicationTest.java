@@ -10,7 +10,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 
 public final class RemoteTerminalModelPublicationTest {
@@ -31,6 +33,20 @@ public final class RemoteTerminalModelPublicationTest {
 
     assertTrue(model.snapshotBuildCountForTest() == 1);
     assertTrue(model.publicationFlushCountForTest() == 1);
+    assertNotNull(model.consumeRenderUpdate());
+  }
+
+  @Test
+  public void rejectedPublicationExecutorFallsBackAndNotifiesListener() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    AtomicInteger notifications = new AtomicInteger();
+    model.bindRenderPublicationExecutor(
+        command -> { throw new RejectedExecutionException("closed"); },
+        notifications::incrementAndGet);
+
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
+    assertTrue(model.snapshotBuildCountForTest() == 1);
+    assertTrue(notifications.get() == 1);
     assertNotNull(model.consumeRenderUpdate());
   }
 

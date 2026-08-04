@@ -3,6 +3,7 @@ package com.webterm.terminal.renderer;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -71,6 +72,24 @@ public final class TerminalPreparedLineCacheTest {
 
     assertNotSame(first, second);
     assertTrue(cache.missCountForTest() >= 2);
+  }
+
+  @Test
+  public void replacingLineVersionReplacesItsBudgetEntry() {
+    TerminalPreparedLineCache replaced = new TerminalPreparedLineCache(4, 1024 * 1024);
+    replaced.beginFrame(snapshot, renderer, 0xFF000000, 1, 1, 1);
+    replaced.getOrPrepare(
+        line(1, 1, "short"), renderer, snapshot.columns, palette, 0xFF000000);
+    replaced.getOrPrepare(
+        line(1, 2, "a"), renderer, snapshot.columns, palette, 0xFF000000);
+
+    TerminalPreparedLineCache direct = new TerminalPreparedLineCache(4, 1024 * 1024);
+    direct.beginFrame(snapshot, renderer, 0xFF000000, 1, 1, 1);
+    direct.getOrPrepare(
+        line(1, 2, "a"), renderer, snapshot.columns, palette, 0xFF000000);
+
+    assertEquals(direct.estimatedBytesForTest(), replaced.estimatedBytesForTest());
+    assertTrue(replaced.sizeForTest() == 1);
   }
 
   @Test

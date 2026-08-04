@@ -557,7 +557,12 @@ public final class RemoteTerminalModel {
       publicationFlushScheduled = false;
       // Executor 已关闭时保持旧的同步语义，不能把已安装的 projection 永久留在
       // 没有 RenderSnapshot 的状态。
-      flushPendingRenderPublicationLocked();
+      if (flushPendingRenderPublicationLocked()
+          && publicationFlushedListener != null) {
+        // 这里只会发生在 executor 拒绝任务的异常兜底路径；正常路径的 listener
+        // 在退出 model monitor 后调用。回调本身不能依赖新的 executor 任务。
+        publicationFlushedListener.run();
+      }
     }
   }
 
