@@ -34,8 +34,9 @@ public final class RemoteTerminalRendererPerformanceTest {
   public void coldRenderNodeScenariosProduceRepeatableBaseline() {
     Assume.assumeTrue("webtermPerf=true is required", performanceEnabled());
     Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    RendererFrameWorkStats workStats = new RendererFrameWorkStats();
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer(
-        TerminalFontSet.fromContext(context));
+        TerminalFontSet.fromContext(context), workStats);
     float textSizePx = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_SP,
         14f,
