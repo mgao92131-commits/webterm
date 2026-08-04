@@ -43,6 +43,9 @@ public final class RemoteTerminalRenderer {
   private final TerminalCellGeometry geometry = new TerminalCellGeometry();
   private final TerminalStyleResolver styleResolver = new TerminalStyleResolver();
   private final ResolvedTerminalStyle styleScratch = new ResolvedTerminalStyle();
+  private final TerminalSelectionProjector selectionProjector = new TerminalSelectionProjector();
+  private final TerminalSelectionProjector.Range selectionRangeScratch =
+      new TerminalSelectionProjector.Range();
   private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
   private final TerminalFontSet fontSet;
   @Nullable private final RendererFrameWorkStats workStats;
@@ -729,24 +732,13 @@ public final class RemoteTerminalRenderer {
                                           RenderLine line, float y, long historySeq, int screenRow,
                                           TerminalSelection selection, int canvasBackground) {
     if (line == null || selection == null) return;
-    TerminalSelection normalized = selection.normalized();
-    int lineLength = Math.min(line.length(), columns);
-    for (int col = 0; col < lineLength; ) {
-      CellValue cell = line.at(col);
-      if (cell == null || cell.isSpacer()) {
-        col++;
-        continue;
-      }
-      int columnWidth = cell.isWideStart() ? 2 : 1;
-      boolean selected = isCellSelected(normalized, historySeq, screenRow, col, columnWidth);
-      if (selected) {
-        selectionPaint.setColor(SELECTION_OVERLAY);
-        int left = geometry.columnEdgePx(col);
-        int right = geometry.columnEdgePx(col + columnWidth);
-        canvas.drawRect(left, y, right, y + geometry.lineHeightPx(), selectionPaint);
-      }
-      col += columnWidth;
-    }
+    selectionProjector.project(selection, line, historySeq, screenRow, columns,
+        selectionRangeScratch);
+    if (selectionRangeScratch.isEmpty()) return;
+    selectionPaint.setColor(SELECTION_OVERLAY);
+    int left = geometry.columnEdgePx(selectionRangeScratch.startColumn);
+    int right = geometry.columnEdgePx(selectionRangeScratch.endColumnExclusive);
+    canvas.drawRect(left, y, right, y + geometry.lineHeightPx(), selectionPaint);
   }
 
   /** 在已绘制的行上追加光标覆盖层。 */
