@@ -666,9 +666,10 @@ public final class RemoteTerminalRenderer {
           }
         }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
-            style.underlineColor(), false, prepared.layoutAt(i), left, right);
+            style.underlineColor(), false, prepared.layoutAt(i), left, right, false);
       }
     }
+    drawPreparedDecorationRuns(canvas, plan.staticDecorationRuns, rowY);
   }
 
   @Nullable RendererFrameWorkStats.Snapshot workStatsForTest() {
@@ -718,8 +719,23 @@ public final class RemoteTerminalRenderer {
         }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false, prepared.layoutAt(i),
-            plan.spanLeftPx[i], plan.spanRightPx[i]);
+            plan.spanLeftPx[i], plan.spanRightPx[i], false);
       }
+    }
+    if (animationState.slowBlinkOn()) {
+      drawPreparedDecorationRuns(canvas, plan.slowBlinkDecorationRuns, rowY);
+    }
+    if (animationState.fastBlinkOn()) {
+      drawPreparedDecorationRuns(canvas, plan.fastBlinkDecorationRuns, rowY);
+    }
+  }
+
+  private void drawPreparedDecorationRuns(
+      Canvas canvas, PreparedDecorationRun[] runs, float rowY) {
+    int rowTop = Math.round(rowY);
+    int rowBottom = rowTop + geometry.lineHeightPx();
+    for (PreparedDecorationRun run : runs) {
+      decorationPainter.drawRun(canvas, run, rowTop, rowBottom);
     }
   }
 
@@ -759,6 +775,21 @@ public final class RemoteTerminalRenderer {
       @Nullable PreparedTextLayout preparedLayout,
       int left,
       int right) {
+    drawSpanForeground(canvas, span, rowY, foreground, underlineColor, overrideForeground,
+        preparedLayout, left, right, true);
+  }
+
+  private void drawSpanForeground(
+      Canvas canvas,
+      CompiledTerminalLine.Span span,
+      float rowY,
+      int foreground,
+      int underlineColor,
+      boolean overrideForeground,
+      @Nullable PreparedTextLayout preparedLayout,
+      int left,
+      int right,
+      boolean drawDecoration) {
     CompiledTerminalLine.CompiledStyle style = span.style();
     if (span instanceof CompiledTerminalLine.TextSpan) {
       CompiledTerminalLine.TextSpan textSpan =
@@ -788,14 +819,16 @@ public final class RemoteTerminalRenderer {
           geometry.cellWidth());
     }
 
-    copyCompiledStyle(style, styleScratch);
-    if (overrideForeground) {
-      styleScratch.foreground = foreground;
-      styleScratch.underlineColor = underlineColor;
+    if (drawDecoration) {
+      copyCompiledStyle(style, styleScratch);
+      if (overrideForeground) {
+        styleScratch.foreground = foreground;
+        styleScratch.underlineColor = underlineColor;
+      }
+      int rowTop = Math.round(rowY);
+      decorationPainter.draw(canvas, styleScratch, left, right,
+          rowTop, rowTop + geometry.lineHeightPx());
     }
-    int rowTop = Math.round(rowY);
-    decorationPainter.draw(canvas, styleScratch, left, right,
-        rowTop, rowTop + geometry.lineHeightPx());
   }
 
   /** 在已绘制的行上追加选择高亮覆盖层。 */

@@ -24,6 +24,9 @@ final class PreparedLineDrawPlan {
   final int[] backgroundColors;
   final int[] decorationSpanIndexes;
   final int[] specialGlyphSpanIndexes;
+  final PreparedDecorationRun[] staticDecorationRuns;
+  final PreparedDecorationRun[] slowBlinkDecorationRuns;
+  final PreparedDecorationRun[] fastBlinkDecorationRuns;
 
   private final long estimatedBytes;
 
@@ -39,7 +42,10 @@ final class PreparedLineDrawPlan {
       int[] backgroundEndPx,
       int[] backgroundColors,
       int[] decorationSpanIndexes,
-      int[] specialGlyphSpanIndexes) {
+      int[] specialGlyphSpanIndexes,
+      PreparedDecorationRun[] staticDecorationRuns,
+      PreparedDecorationRun[] slowBlinkDecorationRuns,
+      PreparedDecorationRun[] fastBlinkDecorationRuns) {
     this.spanLeftPx = spanLeftPx;
     this.spanRightPx = spanRightPx;
     this.staticForegroundSpanIndexes = staticForegroundSpanIndexes;
@@ -52,6 +58,9 @@ final class PreparedLineDrawPlan {
     this.backgroundColors = backgroundColors;
     this.decorationSpanIndexes = decorationSpanIndexes;
     this.specialGlyphSpanIndexes = specialGlyphSpanIndexes;
+    this.staticDecorationRuns = staticDecorationRuns;
+    this.slowBlinkDecorationRuns = slowBlinkDecorationRuns;
+    this.fastBlinkDecorationRuns = fastBlinkDecorationRuns;
     estimatedBytes = 64L
         + arrayBytes(spanLeftPx)
         + arrayBytes(spanRightPx)
@@ -64,7 +73,10 @@ final class PreparedLineDrawPlan {
         + arrayBytes(backgroundEndPx)
         + arrayBytes(backgroundColors)
         + arrayBytes(decorationSpanIndexes)
-        + arrayBytes(specialGlyphSpanIndexes);
+        + arrayBytes(specialGlyphSpanIndexes)
+        + objectArrayBytes(staticDecorationRuns)
+        + objectArrayBytes(slowBlinkDecorationRuns)
+        + objectArrayBytes(fastBlinkDecorationRuns);
   }
 
   static PreparedLineDrawPlan build(
@@ -79,9 +91,18 @@ final class PreparedLineDrawPlan {
     int backgroundCount = 0;
     int decorationCount = 0;
     int specialCount = 0;
+    int staticDecorationRunCount = 0;
+    int slowDecorationRunCount = 0;
+    int fastDecorationRunCount = 0;
     int previousBackgroundSpan = -1;
     int previousBackgroundRight = 0;
     int previousBackgroundColor = 0;
+    int previousDecorationSpan = -1;
+    ResolvedTerminalStyle.UnderlineKind previousUnderlineKind = null;
+    int previousUnderlineColor = 0;
+    boolean previousStrike = false;
+    int previousStrikeColor = 0;
+    CompiledTerminalLine.BlinkKind previousBlinkKind = CompiledTerminalLine.BlinkKind.NONE;
     for (int i = 0; i < spans.size(); i++) {
       CompiledTerminalLine.Span span = spans.get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
@@ -103,6 +124,30 @@ final class PreparedLineDrawPlan {
         previousBackgroundSpan = -1;
       }
       if (style.hasVisibleDecoration()) decorationCount++;
+      if (style.hasVisibleDecoration()) {
+        CompiledTerminalLine.BlinkKind blinkKind = style.blinkKind();
+        boolean sameRun = previousDecorationSpan + 1 == i
+            && previousUnderlineKind == style.underlineKind()
+            && previousUnderlineColor == style.underlineColor()
+            && previousStrike == style.strike()
+            && previousStrikeColor == style.foreground()
+            && previousBlinkKind == blinkKind;
+        if (!sameRun) {
+          if (blinkKind == CompiledTerminalLine.BlinkKind.FAST) fastDecorationRunCount++;
+          else if (blinkKind == CompiledTerminalLine.BlinkKind.SLOW) slowDecorationRunCount++;
+          else staticDecorationRunCount++;
+        }
+        previousDecorationSpan = i;
+        previousUnderlineKind = style.underlineKind();
+        previousUnderlineColor = style.underlineColor();
+        previousStrike = style.strike();
+        previousStrikeColor = style.foreground();
+        previousBlinkKind = blinkKind;
+      } else {
+        previousDecorationSpan = -1;
+        previousUnderlineKind = null;
+        previousBlinkKind = CompiledTerminalLine.BlinkKind.NONE;
+      }
       if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) specialCount++;
     }
 
@@ -118,12 +163,22 @@ final class PreparedLineDrawPlan {
     int[] backgroundColors = new int[backgroundCount];
     int[] decorationIndexes = new int[decorationCount];
     int[] specialIndexes = new int[specialCount];
+    PreparedDecorationRun[] staticDecorationRuns =
+        new PreparedDecorationRun[staticDecorationRunCount];
+    PreparedDecorationRun[] slowDecorationRuns =
+        new PreparedDecorationRun[slowDecorationRunCount];
+    PreparedDecorationRun[] fastDecorationRuns =
+        new PreparedDecorationRun[fastDecorationRunCount];
     int staticIndex = 0;
     int slowIndex = 0;
     int fastIndex = 0;
     int backgroundIndex = 0;
     int decorationIndex = 0;
     int specialIndex = 0;
+    int decorationSourceIndex = 0;
+    int staticDecorationIndex = 0;
+    int slowDecorationIndex = 0;
+    int fastDecorationIndex = 0;
     for (int i = 0; i < spanCount; i++) {
       CompiledTerminalLine.Span span = spans.get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
@@ -145,7 +200,42 @@ final class PreparedLineDrawPlan {
         backgroundEndIndexes[backgroundIndex - 1] = i + 1;
         backgroundEnd[backgroundIndex - 1] = right[i];
       }
-      if (style.hasVisibleDecoration()) decorationIndexes[decorationIndex++] = i;
+      if (style.hasVisibleDecoration()) {
+        decorationIndexes[decorationIndex++] = i;
+        CompiledTerminalLine.BlinkKind blinkKind = style.blinkKind();
+        PreparedDecorationRun[] target;
+        int targetIndex;
+        if (blinkKind == CompiledTerminalLine.BlinkKind.FAST) {
+          target = fastDecorationRuns;
+          targetIndex = fastDecorationIndex;
+        } else if (blinkKind == CompiledTerminalLine.BlinkKind.SLOW) {
+          target = slowDecorationRuns;
+          targetIndex = slowDecorationIndex;
+        } else {
+          target = staticDecorationRuns;
+          targetIndex = staticDecorationIndex;
+        }
+        PreparedDecorationRun run = targetIndex == 0 ? null : target[targetIndex - 1];
+        boolean canExtend = run != null
+            && run.endSpanIndexExclusive == i
+            && run.underlineKind == style.underlineKind()
+            && run.underlineColor == style.underlineColor()
+            && run.strike == style.strike()
+            && run.strikeColor == style.foreground();
+        if (!canExtend) {
+          run = new PreparedDecorationRun(
+              i, i + 1, left[i], right[i], style.underlineKind(), style.underlineColor(),
+              style.strike(), style.foreground(), blinkKind);
+          target[targetIndex] = run;
+          if (blinkKind == CompiledTerminalLine.BlinkKind.FAST) fastDecorationIndex++;
+          else if (blinkKind == CompiledTerminalLine.BlinkKind.SLOW) slowDecorationIndex++;
+          else staticDecorationIndex++;
+        } else {
+          run.endSpanIndexExclusive = i + 1;
+          run.rightPx = right[i];
+        }
+        decorationSourceIndex++;
+      }
       if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
         specialIndexes[specialIndex++] = i;
       }
@@ -153,7 +243,8 @@ final class PreparedLineDrawPlan {
     return new PreparedLineDrawPlan(
         left, right, staticIndexes, slowIndexes, fastIndexes, backgroundIndexes,
         backgroundEndIndexes,
-        backgroundStart, backgroundEnd, backgroundColors, decorationIndexes, specialIndexes);
+        backgroundStart, backgroundEnd, backgroundColors, decorationIndexes, specialIndexes,
+        staticDecorationRuns, slowDecorationRuns, fastDecorationRuns);
   }
 
   long estimatedBytes() {
@@ -162,5 +253,15 @@ final class PreparedLineDrawPlan {
 
   private static long arrayBytes(int[] array) {
     return 16L + (long) array.length * Integer.BYTES;
+  }
+
+  private static long objectArrayBytes(Object[] array) {
+    long bytes = 16L + (long) array.length * 8L;
+    for (Object value : array) {
+      if (value instanceof PreparedDecorationRun) {
+        bytes += ((PreparedDecorationRun) value).estimatedBytes();
+      }
+    }
+    return bytes;
   }
 }

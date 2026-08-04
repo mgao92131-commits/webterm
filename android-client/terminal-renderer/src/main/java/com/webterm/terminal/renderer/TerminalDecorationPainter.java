@@ -35,16 +35,40 @@ final class TerminalDecorationPainter {
 
     if (workStats != null) {
       workStats.decorationSourceSpanCount++;
-      // Round 3 baseline: one source span currently creates one decoration run and clip.
       workStats.decorationRunCount++;
       workStats.decorationClipCount++;
     }
 
+    drawInternal(canvas, style.underlineKind, style.underlineColor, style.strike,
+        style.foreground, left, right, rowTop, rowBottom);
+  }
+
+  void drawRun(Canvas canvas, PreparedDecorationRun run, int rowTop, int rowBottom) {
+    if (run == null || run.leftPx >= run.rightPx || rowBottom <= rowTop) return;
+    if (workStats != null) {
+      workStats.decorationSourceSpanCount += run.sourceSpanCount();
+      workStats.decorationRunCount++;
+      workStats.decorationClipCount++;
+    }
+    drawInternal(canvas, run.underlineKind, run.underlineColor, run.strike,
+        run.strikeColor, run.leftPx, run.rightPx, rowTop, rowBottom);
+  }
+
+  private void drawInternal(Canvas canvas,
+                            ResolvedTerminalStyle.UnderlineKind underlineKind,
+                            int underlineColor,
+                            boolean strike,
+                            int strikeColor,
+                            int left,
+                            int right,
+                            int rowTop,
+                            int rowBottom) {
+
     int saveCount = canvas.save();
     canvas.clipRect(left, rowTop, right, rowBottom);
     try {
-      paint.setColor(style.underlineColor);
-      switch (style.underlineKind) {
+      paint.setColor(underlineColor);
+      switch (underlineKind) {
         case SINGLE:
           drawLine(canvas, left - 1, right + 1, rowBottom - 2);
           break;
@@ -65,8 +89,8 @@ final class TerminalDecorationPainter {
           break;
       }
 
-      if (style.strike) {
-        paint.setColor(style.foreground);
+      if (strike) {
+        paint.setColor(strikeColor);
         float strikeY = rowTop + (rowBottom - rowTop) * 0.52f;
         drawLine(canvas, left - 1, right + 1, strikeY);
       }
