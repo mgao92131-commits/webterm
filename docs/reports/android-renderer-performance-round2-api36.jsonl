@@ -1,5 +1,5 @@
-{"scenario":"blank_heavy","samples":30,"cold_record_p50_ns":1044166,"cold_record_p95_ns":1536042,"warm_hit_p50_ns":232333,"warm_hit_p95_ns":674667,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":361520}
-{"scenario":"dense_ascii","samples":30,"cold_record_p50_ns":1494958,"cold_record_p95_ns":1844167,"warm_hit_p50_ns":282791,"warm_hit_p95_ns":379000,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":437120}
-{"scenario":"styled_ascii","samples":30,"cold_record_p50_ns":4854292,"cold_record_p95_ns":5518375,"warm_hit_p50_ns":2497542,"warm_hit_p95_ns":2904542,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":526720}
-{"scenario":"dense_unicode","samples":30,"cold_record_p50_ns":6420541,"cold_record_p95_ns":7031792,"warm_hit_p50_ns":3663375,"warm_hit_p95_ns":4242750,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":600880}
-{"scenario":"special_glyph","samples":30,"cold_record_p50_ns":5110917,"cold_record_p95_ns":6012125,"warm_hit_p50_ns":3825458,"warm_hit_p95_ns":4645583,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":576000}
+{"scenario":"blank_heavy","samples":30,"cold_record_p50_ns":1118375,"cold_record_p95_ns":1616500,"warm_hit_p50_ns":244750,"warm_hit_p95_ns":318625,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":361520}
+{"scenario":"dense_ascii","samples":30,"cold_record_p50_ns":1462958,"cold_record_p95_ns":2245583,"warm_hit_p50_ns":301750,"warm_hit_p95_ns":395750,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":437120}
+{"scenario":"styled_ascii","samples":30,"cold_record_p50_ns":4309375,"cold_record_p95_ns":4866250,"warm_hit_p50_ns":2294209,"warm_hit_p95_ns":3010042,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":526720}
+{"scenario":"dense_unicode","samples":30,"cold_record_p50_ns":5802541,"cold_record_p95_ns":6451000,"warm_hit_p50_ns":3586167,"warm_hit_p95_ns":4086000,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":600880}
+{"scenario":"special_glyph","samples":30,"cold_record_p50_ns":4403834,"cold_record_p95_ns":5778500,"warm_hit_p50_ns":3090375,"warm_hit_p95_ns":4344125,"prepared_hits":40,"prepared_misses":0,"prepared_bytes":576000}
