@@ -190,11 +190,16 @@ final class TerminalPreparedLineCache {
       int canvasBackground,
       @NonNull TerminalAnimationState animationState,
       boolean blockCursorNeedsLine) {
-    PreparedTerminalLine prepared = get(line);
-    if (prepared != null) {
-      return blockCursorNeedsLine
-          || blinkVisible(prepared.visibleBlinkKinds, animationState)
-          ? prepared : null;
+    Entry preparedEntry = find(line);
+    if (preparedEntry != null && preparedEntry.prepared != null) {
+      PreparedTerminalLine prepared = preparedEntry.prepared;
+      if (blockCursorNeedsLine || blinkVisible(prepared.visibleBlinkKinds, animationState)) {
+        preparedEntry.recentlyUsed = true;
+        frameHits++;
+        return prepared;
+      }
+      // 没有动态需求时不要把静态行标成 recentlyUsed，也不要虚增 prepared hit。
+      return null;
     }
 
     if (blockCursorNeedsLine) {
