@@ -37,6 +37,26 @@ public final class RemoteTerminalModelPublicationTest {
   }
 
   @Test
+  public void publicationBurstsOfDifferentSizesUseOneQueuedFlush() {
+    int[] burstSizes = {1, 10, 100, 500};
+    for (int burstSize : burstSizes) {
+      RemoteTerminalModel model = new RemoteTerminalModel();
+      QueueExecutor executor = new QueueExecutor();
+      model.bindRenderPublicationExecutor(executor);
+
+      assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
+      for (int i = 0; i < burstSize; i++) model.requestFullRender();
+
+      assertTrue("burst=" + burstSize + " queued=" + executor.size(), executor.size() == 1);
+      executor.runAll();
+      assertTrue("burst=" + burstSize,
+          model.snapshotBuildCountForTest() == 1
+              && model.publicationFlushCountForTest() == 1);
+      assertNotNull(model.consumeRenderUpdate());
+    }
+  }
+
+  @Test
   public void rejectedPublicationExecutorFallsBackAndNotifiesListener() {
     RemoteTerminalModel model = new RemoteTerminalModel();
     AtomicInteger notifications = new AtomicInteger();
