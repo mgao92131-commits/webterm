@@ -9,12 +9,10 @@ import androidx.annotation.Nullable;
 /** 绘制 ANSI decoration；Paint/Path 在 renderer 线程内复用，不进入逐 cell 分配热路径。 */
 final class TerminalDecorationPainter {
   private static final float CURLY_WAVELENGTH_PX = 8f;
-  private static final float DOTTED_PHASE_PX = 0.75f;
-  private static final float DOTTED_PERIOD_PX = 3f;
-  private static final int DASHED_PERIOD_PX = 7;
-  private static final int DASHED_LENGTH_PX = 4;
   private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Path curlyPath = new Path();
+  private final TerminalDecorationPatternCache patternCache =
+      new TerminalDecorationPatternCache();
   @Nullable private final RendererFrameWorkStats workStats;
 
   TerminalDecorationPainter() {
@@ -135,32 +133,28 @@ final class TerminalDecorationPainter {
   private void drawDotted(Canvas canvas, int left, int right, float y) {
     paint.setStyle(Paint.Style.FILL);
     paint.setStrokeCap(Paint.Cap.ROUND);
-    float radius = 0.75f;
-    int firstIndex = (int) Math.floor(
-        (left - radius - DOTTED_PHASE_PX) / DOTTED_PERIOD_PX) - 1;
-    float x = DOTTED_PHASE_PX + firstIndex * DOTTED_PERIOD_PX;
-    float last = right + radius;
-    for (; x <= last; x += DOTTED_PERIOD_PX) {
-      if (workStats != null) {
-        workStats.dottedPrimitiveCount++;
-        workStats.decorationPathDrawCount++;
-      }
-      canvas.drawCircle(x, y, radius, paint);
+    Path path = patternCache.dotted(right - left, left);
+    if (workStats != null) {
+      workStats.dottedPrimitiveCount++;
+      workStats.decorationPathDrawCount++;
     }
+    canvas.save();
+    canvas.translate(left, y);
+    canvas.drawPath(path, paint);
+    canvas.restore();
     paint.setStyle(Paint.Style.STROKE);
     paint.setStrokeCap(Paint.Cap.BUTT);
   }
 
   private void drawDashed(Canvas canvas, int left, int right, float y) {
-    int firstIndex = (int) Math.floor((left - DASHED_LENGTH_PX) / (float) DASHED_PERIOD_PX) - 1;
-    int start = firstIndex * DASHED_PERIOD_PX;
-    int last = right + DASHED_LENGTH_PX;
-    for (; start <= last; start += DASHED_PERIOD_PX) {
-      if (workStats != null) {
-        workStats.dashedPrimitiveCount++;
-        workStats.decorationPathDrawCount++;
-      }
-      canvas.drawLine(start, y, start + DASHED_LENGTH_PX, y, paint);
+    Path path = patternCache.dashed(right - left, left);
+    if (workStats != null) {
+      workStats.dashedPrimitiveCount++;
+      workStats.decorationPathDrawCount++;
     }
+    canvas.save();
+    canvas.translate(left, y);
+    canvas.drawPath(path, paint);
+    canvas.restore();
   }
 }
