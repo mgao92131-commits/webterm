@@ -160,7 +160,7 @@ final class TerminalLineCompiler {
         }
       }
     }
-    return new CompiledTerminalLine(spans);
+    return CompiledTerminalLine.takeOwnership(spans);
   }
 
   /**
@@ -299,7 +299,7 @@ final class TerminalLineCompiler {
         keptWidths[i] = clusterWidths[source];
         keptFitModes[i] = fitModes[source];
       }
-      return new CompiledTerminalLine.TextSpan(
+      return CompiledTerminalLine.TextSpan.takeOwnership(
           clusterColumns[first],
           clusterColumns[last] + clusterWidths[last] - clusterColumns[first],
           style,

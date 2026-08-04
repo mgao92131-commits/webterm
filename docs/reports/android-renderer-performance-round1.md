@@ -46,7 +46,11 @@ JVM 和 API 36 instrumentation 回归已通过；显式性能采样待执行。
 
 ## 5. Commit 3 — ownership transfer
 
-待提交。
+实现：普通构造器继续防御复制；生产编译路径通过 `TextSpan.takeOwnership()` 和
+`CompiledTerminalLine.takeOwnership()` 接管已完成的数组/List；空编译结果使用单例。
+测试覆盖了构造器防御边界、不可修改 view 和跨两次 compile 的结果独立性。
+
+JVM 和 API 36 instrumentation 回归已通过；显式性能采样待执行。
 
 ## 6. Commit 4 — batch contextual advances
 

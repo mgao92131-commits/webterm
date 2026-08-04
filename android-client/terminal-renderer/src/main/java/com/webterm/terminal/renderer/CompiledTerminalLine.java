@@ -162,6 +162,21 @@ final class CompiledTerminalLine {
         int[] clusterColumns,
         byte[] clusterWidths,
         byte[] fitModes) {
+      this(startColumn, columnCount, style, fontRole, text, clusterUtf16Offsets, clusterColumns,
+          clusterWidths, fitModes, true);
+    }
+
+    private TextSpan(
+        int startColumn,
+        int columnCount,
+        CompiledStyle style,
+        TerminalFontRole fontRole,
+        String text,
+        int[] clusterUtf16Offsets,
+        int[] clusterColumns,
+        byte[] clusterWidths,
+        byte[] fitModes,
+        boolean copyArrays) {
       if (startColumn < 0 || columnCount <= 0 || text == null || style == null
           || fontRole == null) {
         throw new IllegalArgumentException("invalid text span");
@@ -178,10 +193,28 @@ final class CompiledTerminalLine {
       this.style = style;
       this.fontRole = fontRole;
       this.text = text;
-      this.clusterUtf16Offsets = Arrays.copyOf(clusterUtf16Offsets, clusterCount);
-      this.clusterColumns = Arrays.copyOf(clusterColumns, clusterCount);
-      this.clusterWidths = Arrays.copyOf(clusterWidths, clusterCount);
-      this.fitModes = Arrays.copyOf(fitModes, clusterCount);
+      this.clusterUtf16Offsets = copyArrays
+          ? Arrays.copyOf(clusterUtf16Offsets, clusterCount) : clusterUtf16Offsets;
+      this.clusterColumns = copyArrays
+          ? Arrays.copyOf(clusterColumns, clusterCount) : clusterColumns;
+      this.clusterWidths = copyArrays
+          ? Arrays.copyOf(clusterWidths, clusterCount) : clusterWidths;
+      this.fitModes = copyArrays ? Arrays.copyOf(fitModes, clusterCount) : fitModes;
+    }
+
+    /** 编译器已经放弃继续修改数组后调用；不会再做一次防御复制。 */
+    static TextSpan takeOwnership(
+        int startColumn,
+        int columnCount,
+        CompiledStyle style,
+        TerminalFontRole fontRole,
+        String text,
+        int[] clusterUtf16Offsets,
+        int[] clusterColumns,
+        byte[] clusterWidths,
+        byte[] fitModes) {
+      return new TextSpan(startColumn, columnCount, style, fontRole, text,
+          clusterUtf16Offsets, clusterColumns, clusterWidths, fitModes, false);
     }
 
     @Override
@@ -322,6 +355,8 @@ final class CompiledTerminalLine {
   }
 
   private final List<Span> spans;
+  private static final CompiledTerminalLine EMPTY =
+      new CompiledTerminalLine(Collections.emptyList());
 
   CompiledTerminalLine(List<? extends Span> spans) {
     ArrayList<Span> copy = new ArrayList<>(spans.size());
@@ -329,8 +364,17 @@ final class CompiledTerminalLine {
     this.spans = Collections.unmodifiableList(copy);
   }
 
+  private CompiledTerminalLine(ArrayList<Span> ownedSpans) {
+    // 所有权已经从 compiler 转移；调用方不得继续修改 ownedSpans。
+    this.spans = Collections.unmodifiableList(ownedSpans);
+  }
+
+  static CompiledTerminalLine takeOwnership(ArrayList<Span> spans) {
+    return new CompiledTerminalLine(spans);
+  }
+
   static CompiledTerminalLine empty() {
-    return new CompiledTerminalLine(Collections.emptyList());
+    return EMPTY;
   }
 
     List<Span> spans() {
