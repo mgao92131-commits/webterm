@@ -51,6 +51,9 @@ public final class RemoteTerminalModel {
   private boolean pendingForceSnapshotRebuild;
   private long snapshotBuildCount;
   private long publicationFlushCount;
+  /** 已安装的 projection/body 状态版本，以及最近一次 RenderSnapshot 对应的版本。 */
+  private long stateMutationVersion;
+  private long snapshotMutationVersion;
 
   private static final class RenderPublication {
     final long version;
@@ -157,6 +160,8 @@ public final class RemoteTerminalModel {
     ProjectionResult result = projectionReducer.applyBaseline(baseline);
     if (!(result instanceof ProjectionResult.Applied applied)) return result;
     ProjectionState previous = state;
+    boolean previousStateMaterialized = state != null
+        && stateMutationVersion == snapshotMutationVersion;
     ProjectionState next = applied.state();
     boolean compatibleHistoryTopology = previous != null
         && baseline.activeBuffer == TerminalBufferKind.MAIN
@@ -164,6 +169,7 @@ public final class RemoteTerminalModel {
         && previous.identity.instanceId().equals(baseline.instanceId)
         && previous.identity.layoutEpoch() == baseline.layoutEpoch
         && previous.identity.historyGeneration() == baseline.historyGeneration
+        && previousStateMaterialized
         && historyTopologyKnown
         && historyTopologyHash == baseline.historyTopologyHash
         && previous.mainSurface.historyCatalog.extent().equals(baseline.historyExtent);
@@ -203,6 +209,7 @@ public final class RemoteTerminalModel {
     historyTopologyHash = baseline.historyTopologyHash;
     historyTopologyKnown = true;
     install(next);
+    stateMutationVersion++;
     boolean geometryChanged =
         previous == null || previous.rows != rows || previous.columns != columns;
     pendingRenderDirty.merge(
@@ -245,6 +252,7 @@ public final class RemoteTerminalModel {
     return new StagedCommit(commit.baseRevision, () -> {
       HistoryExtent oldExtent = previous.mainSurface.historyCatalog.extent();
       install(next);
+      stateMutationVersion++;
       pendingRenderDirty.merge(
           false, delta.changedRows(), delta.screenScrollRows(), delta.exposedRows(), rows,
           delta.historyChanged(), delta.geometryChanged(), cursorChanged,
@@ -317,6 +325,10 @@ public final class RemoteTerminalModel {
         state.cursor,
         state.modes,
         state.palette);
+    // Body batch 改变的是历史正文驻留，不改变目录拓扑；但旧 snapshot 中的 HistoryPart
+    // 仍然不能被兼容 Baseline fast path 直接复用。
+    reuseHistoryTopologyForNextPublish = false;
+    stateMutationVersion++;
     if (activeBuffer == TerminalBufferKind.MAIN) {
       if (applied.changedFromSeq() > 0 && applied.changedToSeq() >= applied.changedFromSeq()) {
         pendingRenderDirty.mergeHistoryRange(
@@ -351,6 +363,8 @@ public final class RemoteTerminalModel {
         state.cursor,
         state.modes,
         state.palette);
+    reuseHistoryTopologyForNextPublish = false;
+    stateMutationVersion++;
     if (activeBuffer == TerminalBufferKind.MAIN) {
       pendingRenderDirty.mergeHistoryRange(
           applied.changedFromSeq(), applied.changedToSeq(), false);
@@ -625,6 +639,7 @@ public final class RemoteTerminalModel {
     snapshotBuildCount++;
     if (state == null) {
       renderSnapshot = RenderSnapshot.empty();
+      snapshotMutationVersion = stateMutationVersion;
       publishProjectionReadView();
       return;
     }
@@ -674,6 +689,7 @@ public final class RemoteTerminalModel {
         state.palette,
         displayExtent().firstSeq,
         false);
+    snapshotMutationVersion = stateMutationVersion;
     publishProjectionReadView();
   }
 
