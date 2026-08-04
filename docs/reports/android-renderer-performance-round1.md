@@ -28,7 +28,16 @@
 | 1 默认空格快速路径 | `a172c1e7` |
 | 2 字体分类快速路径 | `58186d16` |
 | 3 编译结果所有权转移 | `cbdd2402` |
-| 4 批量 contextual advance | `6594bb6b` |
+| 4 批量 contextual advance | `6557d917` |
+
+验收修订提交：
+
+| 内容 | 完整 SHA |
+| --- | --- |
+| 性能统计显式注入 | `ba0dd74fe20375e47fd59b80d00e4b90b4fd85be` |
+| 统一 base/head benchmark harness | `eff1bdeb33c18452e9379a43a21435b0fe7f1d2e` |
+
+`6557d917` 是原 Round 1 功能 head；后续修订不改变前五个功能提交。
 
 性能测试不会随普通 instrumentation 默认执行，需显式传入 `webtermPerf=true`。
 
@@ -50,8 +59,8 @@ cd android-client
 
 每个步骤均在同一 AVD 上执行了显式采样。提交 0～3 的早期测试输出只包含 render P50/P90/P95
 和 compile 平均值；提交 4 扩展输出后，新增 compile/draw P50/P95 及批量 advance 计数。
-提交 0～3 的临时对照运行只修改了测试背景常量，使 `CellValue.EMPTY` 与默认 palette 背景
-一致，未改变生产代码。
+这些数字用于观察各优化阶段的趋势；由于早期 harness 的背景常量后来才修正，严格的
+提交级 base/head 对照见第 8 节，不能把下面的历史数字当作可由原提交直接重现的证据。
 
 提交 0 的 render P95（ns）/ compile 平均值（ns）如下：
 
@@ -147,7 +156,7 @@ JVM 和 API 36 instrumentation 回归已通过。提交 4 的最终有效采样�
   服务端语义 cluster；
 - special glyph：不进入普通 TextSpan advance 路径。
 
-## 7. Final comparison
+## 7. Historical renderer-only measurements
 
 相对提交 0 的 render P95 变化如下；这是同一 AVD 的观测结果，不把单次模拟器数据当作
 跨设备性能承诺：
@@ -164,13 +173,70 @@ JVM 和 API 36 instrumentation 回归已通过。提交 4 的最终有效采样�
 体现为工作量/分配减少，时间变化受模拟器噪声影响，不能单独归因。Special glyph TUI
 没有进行专门 batching，本轮仅作为防回退场景，观测未超过 5% 变化。
 
-## 8. Known limitations
+## 8. Reproducible base/head comparison
+
+为修复早期基线不可直接重现的问题，提交 `eff1bdeb33c18452e9379a43a21435b0fe7f1d2e`
+加入了共同 harness：
+
+- base：`9be9e5a79f878390aa5c306227ecd26a3362d7e3`；
+- head：`eff1bdeb33c18452e9379a43a21435b0fe7f1d2e`；
+- harness：同一个 `RendererRound1CommonBenchmarkTest` 和
+  `RendererPerformanceFixtures`，均由 harness SHA 注入两个临时 worktree；
+- 两个源 worktree 运行前均为 clean，测试完成后临时 worktree 已删除；
+- 每轮均为 10 次 warm-up、30 次测量，同一 `medium_phone(AVD) - 16` API 36 设备。
+
+运行命令：
+
+```sh
+tools/android-renderer/run-round1-benchmark.sh \
+  9be9e5a79f878390aa5c306227ecd26a3362d7e3 \
+  eff1bdeb33c18452e9379a43a21435b0fe7f1d2e
+```
+
+原始 JSONL：
+
+- [第一轮原始输出](android-renderer-performance-round1-comparison-run1.jsonl)
+- [第二轮原始输出](android-renderer-performance-round1-comparison-run2.jsonl)
+
+两轮 render P95（ms）：
+
+| 场景 | base R1 | head R1 | base R2 | head R2 |
+| --- | ---: | ---: | ---: | ---: |
+| blank-heavy | 3.893 | 1.387 | 5.995 | 1.310 |
+| dense ASCII | 7.223 | 1.651 | 8.054 | 2.233 |
+| styled ASCII | 8.641 | 5.515 | 8.952 | 6.074 |
+| dense Unicode | 9.171 | 5.827 | 9.855 | 6.762 |
+| special glyph | 6.017 | 4.482 | 6.367 | 5.645 |
+
+以第一轮为基准，head 的方向性改善为：blank-heavy -64.4%、dense ASCII -77.1%、
+styled ASCII -36.2%、dense Unicode -36.5%、special glyph -25.5%。第二轮的 AVD
+波动较大，尤其 dense ASCII 和 special glyph，因此这些结果证明优化方向和工作量变化，
+不构成跨设备或稳定 P95 门槛的承诺。
+
+两轮 P95 相对变化（R1→R2）为：
+
+| 场景 | base | head |
+| --- | ---: | ---: |
+| blank-heavy | +54.0% | -5.6% |
+| dense ASCII | +11.5% | +35.2% |
+| styled ASCII | +3.6% | +10.2% |
+| dense Unicode | +7.5% | +16.1% |
+| special glyph | +5.8% | +25.9% |
+
+因此报告状态明确为：Round 1 implementation complete；API 设备验收 incomplete。
+
+## 9. Known limitations
 
 - 本轮不包含 RenderSnapshot 合并、CPU compiled-line 独立缓存、blink 扫描、selection
   投影、RenderNode 淘汰和特殊 glyph batching。
 - API 29、真实设备和 GitHub Actions 结果必须以实际运行记录为准，不能由 API 36 的结果推断。
 - 本轮当前已实际验证 JVM、assembleDebug 和 API 36 instrumentation；API 29、真实设备和
   GitHub Actions 尚未执行。
-- RenderNode 冷录制套件使用新的节点记录工作量，单次采样可能受模拟器负载影响；正式比较
-  使用同一固定 AVD 的重复采样。提交 0～3 的历史输出没有 compile P50/P95 字段，报告保留
-  了当时实际采集的 compile 平均值，没有反推缺失指标。
+- `TerminalFontRegistry` 尚未加入；字体资源仍由每个 `RemoteTerminalView` 创建时加载，
+  延后到下一轮。
+- 共同 harness 是 renderer cold-record microbenchmark，不包含生产
+  `TerminalLineRenderNodeCache` lookup、bleed 平移、View clip 和 cache hit 管理；完整
+  cache/View 性能测试延后到下一轮。
+- RenderNode 冷录制套件使用新的节点记录工作量，单次采样可能受模拟器负载影响；提交 0～3
+  的历史输出没有 compile P50/P95 字段，报告保留了当时实际采集的 compile 平均值，没有
+  反推缺失指标。

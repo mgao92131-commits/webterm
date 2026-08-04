@@ -1,0 +1,10 @@
+{"target":"base","scenario":"blank_heavy","samples":30,"render_p50_ns":3261666,"render_p90_ns":3679250,"render_p95_ns":3893125,"render_max_ns":3948375}
+{"target":"base","scenario":"dense_ascii","samples":30,"render_p50_ns":6519208,"render_p90_ns":6998375,"render_p95_ns":7222667,"render_max_ns":7230500}
+{"target":"base","scenario":"styled_ascii","samples":30,"render_p50_ns":7773584,"render_p90_ns":8467166,"render_p95_ns":8641125,"render_max_ns":9086000}
+{"target":"base","scenario":"dense_unicode","samples":30,"render_p50_ns":8386542,"render_p90_ns":8976041,"render_p95_ns":9171292,"render_max_ns":9654167}
+{"target":"base","scenario":"special_glyph","samples":30,"render_p50_ns":5101875,"render_p90_ns":5920750,"render_p95_ns":6017041,"render_max_ns":6045375}
+{"target":"head","scenario":"blank_heavy","samples":30,"render_p50_ns":889042,"render_p90_ns":1144459,"render_p95_ns":1386958,"render_max_ns":1804791}
+{"target":"head","scenario":"dense_ascii","samples":30,"render_p50_ns":1281375,"render_p90_ns":1516334,"render_p95_ns":1651208,"render_max_ns":1916625}
+{"target":"head","scenario":"styled_ascii","samples":30,"render_p50_ns":4379625,"render_p90_ns":5068917,"render_p95_ns":5514541,"render_max_ns":5902708}
+{"target":"head","scenario":"dense_unicode","samples":30,"render_p50_ns":5366708,"render_p90_ns":5776625,"render_p95_ns":5826583,"render_max_ns":7688209}
+{"target":"head","scenario":"special_glyph","samples":30,"render_p50_ns":4123542,"render_p90_ns":4435375,"render_p95_ns":4481875,"render_max_ns":4508625}
