@@ -4,6 +4,8 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
 
+import androidx.annotation.Nullable;
+
 /** 绘制 ANSI decoration；Paint/Path 在 renderer 线程内复用，不进入逐 cell 分配热路径。 */
 final class TerminalDecorationPainter {
   private static final float CURLY_WAVELENGTH_PX = 8f;
@@ -13,8 +15,14 @@ final class TerminalDecorationPainter {
   private static final int DASHED_LENGTH_PX = 4;
   private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Path curlyPath = new Path();
+  @Nullable private final RendererFrameWorkStats workStats;
 
   TerminalDecorationPainter() {
+    this(null);
+  }
+
+  TerminalDecorationPainter(@Nullable RendererFrameWorkStats workStats) {
+    this.workStats = workStats;
     paint.setStyle(Paint.Style.STROKE);
     paint.setStrokeWidth(1f);
     paint.setStrokeCap(Paint.Cap.BUTT);
@@ -24,6 +32,13 @@ final class TerminalDecorationPainter {
   void draw(Canvas canvas, ResolvedTerminalStyle style,
             int left, int right, int rowTop, int rowBottom) {
     if (!hasDecoration(style) || left >= right || rowBottom <= rowTop) return;
+
+    if (workStats != null) {
+      workStats.decorationSourceSpanCount++;
+      // Round 3 baseline: one source span currently creates one decoration run and clip.
+      workStats.decorationRunCount++;
+      workStats.decorationClipCount++;
+    }
 
     int saveCount = canvas.save();
     canvas.clipRect(left, rowTop, right, rowBottom);
@@ -66,10 +81,12 @@ final class TerminalDecorationPainter {
   }
 
   private void drawLine(Canvas canvas, int left, int right, float y) {
+    if (workStats != null) workStats.decorationPathDrawCount++;
     canvas.drawLine(left, y, right, y, paint);
   }
 
   private void drawCurly(Canvas canvas, int left, int right, float baseY) {
+    if (workStats != null) workStats.curlyPatternBuildCount++;
     int start = left - 2;
     int end = right + 2;
     float amplitude = 1f;
@@ -78,9 +95,11 @@ final class TerminalDecorationPainter {
     // same absolute X phase, so clipping a run into multiple spans cannot change a join or
     // the anti-aliased pixels at the split boundary.
     for (int x = start; x < end; x++) {
+      if (workStats != null) workStats.curlyPatternSegmentCount++;
       curlyPath.moveTo(x, curlyY(x, baseY, amplitude));
       curlyPath.lineTo(x + 1, curlyY(x + 1, baseY, amplitude));
     }
+    if (workStats != null) workStats.decorationPathDrawCount++;
     canvas.drawPath(curlyPath, paint);
   }
 
@@ -98,6 +117,10 @@ final class TerminalDecorationPainter {
     float x = DOTTED_PHASE_PX + firstIndex * DOTTED_PERIOD_PX;
     float last = right + radius;
     for (; x <= last; x += DOTTED_PERIOD_PX) {
+      if (workStats != null) {
+        workStats.dottedPrimitiveCount++;
+        workStats.decorationPathDrawCount++;
+      }
       canvas.drawCircle(x, y, radius, paint);
     }
     paint.setStyle(Paint.Style.STROKE);
@@ -109,6 +132,10 @@ final class TerminalDecorationPainter {
     int start = firstIndex * DASHED_PERIOD_PX;
     int last = right + DASHED_LENGTH_PX;
     for (; start <= last; start += DASHED_PERIOD_PX) {
+      if (workStats != null) {
+        workStats.dashedPrimitiveCount++;
+        workStats.decorationPathDrawCount++;
+      }
       canvas.drawLine(start, y, start + DASHED_LENGTH_PX, y, paint);
     }
   }

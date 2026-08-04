@@ -2,6 +2,8 @@ package com.webterm.terminal.renderer;
 
 import android.graphics.Canvas;
 
+import androidx.annotation.Nullable;
+
 /**
  * 特殊终端字符的统一分派入口。
  *
@@ -60,6 +62,15 @@ final class TerminalSpecialGlyphPainter {
   private final BlockElementGlyphPainter blockElementPainter = new BlockElementGlyphPainter();
   private final BrailleGlyphPainter braillePainter = new BrailleGlyphPainter();
   private final PowerlineGlyphPainter powerlinePainter = new PowerlineGlyphPainter();
+  @Nullable private final RendererFrameWorkStats workStats;
+
+  TerminalSpecialGlyphPainter() {
+    this(null);
+  }
+
+  TerminalSpecialGlyphPainter(@Nullable RendererFrameWorkStats workStats) {
+    this.workStats = workStats;
+  }
 
   boolean supports(String grapheme) {
     return supportsGrapheme(grapheme);
@@ -109,6 +120,15 @@ final class TerminalSpecialGlyphPainter {
                                    float nominalCellWidth) {
     Family family = familyForCodePoint(codePoint);
     if (!isEnabled(family) || left >= right || top >= bottom) return false;
+
+    if (workStats != null) {
+      workStats.specialGlyphCount++;
+      // Round 3 baseline: the old implementation has one run and one clip per glyph.
+      workStats.specialGlyphRunCount++;
+      workStats.specialGlyphFamilyDispatchCount++;
+      workStats.specialGlyphCellClipCount++;
+      workStats.specialGlyphRunClipCount++;
+    }
 
     int saveCount = canvas.save();
     canvas.clipRect(left, top, right, bottom);

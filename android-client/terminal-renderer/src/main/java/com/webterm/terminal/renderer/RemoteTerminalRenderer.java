@@ -46,13 +46,12 @@ public final class RemoteTerminalRenderer {
   private final TerminalSelectionProjector selectionProjector = new TerminalSelectionProjector();
   private final TerminalSelectionProjector.Range selectionRangeScratch =
       new TerminalSelectionProjector.Range();
-  private final TerminalDecorationPainter decorationPainter = new TerminalDecorationPainter();
+  private final TerminalDecorationPainter decorationPainter;
   private final TerminalFontSet fontSet;
   @Nullable private final RendererFrameWorkStats workStats;
   private final TerminalLineCompiler lineCompiler;
   private final TerminalTextPainter textPainter;
-  private final TerminalSpecialGlyphPainter specialGlyphPainter =
-      new TerminalSpecialGlyphPainter();
+  private final TerminalSpecialGlyphPainter specialGlyphPainter;
   private int phaseMetricsFrame;
 
   private int textSizeSp = 14;
@@ -74,6 +73,8 @@ public final class RemoteTerminalRenderer {
       @Nullable RendererFrameWorkStats workStats) {
     this.fontSet = fontSet;
     this.workStats = workStats;
+    this.decorationPainter = new TerminalDecorationPainter(workStats);
+    this.specialGlyphPainter = new TerminalSpecialGlyphPainter(workStats);
     this.lineCompiler = new TerminalLineCompiler(fontSet.resolver, workStats);
     this.textPainter = new TerminalTextPainter(workStats);
     applyFont();
@@ -603,16 +604,27 @@ public final class RemoteTerminalRenderer {
   private void drawCompiledLineContentMeasured(
       Canvas canvas, CompiledTerminalLine line, float rowY, int canvasBackground) {
     for (int i = 0; i < line.spans().size(); i++) {
+      if (workStats != null) workStats.preparedSpanVisitCount++;
       CompiledTerminalLine.Span span = line.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = geometry.columnEdgePx(span.startColumn());
       int right = geometry.columnEdgePx(span.endColumn());
       if (style.background() != canvasBackground) {
         bgPaint.setColor(style.background());
+        if (workStats != null) {
+          workStats.backgroundRunCount++;
+          workStats.backgroundRectDrawCount++;
+        }
         canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
       }
 
       if (!style.hidden() && !style.hasBlink()) {
+        if (workStats != null) {
+          workStats.staticForegroundOpCount++;
+          if (span instanceof CompiledTerminalLine.TextSpan) {
+            workStats.textForegroundOpCount++;
+          }
+        }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false);
       }
@@ -626,15 +638,26 @@ public final class RemoteTerminalRenderer {
       int canvasBackground) {
     CompiledTerminalLine line = prepared.compiledLine;
     for (int i = 0; i < line.spans().size(); i++) {
+      if (workStats != null) workStats.preparedSpanVisitCount++;
       CompiledTerminalLine.Span span = line.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = geometry.columnEdgePx(span.startColumn());
       int right = geometry.columnEdgePx(span.endColumn());
       if (style.background() != canvasBackground) {
         bgPaint.setColor(style.background());
+        if (workStats != null) {
+          workStats.backgroundRunCount++;
+          workStats.backgroundRectDrawCount++;
+        }
         canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
       }
       if (!style.hidden() && !style.hasBlink()) {
+        if (workStats != null) {
+          workStats.staticForegroundOpCount++;
+          if (span instanceof CompiledTerminalLine.TextSpan) {
+            workStats.textForegroundOpCount++;
+          }
+        }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false, prepared.layoutAt(i));
       }
@@ -655,6 +678,13 @@ public final class RemoteTerminalRenderer {
     for (CompiledTerminalLine.Span span : compiled.spans()) {
       CompiledTerminalLine.CompiledStyle style = span.style();
       if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
+        if (workStats != null) {
+          if (style.blinkFast()) workStats.fastBlinkForegroundOpCount++;
+          else workStats.slowBlinkForegroundOpCount++;
+          if (span instanceof CompiledTerminalLine.TextSpan) {
+            workStats.textForegroundOpCount++;
+          }
+        }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false);
       }
@@ -671,6 +701,13 @@ public final class RemoteTerminalRenderer {
       CompiledTerminalLine.Span span = compiled.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
+        if (workStats != null) {
+          if (style.blinkFast()) workStats.fastBlinkForegroundOpCount++;
+          else workStats.slowBlinkForegroundOpCount++;
+          if (span instanceof CompiledTerminalLine.TextSpan) {
+            workStats.textForegroundOpCount++;
+          }
+        }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false, prepared.layoutAt(i));
       }
