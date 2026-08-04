@@ -251,7 +251,7 @@ public final class RemoteTerminalView extends View {
 
   public RemoteTerminalView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
     super(context, attrs, defStyleAttr);
-    this.renderer = new RemoteTerminalRenderer(TerminalFontSet.fromContext(context));
+    this.renderer = new RemoteTerminalRenderer(TerminalFontRegistry.get(context));
     setFocusableInTouchMode(true);
     setFocusable(true);
     this.scroller = new Scroller(context);
