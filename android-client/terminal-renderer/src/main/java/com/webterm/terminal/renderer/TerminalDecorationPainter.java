@@ -8,9 +8,7 @@ import androidx.annotation.Nullable;
 
 /** 绘制 ANSI decoration；Paint/Path 在 renderer 线程内复用，不进入逐 cell 分配热路径。 */
 final class TerminalDecorationPainter {
-  private static final float CURLY_WAVELENGTH_PX = 8f;
   private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-  private final Path curlyPath = new Path();
   private final TerminalDecorationPatternCache patternCache =
       new TerminalDecorationPatternCache();
   @Nullable private final RendererFrameWorkStats workStats;
@@ -108,26 +106,20 @@ final class TerminalDecorationPainter {
   }
 
   private void drawCurly(Canvas canvas, int left, int right, float baseY) {
-    if (workStats != null) workStats.curlyPatternBuildCount++;
-    int start = left - 2;
-    int end = right + 2;
-    float amplitude = 1f;
-    curlyPath.reset();
-    // Use one-pixel subpaths rather than one long contour. Each segment is aligned to the
-    // same absolute X phase, so clipping a run into multiple spans cannot change a join or
-    // the anti-aliased pixels at the split boundary.
-    for (int x = start; x < end; x++) {
-      if (workStats != null) workStats.curlyPatternSegmentCount++;
-      curlyPath.moveTo(x, curlyY(x, baseY, amplitude));
-      curlyPath.lineTo(x + 1, curlyY(x + 1, baseY, amplitude));
+    Path path = patternCache.curly(right - left, left);
+    if (workStats != null) {
+      if (patternCache.wasLastLookupHit()) {
+        workStats.curlyPatternCacheHitCount++;
+      } else {
+        workStats.curlyPatternBuildCount++;
+        workStats.curlyPatternSegmentCount += patternCache.lastBuildSegmentCount();
+      }
     }
     if (workStats != null) workStats.decorationPathDrawCount++;
-    canvas.drawPath(curlyPath, paint);
-  }
-
-  private static float curlyY(int x, float baseY, float amplitude) {
-    float phase = (float) (x * Math.PI * 2d / CURLY_WAVELENGTH_PX);
-    return baseY + (float) Math.sin(phase) * amplitude;
+    canvas.save();
+    canvas.translate(left, baseY);
+    canvas.drawPath(path, paint);
+    canvas.restore();
   }
 
   private void drawDotted(Canvas canvas, int left, int right, float y) {

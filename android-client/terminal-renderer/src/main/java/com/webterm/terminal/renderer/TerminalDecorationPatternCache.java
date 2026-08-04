@@ -7,10 +7,16 @@ final class TerminalDecorationPatternCache {
   static final int MAX_ENTRIES = 128;
   private static final int DOTTED = 1;
   private static final int DASHED = 2;
+  private static final int CURLY = 3;
   private static final float DOTTED_PHASE_PX = 0.75f;
   private static final float DOTTED_PERIOD_PX = 3f;
   private static final int DASHED_PERIOD_PX = 7;
   private static final int DASHED_LENGTH_PX = 4;
+  private static final int CURLY_PERIOD_PX = 8;
+  private static final float[] CURLY_Y = {
+      0f, 0.70710677f, 1f, 0.70710677f,
+      0f, -0.70710677f, -1f, -0.70710677f
+  };
 
   private final int[] kinds = new int[MAX_ENTRIES];
   private final int[] widths = new int[MAX_ENTRIES];
@@ -21,6 +27,8 @@ final class TerminalDecorationPatternCache {
   private int clockHand;
   private long buildCount;
   private long hitCount;
+  private boolean lastLookupHit;
+  private int lastBuildSegmentCount;
 
   Path dotted(int width, int left) {
     return get(DOTTED, Math.max(0, width), Math.floorMod(left, 3));
@@ -30,15 +38,24 @@ final class TerminalDecorationPatternCache {
     return get(DASHED, Math.max(0, width), Math.floorMod(left, DASHED_PERIOD_PX));
   }
 
+  Path curly(int width, int left) {
+    return get(CURLY, Math.max(0, width), Math.floorMod(left, CURLY_PERIOD_PX));
+  }
+
   int sizeForTest() { return size; }
   long buildCountForTest() { return buildCount; }
   long hitCountForTest() { return hitCount; }
+  boolean wasLastLookupHit() { return lastLookupHit; }
+  int lastBuildSegmentCount() { return lastBuildSegmentCount; }
 
   private Path get(int kind, int width, int phase) {
+    lastLookupHit = false;
+    lastBuildSegmentCount = 0;
     for (int i = 0; i < size; i++) {
       if (kinds[i] == kind && widths[i] == width && phases[i] == phase) {
         recentlyUsed[i] = true;
         hitCount++;
+        lastLookupHit = true;
         return paths[i];
       }
     }
@@ -52,7 +69,14 @@ final class TerminalDecorationPatternCache {
     widths[index] = width;
     phases[index] = phase;
     recentlyUsed[index] = true;
-    paths[index] = kind == DOTTED ? buildDotted(width, phase) : buildDashed(width, phase);
+    if (kind == DOTTED) {
+      paths[index] = buildDotted(width, phase);
+    } else if (kind == DASHED) {
+      paths[index] = buildDashed(width, phase);
+    } else {
+      lastBuildSegmentCount = width + 4;
+      paths[index] = buildCurly(width, phase);
+    }
     buildCount++;
     return paths[index];
   }
@@ -96,5 +120,20 @@ final class TerminalDecorationPatternCache {
       path.lineTo(start - phase + DASHED_LENGTH_PX, 0f);
     }
     return path;
+  }
+
+  private static Path buildCurly(int width, int phase) {
+    Path path = new Path();
+    int start = -2;
+    int end = width + 2;
+    for (int x = start; x < end; x++) {
+      path.moveTo(x, curlyOffset(phase + x));
+      path.lineTo(x + 1, curlyOffset(phase + x + 1));
+    }
+    return path;
+  }
+
+  private static float curlyOffset(int absoluteX) {
+    return CURLY_Y[Math.floorMod(absoluteX, CURLY_PERIOD_PX)];
   }
 }

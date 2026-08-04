@@ -3,6 +3,8 @@ package com.webterm.terminal.renderer;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 
+import android.graphics.Path;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -19,8 +21,11 @@ public final class TerminalDecorationPatternCacheTest {
 
     assertSame(cache.dotted(120, 4), cache.dotted(120, 4));
     assertSame(cache.dashed(120, 11), cache.dashed(120, 11));
-    assertEquals(2L, cache.buildCountForTest());
-    assertEquals(2L, cache.hitCountForTest());
+    Path firstCurly = cache.curly(120, 4);
+    assertEquals(124, cache.lastBuildSegmentCount());
+    assertSame(firstCurly, cache.curly(120, 4));
+    assertEquals(3L, cache.buildCountForTest());
+    assertEquals(3L, cache.hitCountForTest());
   }
 
   @Test
@@ -29,6 +34,7 @@ public final class TerminalDecorationPatternCacheTest {
     for (int width = 1; width <= 200; width++) {
       cache.dotted(width, width);
       cache.dashed(width, width);
+      cache.curly(width, width);
     }
     assertEquals(TerminalDecorationPatternCache.MAX_ENTRIES, cache.sizeForTest());
   }
