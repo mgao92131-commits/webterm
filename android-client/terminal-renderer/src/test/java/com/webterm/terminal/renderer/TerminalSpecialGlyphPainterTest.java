@@ -1,6 +1,7 @@
 package com.webterm.terminal.renderer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import android.graphics.Bitmap;
@@ -71,6 +72,15 @@ public final class TerminalSpecialGlyphPainterTest {
     }
     org.junit.Assert.assertFalse(painter.supports("❤️"));
     org.junit.Assert.assertFalse(painter.supports("👨‍👩‍👧‍👦"));
+  }
+
+  @Test
+  public void compiledCodePointSupportMatchesGraphemeSupport() {
+    assertTrue(TerminalSpecialGlyphPainter.supportsCodePoint(0x2500));
+    assertTrue(TerminalSpecialGlyphPainter.supportsCodePoint(0x2800));
+    assertTrue(TerminalSpecialGlyphPainter.supportsCodePoint(0xE0B0));
+    assertFalse(TerminalSpecialGlyphPainter.supportsCodePoint(0xE0B1));
+    assertFalse(TerminalSpecialGlyphPainter.supportsCodePoint(-1));
   }
 
   @Test

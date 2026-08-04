@@ -95,7 +95,7 @@ final class TerminalLineCompiler {
       String text = cell.text().isEmpty() ? " " : cell.text();
       int codePoint = TerminalSpecialGlyphPainter.singleCodePoint(text);
       boolean special = !styleScratch.hidden
-          && TerminalSpecialGlyphPainter.supportsGrapheme(text);
+          && TerminalSpecialGlyphPainter.supportsCodePoint(codePoint);
       if (special) {
         textBuilder = flushText(textBuilder, spans);
         blankBuilder = flushBlank(blankBuilder, spans);
@@ -123,7 +123,7 @@ final class TerminalLineCompiler {
 
       blankBuilder = flushBlank(blankBuilder, spans);
       if (workStats != null) workStats.fontResolveCount++;
-      TerminalFontRole fontRole = fontResolver.resolve(text, workStats);
+      TerminalFontRole fontRole = fontResolver.resolve(text, codePoint, workStats);
       if (textBuilder == null
           || textBuilder.style != currentStyle
           || textBuilder.fontRole != fontRole

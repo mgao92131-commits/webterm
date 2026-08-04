@@ -50,6 +50,38 @@ public final class TerminalFontResolverTest {
   }
 
   @Test
+  public void asciiFastPathSkipsEmojiClassifier() {
+    CountingClassifier classifier = new CountingClassifier();
+    TerminalFontResolver resolver = new TerminalFontResolver(
+        classifier, FontCoverage.unicodeSymbols(), FontCoverage.nerdSymbols());
+
+    assertEquals(TerminalFontRole.MAIN_TEXT, resolver.resolve("A"));
+    assertEquals(TerminalFontRole.MAIN_TEXT, resolver.resolve(" "));
+    assertEquals(0, classifier.calls);
+
+    assertEquals(TerminalFontRole.EMOJI, resolver.resolve("😀"));
+    assertEquals(1, classifier.calls);
+  }
+
+  @Test
+  public void knownSingleCodePointMatchesRegularResolution() {
+    TerminalFontResolver resolver = TerminalFontResolver.defaultResolver();
+    assertEquals(resolver.resolve("⏺"), resolver.resolve("⏺", 0x23FA));
+    assertEquals(resolver.resolve("\uE0B0"), resolver.resolve("\uE0B0", 0xE0B0));
+    assertEquals(resolver.resolve("😀"), resolver.resolve("😀", -1));
+  }
+
+  @Test
+  public void asciiKeycapStillReachesEmojiClassifier() {
+    CountingClassifier classifier = new CountingClassifier();
+    TerminalFontResolver resolver = new TerminalFontResolver(
+        classifier, FontCoverage.unicodeSymbols(), FontCoverage.nerdSymbols());
+
+    assertEquals(TerminalFontRole.EMOJI, resolver.resolve("1\uFE0F\u20E3"));
+    assertEquals(1, classifier.calls);
+  }
+
+  @Test
   public void compilerSplitsTextSpansWhenFontRoleChanges() {
     RenderLine line = line(
         new CellValue("A", (byte) 1, null, null),
@@ -83,5 +115,15 @@ public final class TerminalFontResolverTest {
   private static RenderLine line(CellValue... cells) {
     return new RenderLine(
         new LineKey(1, 1), new LineBody(cells.length, false, Arrays.copyOf(cells, cells.length)));
+  }
+
+  private static final class CountingClassifier extends EmojiPresentationClassifier {
+    int calls;
+
+    @Override
+    boolean isEmojiPresentation(String grapheme) {
+      calls++;
+      return super.isEmojiPresentation(grapheme);
+    }
   }
 }

@@ -38,7 +38,11 @@ JVM 和 API 36 instrumentation 回归已通过；显式性能采样待执行。
 
 ## 4. Commit 2 — font classification fast paths
 
-待提交。
+实现：ASCII 单字符直接返回 `MAIN_TEXT`；Emoji ranges 改为静态数组；编译器复用已经
+计算的单 code point，并通过 `supportsCodePoint()` 进入特殊字符分派。ASCII keycap、
+VS、ZWJ、区域旗帜和肤色序列仍保留完整 Emoji 分类路径。
+
+JVM 和 API 36 instrumentation 回归已通过；显式性能采样待执行。
 
 ## 5. Commit 3 — ownership transfer
 

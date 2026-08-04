@@ -66,7 +66,11 @@ final class TerminalSpecialGlyphPainter {
   }
 
   static boolean supportsGrapheme(String grapheme) {
-    return isEnabled(familyFor(grapheme));
+    return supportsCodePoint(singleCodePoint(grapheme));
+  }
+
+  static boolean supportsCodePoint(int codePoint) {
+    return isEnabled(familyForCodePoint(codePoint));
   }
 
   boolean drawIfSupported(Canvas canvas, String grapheme,

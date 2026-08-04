@@ -44,13 +44,28 @@ final class TerminalFontResolver {
 
   @NonNull
   TerminalFontRole resolve(@NonNull String grapheme) {
-    return resolve(grapheme, null);
+    return resolve(grapheme, singleCodePoint(grapheme), null);
   }
 
   @NonNull
   TerminalFontRole resolve(
       @NonNull String grapheme, RendererFrameWorkStats workStats) {
+    return resolve(grapheme, singleCodePoint(grapheme), workStats);
+  }
+
+  @NonNull
+  TerminalFontRole resolve(
+      @NonNull String grapheme, int knownSingleCodePoint) {
+    return resolve(grapheme, knownSingleCodePoint, null);
+  }
+
+  @NonNull
+  TerminalFontRole resolve(
+      @NonNull String grapheme,
+      int knownSingleCodePoint,
+      RendererFrameWorkStats workStats) {
     if (!enabled) return TerminalFontRole.MAIN_TEXT;
+    if (isAscii(grapheme)) return TerminalFontRole.MAIN_TEXT;
     if (workStats != null && !isAscii(grapheme)) {
       workStats.emojiClassificationCount++;
     }
@@ -58,7 +73,7 @@ final class TerminalFontResolver {
       return TerminalFontRole.EMOJI;
     }
 
-    int codePoint = singleCodePoint(grapheme);
+    int codePoint = knownSingleCodePoint;
     if (codePoint >= 0 && isPrivateUse(codePoint)
         && nerdSymbolsCoverage.contains(codePoint)) {
       return TerminalFontRole.NERD_SYMBOL;
