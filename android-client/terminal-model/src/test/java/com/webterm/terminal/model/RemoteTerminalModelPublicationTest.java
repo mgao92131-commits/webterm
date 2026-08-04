@@ -13,6 +13,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
 
 public final class RemoteTerminalModelPublicationTest {
@@ -68,6 +69,47 @@ public final class RemoteTerminalModelPublicationTest {
     assertTrue(model.snapshotBuildCountForTest() == 1);
     assertTrue(notifications.get() == 1);
     assertNotNull(model.consumeRenderUpdate());
+  }
+
+  @Test
+  public void rejectedExecutorStillPublishesSubsequentMutationSynchronously() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    model.bindRenderPublicationExecutor(
+        command -> { throw new RejectedExecutionException("closed"); });
+
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
+    RenderUpdate first = model.consumeRenderUpdate();
+    assertNotNull(first);
+    model.requestFullRender();
+    RenderUpdate second = model.consumeRenderUpdate();
+
+    assertNotNull(second);
+    assertTrue("publication versions must remain monotonic",
+        second.publicationVersion > first.publicationVersion);
+    assertTrue("the rejected executor fallback must materialize the latest snapshot",
+        second.snapshot == model.renderSnapshot());
+  }
+
+  @Test
+  public void queuedPublicationListenerSeesMaterializedLatestVersion() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    QueueExecutor executor = new QueueExecutor();
+    AtomicInteger callbacks = new AtomicInteger();
+    AtomicLong observedVersion = new AtomicLong();
+    model.bindRenderPublicationExecutor(executor, () -> {
+      callbacks.incrementAndGet();
+      observedVersion.set(model.lastPublicationVersion());
+    });
+
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
+    assertTrue(executor.size() == 1);
+    executor.runAll();
+
+    assertTrue("listener must run once after the queued snapshot is materialized",
+        callbacks.get() == 1);
+    assertTrue("listener must observe the published version",
+        observedVersion.get() == model.lastPublicationVersion()
+            && observedVersion.get() > 0);
   }
 
   @Test

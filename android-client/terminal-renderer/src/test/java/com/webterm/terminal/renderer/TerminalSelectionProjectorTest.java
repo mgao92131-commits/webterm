@@ -9,6 +9,10 @@ import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.RenderLine;
 import com.webterm.terminal.model.TerminalSelection;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
 import org.junit.Test;
 
 public final class TerminalSelectionProjectorTest {
@@ -73,6 +77,51 @@ public final class TerminalSelectionProjectorTest {
     assertTrue(range.isEmpty());
   }
 
+  @Test
+  public void randomWideCellSelectionsMatchLegacyCellOverlapMask() {
+    Random random = new Random(0x5E1EC710L);
+    TerminalSelectionProjector projector = new TerminalSelectionProjector();
+
+    for (int iteration = 0; iteration < 2_000; iteration++) {
+      int columns = 1 + random.nextInt(24);
+      int historyRows = random.nextInt(5);
+      int screenRows = 1 + random.nextInt(5);
+      List<RandomRow> rows = new ArrayList<>(historyRows + screenRows);
+      for (int row = 0; row < historyRows; row++) {
+        rows.add(new RandomRow(10_000L + row, -1, randomLine(columns, random)));
+      }
+      for (int row = 0; row < screenRows; row++) {
+        rows.add(new RandomRow(0, row, randomLine(columns, random)));
+      }
+
+      RandomRow startRow = rows.get(random.nextInt(rows.size()));
+      RandomRow endRow = rows.get(random.nextInt(rows.size()));
+      TerminalSelection selection = new TerminalSelection(
+          anchor(startRow, random.nextInt(columns + 1)),
+          anchor(endRow, random.nextInt(columns + 1))).normalized();
+
+      for (RandomRow row : rows) {
+        TerminalSelectionProjector.Range actual = new TerminalSelectionProjector.Range();
+        projector.project(selection, row.line, row.historySeq, row.screenRow,
+            columns, actual);
+        boolean[] expectedMask = legacySelectedMask(
+            selection, row.line, row.historySeq, row.screenRow, columns);
+        for (int column = 0; column < columns; column++) {
+          boolean actualSelected = column >= actual.startColumn
+              && column < actual.endColumnExclusive;
+          assertEquals(
+              "iteration=" + iteration
+                  + " row=" + row.screenRow
+                  + " historySeq=" + row.historySeq
+                  + " column=" + column
+                  + " selectionStart=" + selection.start.col
+                  + " selectionEnd=" + selection.end.col,
+              expectedMask[column], actualSelected);
+        }
+      }
+    }
+  }
+
   private static TerminalSelectionProjector.Range project(
       TerminalSelection selection, RenderLine line, long historySeq, int screenRow) {
     TerminalSelectionProjector.Range range = new TerminalSelectionProjector.Range();
@@ -98,5 +147,68 @@ public final class TerminalSelectionProjectorTest {
     CellValue[] cells = new CellValue[8];
     java.util.Arrays.fill(cells, CellValue.EMPTY);
     return new RenderLine(new LineKey(1, 1), new LineBody(8, false, cells));
+  }
+
+  private static RenderLine randomLine(int columns, Random random) {
+    CellValue[] cells = new CellValue[columns];
+    for (int column = 0; column < columns;) {
+      if (column + 1 < columns && random.nextBoolean()) {
+        cells[column] = new CellValue("界", (byte) 2, null, null);
+        cells[column + 1] = CellValue.SPACER;
+        column += 2;
+      } else {
+        cells[column] = CellValue.EMPTY;
+        column++;
+      }
+    }
+    return new RenderLine(new LineKey(1, 1), new LineBody(columns, false, cells));
+  }
+
+  private static TerminalSelection.Anchor anchor(RandomRow row, int column) {
+    return new TerminalSelection.Anchor(row.historySeq, row.screenRow, column);
+  }
+
+  private static boolean[] legacySelectedMask(
+      TerminalSelection selection, RenderLine line, long historySeq, int screenRow,
+      int columns) {
+    boolean[] selected = new boolean[columns];
+    if (selection.isEmpty()) return selected;
+    for (int column = 0; column < line.length() && column < columns; column++) {
+      CellValue cell = line.at(column);
+      int width = Math.max(1, cell.width());
+      if (compareSelectionPosition(historySeq, screenRow, column, selection.end) < 0
+          && compareSelectionPosition(
+              historySeq, screenRow, column + width, selection.start) > 0) {
+        int end = Math.min(columns, column + width);
+        for (int physicalColumn = column; physicalColumn < end; physicalColumn++) {
+          selected[physicalColumn] = true;
+        }
+      }
+    }
+    return selected;
+  }
+
+  private static int compareSelectionPosition(long historySeq, int screenRow, int column,
+                                              TerminalSelection.Anchor other) {
+    if (historySeq != 0 && other.historySeq != 0) {
+      int cmp = Long.compare(historySeq, other.historySeq);
+      return cmp != 0 ? cmp : Integer.compare(column, other.col);
+    }
+    if (historySeq != 0) return -1;
+    if (other.historySeq != 0) return 1;
+    int cmp = Integer.compare(screenRow, other.screenRow);
+    return cmp != 0 ? cmp : Integer.compare(column, other.col);
+  }
+
+  private static final class RandomRow {
+    final long historySeq;
+    final int screenRow;
+    final RenderLine line;
+
+    RandomRow(long historySeq, int screenRow, RenderLine line) {
+      this.historySeq = historySeq;
+      this.screenRow = screenRow;
+      this.line = line;
+    }
   }
 }
