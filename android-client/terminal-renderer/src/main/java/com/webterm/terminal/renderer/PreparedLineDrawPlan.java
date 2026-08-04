@@ -121,9 +121,11 @@ final class PreparedLineDrawPlan {
     for (int i = 0; i < spans.size(); i++) {
       CompiledTerminalLine.Span span = spans.get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
-      if (!style.hidden() && !style.hasBlink()) staticCount++;
-      if (!style.hidden() && style.blinkSlow()) slowCount++;
-      if (!style.hidden() && style.blinkFast()) fastCount++;
+      if (!style.hidden()) {
+        if (style.blinkFast()) fastCount++;
+        else if (style.blinkSlow()) slowCount++;
+        else staticCount++;
+      }
       if (style.background() != canvasBackground) {
         int left = geometry.columnEdgePx(span.startColumn());
         if (previousBackgroundSpan < 0
@@ -222,9 +224,11 @@ final class PreparedLineDrawPlan {
       CompiledTerminalLine.CompiledStyle style = span.style();
       left[i] = geometry.columnEdgePx(span.startColumn());
       right[i] = geometry.columnEdgePx(span.endColumn());
-      if (!style.hidden() && !style.hasBlink()) staticIndexes[staticIndex++] = i;
-      if (!style.hidden() && style.blinkSlow()) slowIndexes[slowIndex++] = i;
-      if (!style.hidden() && style.blinkFast()) fastIndexes[fastIndex++] = i;
+      if (!style.hidden()) {
+        if (style.blinkFast()) fastIndexes[fastIndex++] = i;
+        else if (style.blinkSlow()) slowIndexes[slowIndex++] = i;
+        else staticIndexes[staticIndex++] = i;
+      }
       if (style.background() != canvasBackground) {
         boolean startsRun = backgroundIndex == 0
             || backgroundEndIndexes[backgroundIndex - 1] != i

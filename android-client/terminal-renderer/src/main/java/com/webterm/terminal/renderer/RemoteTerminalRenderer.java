@@ -639,46 +639,50 @@ public final class RemoteTerminalRenderer {
       int canvasBackground) {
     CompiledTerminalLine line = prepared.compiledLine;
     PreparedLineDrawPlan plan = prepared.drawPlan;
-    int backgroundRunIndex = 0;
+    for (int backgroundRunIndex = 0;
+         backgroundRunIndex < plan.backgroundSpanIndexes.length;
+         backgroundRunIndex++) {
+      bgPaint.setColor(plan.backgroundColors[backgroundRunIndex]);
+      if (workStats != null) {
+        workStats.backgroundRunCount++;
+        workStats.backgroundRectDrawCount++;
+      }
+      canvas.drawRect(
+          plan.backgroundStartPx[backgroundRunIndex], rowY,
+          plan.backgroundEndPx[backgroundRunIndex], rowY + geometry.lineHeightPx(), bgPaint);
+    }
+
     int staticSpecialRunIndex = 0;
-    for (int i = 0; i < line.spans().size(); i++) {
+    int[] staticIndexes = plan.staticForegroundSpanIndexes;
+    for (int staticIndex = 0; staticIndex < staticIndexes.length; staticIndex++) {
+      int i = staticIndexes[staticIndex];
       if (workStats != null) workStats.preparedSpanVisitCount++;
       CompiledTerminalLine.Span span = line.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = plan.spanLeftPx[i];
       int right = plan.spanRightPx[i];
-      if (backgroundRunIndex < plan.backgroundSpanIndexes.length
-          && plan.backgroundSpanIndexes[backgroundRunIndex] == i) {
-        bgPaint.setColor(plan.backgroundColors[backgroundRunIndex]);
-        if (workStats != null) {
-          workStats.backgroundRunCount++;
-          workStats.backgroundRectDrawCount++;
-        }
-        canvas.drawRect(
-            plan.backgroundStartPx[backgroundRunIndex], rowY,
-            plan.backgroundEndPx[backgroundRunIndex], rowY + geometry.lineHeightPx(), bgPaint);
-        backgroundRunIndex++;
-      }
       if (staticSpecialRunIndex < plan.staticSpecialGlyphRuns.length
           && plan.staticSpecialGlyphRuns[staticSpecialRunIndex].startSpanIndex == i) {
         PreparedSpecialGlyphRun run = plan.staticSpecialGlyphRuns[staticSpecialRunIndex++];
         if (workStats != null) {
           workStats.preparedSpanVisitCount += run.glyphCount() - 1L;
+          workStats.staticForegroundOpCount += run.glyphCount();
         }
         drawPreparedSpecialGlyphRun(canvas, run, rowY);
-        i = run.endSpanIndexExclusive - 1;
+        while (staticIndex + 1 < staticIndexes.length
+            && staticIndexes[staticIndex + 1] < run.endSpanIndexExclusive) {
+          staticIndex++;
+        }
         continue;
       }
-      if (!style.hidden() && !style.hasBlink()) {
-        if (workStats != null) {
-          workStats.staticForegroundOpCount++;
-          if (span instanceof CompiledTerminalLine.TextSpan) {
-            workStats.textForegroundOpCount++;
-          }
+      if (workStats != null) {
+        workStats.staticForegroundOpCount++;
+        if (span instanceof CompiledTerminalLine.TextSpan) {
+          workStats.textForegroundOpCount++;
         }
-        drawSpanForeground(canvas, span, rowY, style.foreground(),
-            style.underlineColor(), false, prepared.layoutAt(i), left, right, false);
       }
+      drawSpanForeground(canvas, span, rowY, style.foreground(),
+          style.underlineColor(), false, prepared.layoutAt(i), left, right, false);
     }
     drawPreparedDecorationRuns(canvas, plan.staticDecorationRuns, rowY);
   }
@@ -715,32 +719,42 @@ public final class RemoteTerminalRenderer {
       @NonNull PreparedTerminalLine prepared,
       float rowY,
       @NonNull TerminalAnimationState animationState) {
-    CompiledTerminalLine compiled = prepared.compiledLine;
     PreparedLineDrawPlan plan = prepared.drawPlan;
-    for (int i = 0; i < compiled.spans().size(); i++) {
-      CompiledTerminalLine.Span span = compiled.spans().get(i);
-      CompiledTerminalLine.CompiledStyle style = span.style();
-      if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) continue;
-      if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
-        if (workStats != null) {
-          if (style.blinkFast()) workStats.fastBlinkForegroundOpCount++;
-          else workStats.slowBlinkForegroundOpCount++;
-          if (span instanceof CompiledTerminalLine.TextSpan) {
-            workStats.textForegroundOpCount++;
-          }
-        }
-        drawSpanForeground(canvas, span, rowY, style.foreground(),
-            style.underlineColor(), false, prepared.layoutAt(i),
-            plan.spanLeftPx[i], plan.spanRightPx[i], false);
-      }
-    }
     if (animationState.slowBlinkOn()) {
+      drawPreparedBlinkTextOps(canvas, prepared, plan.slowBlinkSpanIndexes, rowY, false);
       drawPreparedSpecialGlyphRuns(canvas, plan.slowBlinkSpecialGlyphRuns, rowY);
       drawPreparedDecorationRuns(canvas, plan.slowBlinkDecorationRuns, rowY);
     }
     if (animationState.fastBlinkOn()) {
+      drawPreparedBlinkTextOps(canvas, prepared, plan.fastBlinkSpanIndexes, rowY, true);
       drawPreparedSpecialGlyphRuns(canvas, plan.fastBlinkSpecialGlyphRuns, rowY);
       drawPreparedDecorationRuns(canvas, plan.fastBlinkDecorationRuns, rowY);
+    }
+  }
+
+  private void drawPreparedBlinkTextOps(
+      @NonNull Canvas canvas,
+      @NonNull PreparedTerminalLine prepared,
+      @NonNull int[] spanIndexes,
+      float rowY,
+      boolean fast) {
+    CompiledTerminalLine compiled = prepared.compiledLine;
+    PreparedLineDrawPlan plan = prepared.drawPlan;
+    for (int index : spanIndexes) {
+      CompiledTerminalLine.Span span = compiled.spans().get(index);
+      if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) continue;
+      if (workStats != null) {
+        workStats.preparedSpanVisitCount++;
+        if (fast) workStats.fastBlinkForegroundOpCount++;
+        else workStats.slowBlinkForegroundOpCount++;
+        if (span instanceof CompiledTerminalLine.TextSpan) {
+          workStats.textForegroundOpCount++;
+        }
+      }
+      CompiledTerminalLine.CompiledStyle style = span.style();
+      drawSpanForeground(canvas, span, rowY, style.foreground(),
+          style.underlineColor(), false, prepared.layoutAt(index),
+          plan.spanLeftPx[index], plan.spanRightPx[index], false);
     }
   }
 
