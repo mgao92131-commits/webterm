@@ -4,6 +4,9 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -11,6 +14,26 @@ import java.util.concurrent.TimeUnit;
 import org.junit.Test;
 
 public final class RemoteTerminalModelPublicationTest {
+  @Test
+  public void queuedMutationsMaterializeOneSnapshotAtExecutorTail() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    QueueExecutor executor = new QueueExecutor();
+    model.bindRenderPublicationExecutor(executor);
+
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
+    for (int i = 0; i < 100; i++) model.requestFullRender();
+
+    assertTrue(executor.size() == 1);
+    assertTrue(model.snapshotBuildCountForTest() == 0);
+    assertTrue(model.consumeRenderUpdate() == null);
+
+    executor.runAll();
+
+    assertTrue(model.snapshotBuildCountForTest() == 1);
+    assertTrue(model.publicationFlushCountForTest() == 1);
+    assertNotNull(model.consumeRenderUpdate());
+  }
+
   @Test
   public void vsyncConsumeDoesNotWaitForModelMonitor() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
@@ -38,6 +61,23 @@ public final class RemoteTerminalModelPublicationTest {
     } finally {
       releaseMonitor.countDown();
       executor.shutdownNow();
+    }
+  }
+
+  private static final class QueueExecutor implements Executor {
+    private final Deque<Runnable> tasks = new ArrayDeque<>();
+
+    @Override
+    public void execute(Runnable command) {
+      tasks.addLast(command);
+    }
+
+    int size() {
+      return tasks.size();
+    }
+
+    void runAll() {
+      while (!tasks.isEmpty()) tasks.removeFirst().run();
     }
   }
 }

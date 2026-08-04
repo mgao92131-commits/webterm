@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Executor;
 
 /**
  * Android 远程终端模型。
@@ -44,6 +45,12 @@ public final class RemoteTerminalModel {
   private final AtomicReference<Object> renderPublicationAuthority =
       new AtomicReference<>();
   private final AtomicLong publicationVersion = new AtomicLong();
+  private Executor publicationExecutor;
+  private Runnable publicationFlushedListener;
+  private boolean publicationFlushScheduled;
+  private boolean pendingForceSnapshotRebuild;
+  private long snapshotBuildCount;
+  private long publicationFlushCount;
 
   private static final class RenderPublication {
     final long version;
@@ -110,6 +117,28 @@ public final class RemoteTerminalModel {
   public RemoteTerminalModel(HistoryBudget budget) {
     historyBudget = budget == null ? HistoryBudget.defaults() : budget;
     projectionReducer = new ScreenProjectionReducer(historyBudget);
+  }
+
+  /**
+   * 将快照物化投递到与模型 mutation 相同的串行 executor。
+   *
+   * <p>未绑定时保留同步行为，兼容 JVM 测试和旧调用方；Runtime 绑定自己的 modelExecutor
+   * 后，连续 mutation 只在队尾安排一个 flush task。</p>
+   */
+  public synchronized void bindRenderPublicationExecutor(Executor executor) {
+    bindRenderPublicationExecutor(executor, null);
+  }
+
+  /** 绑定 Runtime 的 render-needed 通知；通知发生在快照真正物化之后。 */
+  public synchronized void bindRenderPublicationExecutor(
+      Executor executor, Runnable publicationFlushedListener) {
+    if (executor == null) throw new NullPointerException("executor");
+    publicationExecutor = executor;
+    this.publicationFlushedListener = publicationFlushedListener;
+    if ((!pendingRenderDirty.isEmpty() || !pendingTerminalState.isEmpty())
+        && !publicationFlushScheduled) {
+      schedulePublicationFlushLocked();
+    }
   }
 
   /**
@@ -511,12 +540,53 @@ public final class RemoteTerminalModel {
 
   private void publishPendingRenderUpdate(boolean forceSnapshotRebuild) {
     if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) return;
+    pendingForceSnapshotRebuild |= forceSnapshotRebuild;
+    if (publicationExecutor != null) {
+      if (!publicationFlushScheduled) schedulePublicationFlushLocked();
+      return;
+    }
+    flushPendingRenderPublicationLocked();
+  }
+
+  private void schedulePublicationFlushLocked() {
+    if (publicationFlushScheduled || publicationExecutor == null) return;
+    publicationFlushScheduled = true;
+    try {
+      publicationExecutor.execute(this::flushPendingRenderPublication);
+    } catch (RuntimeException error) {
+      publicationFlushScheduled = false;
+      // Executor 已关闭时保持旧的同步语义，不能把已安装的 projection 永久留在
+      // 没有 RenderSnapshot 的状态。
+      flushPendingRenderPublicationLocked();
+    }
+  }
+
+  private void flushPendingRenderPublication() {
+    Runnable listener = null;
+    synchronized (this) {
+      publicationFlushScheduled = false;
+      boolean flushed = flushPendingRenderPublicationLocked();
+      if (flushed) listener = publicationFlushedListener;
+      if ((!pendingRenderDirty.isEmpty() || !pendingTerminalState.isEmpty())
+          && publicationExecutor != null) {
+        schedulePublicationFlushLocked();
+      }
+    }
+    if (listener != null) listener.run();
+  }
+
+  /** 只在 synchronized(model) 内调用；把当前合并状态物化成一个 publication。 */
+  private boolean flushPendingRenderPublicationLocked() {
+    if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) return false;
     long started = System.nanoTime();
     try {
       RenderDirtyState currentDirty = pendingRenderDirty;
       TerminalStateUpdate currentState = pendingTerminalState;
+      boolean forceSnapshotRebuild = pendingForceSnapshotRebuild;
       pendingRenderDirty = new RenderDirtyState();
       pendingTerminalState = new TerminalStateUpdate();
+      pendingForceSnapshotRebuild = false;
+      publicationFlushCount++;
       publishRenderSnapshot(currentDirty, forceSnapshotRebuild);
       RenderSnapshot currentSnapshot = renderSnapshot;
       long version = publicationVersion.incrementAndGet();
@@ -539,10 +609,12 @@ public final class RemoteTerminalModel {
     } finally {
       TerminalRenderMetrics.renderPublicationDuration(System.nanoTime() - started);
     }
+    return true;
   }
 
   private void publishRenderSnapshot(
       RenderDirtyState dirty, boolean forceSnapshotRebuild) {
+    snapshotBuildCount++;
     if (state == null) {
       renderSnapshot = RenderSnapshot.empty();
       publishProjectionReadView();
@@ -595,6 +667,14 @@ public final class RemoteTerminalModel {
         displayExtent().firstSeq,
         false);
     publishProjectionReadView();
+  }
+
+  synchronized long snapshotBuildCountForTest() {
+    return snapshotBuildCount;
+  }
+
+  synchronized long publicationFlushCountForTest() {
+    return publicationFlushCount;
   }
 
   private static ScreenRenderView buildScreenRenderView(

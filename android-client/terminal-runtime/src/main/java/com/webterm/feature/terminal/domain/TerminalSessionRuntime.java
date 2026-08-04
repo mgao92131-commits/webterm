@@ -308,8 +308,9 @@ public final class TerminalSessionRuntime {
                          @NonNull TimeoutScheduler leaseScheduler) {
     this.sessionId = sessionId;
     this.model = model;
-    this.model.bindRenderPublicationAuthority(renderPublicationAuthority);
     this.modelExecutor = modelExecutor;
+    this.model.bindRenderPublicationAuthority(renderPublicationAuthority);
+    this.model.bindRenderPublicationExecutor(modelExecutor, this::dispatchRenderNeeded);
     this.historyDemandMailbox =
         new HistoryDemandMailbox(modelExecutor, this::applyHistoryDemandUpdate);
     this.callbackExecutor = callbackExecutor;
@@ -1128,7 +1129,6 @@ public final class TerminalSessionRuntime {
     if (bodyResult instanceof HistoryBodyResult.Applied) {
       recordCapturedModelState(false);
       recordPublicationAdvance(publicationBefore);
-      dispatchRenderNeeded();
     }
   }
 
@@ -1940,7 +1940,6 @@ public final class TerminalSessionRuntime {
     }
     TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - applyStartedNanos);
     updatePipelineAfterApply(envelope.getPayloadCase(), publicationBefore, revisionBefore);
-    if (renderChanged) dispatchRenderNeeded();
   }
 
   private void updatePipelineAfterApply(
@@ -2215,7 +2214,6 @@ public final class TerminalSessionRuntime {
       long publicationBefore = model.lastPublicationVersion();
       model.requestFullRender();
       recordPublicationAdvance(publicationBefore);
-      dispatchRenderNeeded();
     });
   }
 
