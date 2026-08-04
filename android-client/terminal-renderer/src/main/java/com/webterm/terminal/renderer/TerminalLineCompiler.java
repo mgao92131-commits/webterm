@@ -49,12 +49,35 @@ final class TerminalLineCompiler {
     TextSpanBuilder textBuilder = null;
     BlankSpanBuilder blankBuilder = null;
     CompiledTerminalLine.CompiledStyle currentStyle = null;
+    CompiledTerminalLine.CompiledStyle defaultStyle = null;
 
     for (int column = 0; column < lineLength; ) {
       CellValue cell = line.at(column);
       if (cell == null || cell.isSpacer()) {
         textBuilder = flushText(textBuilder, spans);
         blankBuilder = flushBlank(blankBuilder, spans);
+        column++;
+        continue;
+      }
+
+      // 精确默认空格没有任何静态像素：背景由 canvas 清屏提供，正文和 decoration 都不
+      // 需要生成。只有当它位于同一普通 TextSpan 的内部时，才延迟物化以保留上下文文字
+      // 的 UTF-16/terminal-column 映射。
+      if (cell.isDefault()) {
+        if (workStats != null) workStats.defaultCellCount++;
+        blankBuilder = flushBlank(blankBuilder, spans);
+        if (defaultStyle == null) {
+          styleResolver.resolveInto(palette, null, false, styleScratch);
+          defaultStyle = CompiledTerminalLine.CompiledStyle.from(styleScratch);
+        }
+        if (textBuilder != null
+            && textBuilder.style.equals(defaultStyle)
+            && textBuilder.fontRole == TerminalFontRole.MAIN_TEXT
+            && textBuilder.endColumn == column) {
+          textBuilder.deferDefaultBlank(column);
+        } else {
+          textBuilder = flushText(textBuilder, spans);
+        }
         column++;
         continue;
       }
@@ -106,7 +129,11 @@ final class TerminalLineCompiler {
           || textBuilder.fontRole != fontRole
           || textBuilder.endColumn != column) {
         textBuilder = flushText(textBuilder, spans);
+        // 前导/跨特殊字符的默认空格已经没有视觉意义，不能为了填充它们而重新创建
+        // 一个普通文字 run。
         textBuilder = new TextSpanBuilder(column, currentStyle, fontRole);
+      } else {
+        textBuilder.materializePendingDefaultBlanks();
       }
       int graphemeStart = textBuilder.text.length();
       textBuilder.text.append(text);
@@ -222,6 +249,8 @@ final class TerminalLineCompiler {
     boolean[] trimEligible = new boolean[8];
     int clusterCount;
     int endColumn;
+    int pendingDefaultBlankStartColumn = -1;
+    int pendingDefaultBlankCount;
 
     TextSpanBuilder(
         int startColumn,
@@ -280,6 +309,31 @@ final class TerminalLineCompiler {
           keptColumns,
           keptWidths,
           keptFitModes);
+    }
+
+    void deferDefaultBlank(int column) {
+      if (pendingDefaultBlankCount == 0) {
+        pendingDefaultBlankStartColumn = column;
+      }
+      pendingDefaultBlankCount++;
+      endColumn = column + 1;
+    }
+
+    void materializePendingDefaultBlanks() {
+      if (pendingDefaultBlankCount == 0) return;
+      for (int i = 0; i < pendingDefaultBlankCount; i++) {
+        int column = pendingDefaultBlankStartColumn + i;
+        int offset = text.length();
+        text.append(' ');
+        appendCluster(offset, column, (byte) 1, (byte) 0, false);
+      }
+      pendingDefaultBlankCount = 0;
+      pendingDefaultBlankStartColumn = -1;
+    }
+
+    void discardPendingDefaultBlanks() {
+      pendingDefaultBlankCount = 0;
+      pendingDefaultBlankStartColumn = -1;
     }
 
     private void ensureCapacity(int required) {

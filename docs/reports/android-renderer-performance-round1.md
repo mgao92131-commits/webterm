@@ -30,7 +30,11 @@ cd android-client
 
 ## 3. Commit 1 — default blank fast path
 
-待提交。
+实现：精确识别 `CellValue.isDefault()`。前导和尾部默认空格直接跳过；同一普通
+TextSpan 内部的默认空格延迟到确实需要时才物化。带背景、装饰、hidden、link 和异常
+宽度的空格继续走原路径。
+
+JVM 和 API 36 instrumentation 回归已通过；显式性能采样待执行。
 
 ## 4. Commit 2 — font classification fast paths
 

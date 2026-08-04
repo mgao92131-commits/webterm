@@ -89,6 +89,77 @@ public final class TerminalLineCompilerTest {
   }
 
   @Test
+  public void internalDefaultBlankIsMaterializedWithoutLeadingOrTrailingBlanks() {
+    CompiledTerminalLine.TextSpan span = (CompiledTerminalLine.TextSpan)
+        new TerminalLineCompiler().compile(line(
+            new CellValue("A", (byte) 1, null, null),
+            CellValue.EMPTY,
+            new CellValue("B", (byte) 1, null, null),
+            CellValue.EMPTY), 4, PALETTE, BACKGROUND).spans().get(0);
+
+    assertEquals("A B", span.text());
+    assertEquals(3, span.clusterCount());
+    assertEquals(3, span.columnCount());
+    assertEquals(1, span.clusterColumn(1));
+    assertEquals(2, span.clusterUtf16Start(2));
+  }
+
+  @Test
+  public void leadingDefaultBlanksAreNotMaterialized() {
+    CompiledTerminalLine.TextSpan span = (CompiledTerminalLine.TextSpan)
+        new TerminalLineCompiler().compile(line(
+            CellValue.EMPTY,
+            CellValue.EMPTY,
+            new CellValue("A", (byte) 1, null, null)), 3, PALETTE, BACKGROUND)
+            .spans().get(0);
+
+    assertEquals("A", span.text());
+    assertEquals(2, span.startColumn());
+    assertEquals(1, span.columnCount());
+    assertEquals(0, span.clusterUtf16Start(0));
+  }
+
+  @Test
+  public void styledBoundaryDiscardsPendingDefaultBlank() {
+    StyleValue bold = new StyleValue(null, null, null, 1);
+    List<CompiledTerminalLine.Span> spans = new TerminalLineCompiler().compile(line(
+        new CellValue("A", (byte) 1, null, null),
+        CellValue.EMPTY,
+        new CellValue("B", (byte) 1, bold, null)), 3, PALETTE, BACKGROUND).spans();
+
+    assertEquals(2, spans.size());
+    assertEquals("A", ((CompiledTerminalLine.TextSpan) spans.get(0)).text());
+    assertEquals("B", ((CompiledTerminalLine.TextSpan) spans.get(1)).text());
+    assertEquals(2, spans.get(1).startColumn());
+  }
+
+  @Test
+  public void defaultBlankAfterWideSpacerKeepsPhysicalColumn() {
+    List<CompiledTerminalLine.Span> spans = new TerminalLineCompiler().compile(line(
+        new CellValue("界", (byte) 2, null, null),
+        CellValue.SPACER,
+        CellValue.EMPTY,
+        new CellValue("A", (byte) 1, null, null)), 4, PALETTE, BACKGROUND).spans();
+
+    assertEquals(1, spans.size());
+    CompiledTerminalLine.TextSpan span = (CompiledTerminalLine.TextSpan) spans.get(0);
+    assertEquals("界 A", span.text());
+    assertEquals(0, span.startColumn());
+    assertEquals(3, span.clusterColumn(2));
+  }
+
+  @Test
+  public void defaultBlankBeforeSpecialGlyphDoesNotCreateTextSpan() {
+    List<CompiledTerminalLine.Span> spans = new TerminalLineCompiler().compile(line(
+        CellValue.EMPTY,
+        new CellValue("─", (byte) 1, null, null)), 2, PALETTE, BACKGROUND).spans();
+
+    assertEquals(1, spans.size());
+    assertTrue(spans.get(0) instanceof CompiledTerminalLine.SpecialGlyphSpan);
+    assertEquals(1, spans.get(0).startColumn());
+  }
+
+  @Test
   public void styledBlankAndHiddenTextRetainBlankSpan() {
     StyleValue background = new StyleValue(
         null, TerminalColor.rgb(0x204060), null, 0);
