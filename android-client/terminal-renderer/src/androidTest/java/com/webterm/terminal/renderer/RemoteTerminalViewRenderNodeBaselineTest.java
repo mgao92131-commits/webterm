@@ -371,6 +371,57 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
   }
 
   @Test
+  public void styleDirtyUpdateStartsNewBlinkScheduler() throws Exception {
+    RemoteTerminalModel normalModel = new RemoteTerminalModel();
+    assertTrue(normalModel.applyBaseline(baseline()));
+    RenderUpdate initial = normalModel.consumeRenderUpdate();
+
+    RemoteTerminalModel blinkModel = new RemoteTerminalModel();
+    assertTrue(blinkModel.applyBaseline(textBlinkBaseline()));
+    RenderUpdate blinkBaseline = blinkModel.consumeRenderUpdate();
+    RenderDirtyState stylesDirty = new RenderDirtyState();
+    stylesDirty.stylesChanged = true;
+    stylesDirty.changedScreenRows.set(0);
+    RenderUpdate styleUpdate = new RenderUpdate(
+        initial.publicationVersion + 1,
+        blinkBaseline.snapshot,
+        stylesDirty,
+        new TerminalStateUpdate());
+
+    TerminalViewportState viewport = new TerminalViewportState();
+    AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
+
+    try (ActivityScenario<ClipboardTestActivity> scenario =
+             ActivityScenario.launch(ClipboardTestActivity.class)) {
+      attachView(scenario, viewRef, ViewGroup.LayoutParams.MATCH_PARENT);
+      DrawWaiter initialDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        initialDraw.attach(viewRef.get());
+        viewRef.get().bindModel(normalModel);
+        viewRef.get().applyRenderUpdate(initial, viewport);
+      });
+      assertTrue("normal baseline draw did not complete", initialDraw.await());
+      scenario.onActivity(activity -> {
+        initialDraw.detach(viewRef.get());
+        assertFalse("normal text must not start blink scheduler",
+            viewRef.get().animationScheduledForTest());
+      });
+
+      DrawWaiter blinkDraw = new DrawWaiter();
+      scenario.onActivity(activity -> {
+        blinkDraw.attach(viewRef.get());
+        viewRef.get().applyRenderUpdate(styleUpdate, viewport);
+      });
+      assertTrue("style update draw did not complete", blinkDraw.await());
+      scenario.onActivity(activity -> {
+        blinkDraw.detach(viewRef.get());
+        assertTrue("style update must start the newly visible blink scheduler",
+            viewRef.get().animationScheduledForTest());
+      });
+    }
+  }
+
+  @Test
   public void selectionChangeDoesNotRerecordStaticRows() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(baseline()));

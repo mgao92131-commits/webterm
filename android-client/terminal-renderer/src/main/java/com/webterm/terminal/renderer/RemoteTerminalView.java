@@ -323,9 +323,11 @@ public final class RemoteTerminalView extends View {
     }
     updateRenderedSnapshot(update.snapshot);
     this.lastAppliedDirty = update.dirty; // 现场捕获只读快照用（不消费状态）
+    // Blink metadata 查询依赖这些 generation；必须先让新 snapshot 的视觉身份生效，
+    // 再启动 scheduler，否则旧缓存可能把刚出现的 blink 行判成不可见。
+    updateGenerationCounters(update.dirty);
     boolean geometryChanged = requestLayoutIfSizeChanged();
     updateCursorBlinkSchedule();
-    updateGenerationCounters(update.dirty);
     InvalidationPlan plan = buildInvalidationPlan(
         update.dirty, update.snapshot, viewport, geometryChanged, invalidationPlan);
     switch (plan.result) {
