@@ -31,8 +31,10 @@ import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderUpdate;
 import com.webterm.terminal.model.ScreenBaseline;
 import com.webterm.terminal.model.ScreenLineContent;
+import com.webterm.terminal.model.StyleValue;
 import com.webterm.terminal.model.TerminalBufferKind;
 import com.webterm.terminal.model.TerminalCursor;
+import com.webterm.terminal.model.TerminalColor;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalRenderMetrics;
@@ -59,6 +61,7 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
   private static final int HISTORY_ROWS = 1_200;
+  private static final int COMPLEX_HISTORY_ROWS = 5_000;
   private static final int SCREEN_ROWS = 8;
   private static final int COLUMNS = 120;
   // 每次约移动 30 行；小于一个屏幕的可见行数，能测到相邻视口的 RenderNode hit，
@@ -68,11 +71,20 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
 
   @Test
   public void backScrollAndReturnThroughEvictedRows() throws Exception {
+    runBackScroll(fixture(HISTORY_ROWS, false), "view_back_scroll_eviction", true);
+  }
+
+  @Test
+  public void complexTuiScrollAndCacheChurn() throws Exception {
+    runBackScroll(fixture(COMPLEX_HISTORY_ROWS, true), "view_complex_tui_scroll", false);
+  }
+
+  private void runBackScroll(Fixture fixture, String scenarioName, boolean requireRowCacheHit)
+      throws Exception {
     Bundle args = InstrumentationRegistry.getArguments();
     Assume.assumeTrue("webtermPerf=true is required",
         "true".equalsIgnoreCase(args.getString("webtermPerf")));
 
-    Fixture fixture = fixture();
     RemoteTerminalModel model = fixture.model;
     RenderUpdate baselineUpdate = model.consumeRenderUpdate();
     assertNotNull(baselineUpdate);
@@ -80,7 +92,7 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
         instanceof HistoryBodyResult.Applied);
     RenderUpdate bodyUpdate = model.consumeRenderUpdate();
     assertNotNull(bodyUpdate);
-    assertEquals(HISTORY_ROWS, bodyUpdate.snapshot.history.loadedLineCount());
+    assertEquals(fixture.historyRows, bodyUpdate.snapshot.history.loadedLineCount());
 
     TerminalViewportState viewport = new TerminalViewportState();
     TerminalPreparedLineCache preparedCache = new TerminalPreparedLineCache();
@@ -155,15 +167,17 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     long hitDelta = after.rowCacheHitCount - before.rowCacheHitCount;
     long missDelta = after.rowCacheMissCount - before.rowCacheMissCount;
     assertTrue("back-scroll must record row nodes", recordDelta > 0);
-    assertTrue("back-scroll must reuse some row nodes", hitDelta > 0);
+    if (requireRowCacheHit) {
+      assertTrue("back-scroll must reuse some row nodes", hitDelta > 0);
+    }
     assertTrue("the workload must evict prepared entries", frameStats.evictions > 0);
     assertTrue("prepared cache must stay within its byte budget",
         frameStats.maxBytes <= TerminalPreparedLineCache.DEFAULT_BYTE_LIMIT);
 
     long[] frameDurations = toSortedArray(frameStats.frameDurationsNanos);
     long[] frameMetricDurations = frameMetrics.sortedDurations();
-    System.out.println("{\"scenario\":\"view_back_scroll_eviction\""
-        + ",\"history_rows\":" + HISTORY_ROWS
+    System.out.println("{\"scenario\":\"" + scenarioName + "\""
+        + ",\"history_rows\":" + fixture.historyRows
         + ",\"positions\":" + frameStats.frameDurationsNanos.size()
         + ",\"view_frame_p50_ns\":" + percentile(frameDurations, 0.50)
         + ",\"view_frame_p95_ns\":" + percentile(frameDurations, 0.95)
@@ -203,22 +217,22 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     return targets;
   }
 
-  private static Fixture fixture() {
+  private static Fixture fixture(int historyRows, boolean complex) {
     RemoteTerminalModel model = new RemoteTerminalModel();
-    ArrayList<HistoryPush> history = new ArrayList<>(HISTORY_ROWS);
-    ArrayList<LineBodyRecord> bodies = new ArrayList<>(HISTORY_ROWS);
-    HashSet<LineKey> requested = new HashSet<>(HISTORY_ROWS);
-    for (int seq = 1; seq <= HISTORY_ROWS; seq++) {
+    ArrayList<HistoryPush> history = new ArrayList<>(historyRows);
+    ArrayList<LineBodyRecord> bodies = new ArrayList<>(historyRows);
+    HashSet<LineKey> requested = new HashSet<>(historyRows);
+    for (int seq = 1; seq <= historyRows; seq++) {
       LineKey key = new LineKey(1_000_000L + seq, 1);
       history.add(new HistoryPush(seq, key));
-      bodies.add(new LineBodyRecord(key, lineBody("H")));
+      bodies.add(new LineBodyRecord(key, lineBody("H", complex)));
       requested.add(key);
     }
 
     ArrayList<ScreenLineContent> screen = new ArrayList<>(SCREEN_ROWS);
     for (int row = 0; row < SCREEN_ROWS; row++) {
       LineKey key = new LineKey(2_000_000L + row, 1);
-      screen.add(new ScreenLineContent(key, lineBody("S")));
+      screen.add(new ScreenLineContent(key, lineBody("S", complex)));
     }
     ArrayList<LineKey> screenKeys = new ArrayList<>(SCREEN_ROWS);
     ArrayList<LineBodyRecord> screenBodies = new ArrayList<>(SCREEN_ROWS);
@@ -230,7 +244,7 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     ScreenBaseline baseline = new ScreenBaseline(
         "round2.5", "round2.5-instance", 1, 1, 1,
         SCREEN_ROWS, COLUMNS, TerminalBufferKind.MAIN,
-        new HistoryExtent(1, HISTORY_ROWS), history,
+        new HistoryExtent(1, historyRows), history,
         screenKeys, screenBodies, TerminalCursor.hidden(),
         TerminalModes.defaults(), TerminalPalette.defaults());
     assertTrue(model.applyBaseline(baseline));
@@ -239,12 +253,40 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     LineBodyBatchResult batch = new LineBodyBatchResult(
         "round2.5-bodies", "round2.5-instance", 1, 1,
         LineBodyBatchResult.Status.OK, bodies, Collections.emptyList(), 0);
-    return new Fixture(model, batch, new BodyBatchRequestContext(identity, requested));
+    return new Fixture(model, batch, new BodyBatchRequestContext(identity, requested), historyRows);
   }
 
-  private static LineBody lineBody(String text) {
+  private static LineBody lineBody(String text, boolean complex) {
     CellValue[] cells = new CellValue[COLUMNS];
     Arrays.fill(cells, CellValue.EMPTY);
+    if (complex) {
+      String[] graphemes = {"┌", "─", "┐", "│", "界", "█", "⣿", "", "e\u0301", "😀",
+          "░", "╌"};
+      int column = 0;
+      int glyph = 0;
+      while (column < cells.length) {
+        String value = graphemes[glyph++ % graphemes.length];
+        int width = ("界".equals(value) || "😀".equals(value)) ? 2 : 1;
+        if (column + width > cells.length) break;
+        int attrs;
+        switch ((column / 8) % 6) {
+          case 0: attrs = 1 << 3; break;
+          case 1: attrs = 1 << 5; break;
+          case 2: attrs = 1 << 6; break;
+          case 3: attrs = 1 << 7; break;
+          case 4: attrs = 1 << 12; break;
+          default: attrs = 1 << 8; break;
+        }
+        TerminalColor background = (column / 16) % 2 == 0
+            ? TerminalColor.rgb(0x102030) : TerminalColor.DEFAULT_BG;
+        StyleValue style = new StyleValue(
+            TerminalColor.rgb(0xBBDDFF), background, TerminalColor.rgb(0xFFAA33), attrs);
+        cells[column] = new CellValue(value, (byte) width, style, null);
+        if (width == 2) cells[column + 1] = CellValue.SPACER;
+        column += width;
+      }
+      return new LineBody(COLUMNS, false, cells);
+    }
     cells[0] = new CellValue(text, (byte) 1, null, null);
     return new LineBody(COLUMNS, false, cells);
   }
@@ -273,12 +315,14 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     final RemoteTerminalModel model;
     final LineBodyBatchResult bodyBatch;
     final BodyBatchRequestContext bodyRequest;
+    final int historyRows;
 
     Fixture(RemoteTerminalModel model, LineBodyBatchResult bodyBatch,
-            BodyBatchRequestContext bodyRequest) {
+            BodyBatchRequestContext bodyRequest, int historyRows) {
       this.model = model;
       this.bodyBatch = bodyBatch;
       this.bodyRequest = bodyRequest;
+      this.historyRows = historyRows;
     }
   }
 
@@ -288,11 +332,20 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     long misses;
     long evictions;
     long maxBytes;
+    private long previousHits;
+    private long previousMisses;
+    private long previousEvictions;
 
     void record(TerminalPreparedLineCache cache) {
-      hits += cache.hitCountForTest();
-      misses += cache.missCountForTest();
-      evictions += cache.evictionCountForTest();
+      long currentHits = cache.hitCountForTest();
+      long currentMisses = cache.missCountForTest();
+      long currentEvictions = cache.evictionCountForTest();
+      hits += Math.max(0L, currentHits - previousHits);
+      misses += Math.max(0L, currentMisses - previousMisses);
+      evictions += Math.max(0L, currentEvictions - previousEvictions);
+      previousHits = currentHits;
+      previousMisses = currentMisses;
+      previousEvictions = currentEvictions;
       maxBytes = Math.max(maxBytes, cache.estimatedBytesForTest());
     }
   }
