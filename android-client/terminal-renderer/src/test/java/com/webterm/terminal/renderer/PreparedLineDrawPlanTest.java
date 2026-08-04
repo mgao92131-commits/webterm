@@ -48,6 +48,33 @@ public final class PreparedLineDrawPlanTest {
         + plan.slowBlinkSpanIndexes.length + plan.fastBlinkSpanIndexes.length);
     assertEquals(1, plan.specialGlyphSpanIndexes.length);
     assertEquals(1, plan.backgroundSpanIndexes.length);
+    assertEquals(4, plan.backgroundEndSpanIndexes[0]);
     assertEquals(0, plan.decorationSpanIndexes.length);
+  }
+
+  @Test
+  public void adjacentBackgroundSpansShareOnePhysicalRun() {
+    com.webterm.terminal.model.StyleValue style = new com.webterm.terminal.model.StyleValue(
+        com.webterm.terminal.model.TerminalColor.rgb(0xFFFFFF),
+        com.webterm.terminal.model.TerminalColor.rgb(0x223344), null, 0);
+    CellValue[] cells = new CellValue[] {
+        new CellValue("A", (byte) 1, style, null),
+        new CellValue("─", (byte) 1, style, null),
+        new CellValue("B", (byte) 1, style, null)
+    };
+    RenderLine line = new RenderLine(new LineKey(2L, 1L), new LineBody(3, false, cells));
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(10f, 20f, 15f);
+    CompiledTerminalLine compiled = renderer.compileLine(
+        line, 3, TerminalPalette.defaults(), BACKGROUND);
+    TerminalCellGeometry geometry = new TerminalCellGeometry();
+    geometry.update(10f, 20f, 15f);
+    PreparedLineDrawPlan plan = PreparedLineDrawPlan.build(compiled, geometry, BACKGROUND);
+
+    assertEquals(1, plan.backgroundSpanIndexes.length);
+    assertEquals(0, plan.backgroundSpanIndexes[0]);
+    assertEquals(3, plan.backgroundEndSpanIndexes[0]);
+    assertEquals(0, plan.backgroundStartPx[0]);
+    assertEquals(30, plan.backgroundEndPx[0]);
   }
 }

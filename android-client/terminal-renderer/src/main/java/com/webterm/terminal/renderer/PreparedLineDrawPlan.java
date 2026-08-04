@@ -18,6 +18,7 @@ final class PreparedLineDrawPlan {
   final int[] slowBlinkSpanIndexes;
   final int[] fastBlinkSpanIndexes;
   final int[] backgroundSpanIndexes;
+  final int[] backgroundEndSpanIndexes;
   final int[] backgroundStartPx;
   final int[] backgroundEndPx;
   final int[] backgroundColors;
@@ -33,6 +34,7 @@ final class PreparedLineDrawPlan {
       int[] slowBlinkSpanIndexes,
       int[] fastBlinkSpanIndexes,
       int[] backgroundSpanIndexes,
+      int[] backgroundEndSpanIndexes,
       int[] backgroundStartPx,
       int[] backgroundEndPx,
       int[] backgroundColors,
@@ -44,6 +46,7 @@ final class PreparedLineDrawPlan {
     this.slowBlinkSpanIndexes = slowBlinkSpanIndexes;
     this.fastBlinkSpanIndexes = fastBlinkSpanIndexes;
     this.backgroundSpanIndexes = backgroundSpanIndexes;
+    this.backgroundEndSpanIndexes = backgroundEndSpanIndexes;
     this.backgroundStartPx = backgroundStartPx;
     this.backgroundEndPx = backgroundEndPx;
     this.backgroundColors = backgroundColors;
@@ -56,6 +59,7 @@ final class PreparedLineDrawPlan {
         + arrayBytes(slowBlinkSpanIndexes)
         + arrayBytes(fastBlinkSpanIndexes)
         + arrayBytes(backgroundSpanIndexes)
+        + arrayBytes(backgroundEndSpanIndexes)
         + arrayBytes(backgroundStartPx)
         + arrayBytes(backgroundEndPx)
         + arrayBytes(backgroundColors)
@@ -75,12 +79,29 @@ final class PreparedLineDrawPlan {
     int backgroundCount = 0;
     int decorationCount = 0;
     int specialCount = 0;
-    for (CompiledTerminalLine.Span span : spans) {
+    int previousBackgroundSpan = -1;
+    int previousBackgroundRight = 0;
+    int previousBackgroundColor = 0;
+    for (int i = 0; i < spans.size(); i++) {
+      CompiledTerminalLine.Span span = spans.get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       if (!style.hidden() && !style.hasBlink()) staticCount++;
       if (!style.hidden() && style.blinkSlow()) slowCount++;
       if (!style.hidden() && style.blinkFast()) fastCount++;
-      if (style.background() != canvasBackground) backgroundCount++;
+      if (style.background() != canvasBackground) {
+        int left = geometry.columnEdgePx(span.startColumn());
+        if (previousBackgroundSpan < 0
+            || previousBackgroundSpan + 1 != i
+            || previousBackgroundRight != left
+            || previousBackgroundColor != style.background()) {
+          backgroundCount++;
+        }
+        previousBackgroundSpan = i;
+        previousBackgroundRight = geometry.columnEdgePx(span.endColumn());
+        previousBackgroundColor = style.background();
+      } else {
+        previousBackgroundSpan = -1;
+      }
       if (style.hasVisibleDecoration()) decorationCount++;
       if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) specialCount++;
     }
@@ -91,6 +112,7 @@ final class PreparedLineDrawPlan {
     int[] slowIndexes = new int[slowCount];
     int[] fastIndexes = new int[fastCount];
     int[] backgroundIndexes = new int[backgroundCount];
+    int[] backgroundEndIndexes = new int[backgroundCount];
     int[] backgroundStart = new int[backgroundCount];
     int[] backgroundEnd = new int[backgroundCount];
     int[] backgroundColors = new int[backgroundCount];
@@ -111,11 +133,17 @@ final class PreparedLineDrawPlan {
       if (!style.hidden() && style.blinkSlow()) slowIndexes[slowIndex++] = i;
       if (!style.hidden() && style.blinkFast()) fastIndexes[fastIndex++] = i;
       if (style.background() != canvasBackground) {
-        backgroundIndexes[backgroundIndex] = i;
-        backgroundStart[backgroundIndex] = left[i];
-        backgroundEnd[backgroundIndex] = right[i];
-        backgroundColors[backgroundIndex] = style.background();
-        backgroundIndex++;
+        boolean startsRun = backgroundIndex == 0
+            || backgroundEndIndexes[backgroundIndex - 1] != i
+            || backgroundColors[backgroundIndex - 1] != style.background();
+        if (startsRun) {
+          backgroundIndexes[backgroundIndex] = i;
+          backgroundStart[backgroundIndex] = left[i];
+          backgroundColors[backgroundIndex] = style.background();
+          backgroundIndex++;
+        }
+        backgroundEndIndexes[backgroundIndex - 1] = i + 1;
+        backgroundEnd[backgroundIndex - 1] = right[i];
       }
       if (style.hasVisibleDecoration()) decorationIndexes[decorationIndex++] = i;
       if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
@@ -124,6 +152,7 @@ final class PreparedLineDrawPlan {
     }
     return new PreparedLineDrawPlan(
         left, right, staticIndexes, slowIndexes, fastIndexes, backgroundIndexes,
+        backgroundEndIndexes,
         backgroundStart, backgroundEnd, backgroundColors, decorationIndexes, specialIndexes);
   }
 

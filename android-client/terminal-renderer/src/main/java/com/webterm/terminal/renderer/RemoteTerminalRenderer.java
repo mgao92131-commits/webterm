@@ -639,19 +639,24 @@ public final class RemoteTerminalRenderer {
       int canvasBackground) {
     CompiledTerminalLine line = prepared.compiledLine;
     PreparedLineDrawPlan plan = prepared.drawPlan;
+    int backgroundRunIndex = 0;
     for (int i = 0; i < line.spans().size(); i++) {
       if (workStats != null) workStats.preparedSpanVisitCount++;
       CompiledTerminalLine.Span span = line.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = plan.spanLeftPx[i];
       int right = plan.spanRightPx[i];
-      if (style.background() != canvasBackground) {
-        bgPaint.setColor(style.background());
+      if (backgroundRunIndex < plan.backgroundSpanIndexes.length
+          && plan.backgroundSpanIndexes[backgroundRunIndex] == i) {
+        bgPaint.setColor(plan.backgroundColors[backgroundRunIndex]);
         if (workStats != null) {
           workStats.backgroundRunCount++;
           workStats.backgroundRectDrawCount++;
         }
-        canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
+        canvas.drawRect(
+            plan.backgroundStartPx[backgroundRunIndex], rowY,
+            plan.backgroundEndPx[backgroundRunIndex], rowY + geometry.lineHeightPx(), bgPaint);
+        backgroundRunIndex++;
       }
       if (!style.hidden() && !style.hasBlink()) {
         if (workStats != null) {
