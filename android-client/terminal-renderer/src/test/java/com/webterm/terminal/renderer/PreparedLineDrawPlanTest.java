@@ -77,4 +77,30 @@ public final class PreparedLineDrawPlanTest {
     assertEquals(0, plan.backgroundStartPx[0]);
     assertEquals(30, plan.backgroundEndPx[0]);
   }
+
+  @Test
+  public void preparedSpecialRunsUseTheFamilyClipPolicy() {
+    CellValue[] cells = new CellValue[] {
+        new CellValue("▀", (byte) 1, null, null),
+        new CellValue("▄", (byte) 1, null, null),
+        new CellValue("─", (byte) 1, null, null)
+    };
+    RenderLine line = new RenderLine(
+        new LineKey(3L, 1L), new LineBody(3, false, cells));
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(10f, 20f, 15f);
+    CompiledTerminalLine compiled = renderer.compileLine(
+        line, 3, TerminalPalette.defaults(), BACKGROUND);
+    TerminalCellGeometry geometry = new TerminalCellGeometry();
+    geometry.update(10f, 20f, 15f);
+    PreparedLineDrawPlan plan = PreparedLineDrawPlan.build(compiled, geometry, BACKGROUND);
+
+    assertEquals(2, plan.staticSpecialGlyphRuns.length);
+    assertEquals(TerminalSpecialGlyphPainter.ClipPolicy.RUN_CLIP_SAFE,
+        plan.staticSpecialGlyphRuns[0].clipPolicy);
+    assertEquals(2, plan.staticSpecialGlyphRuns[0].glyphCount());
+    assertEquals(TerminalSpecialGlyphPainter.ClipPolicy.CELL_CLIP_REQUIRED,
+        plan.staticSpecialGlyphRuns[1].clipPolicy);
+    assertEquals(1, plan.staticSpecialGlyphRuns[1].glyphCount());
+  }
 }

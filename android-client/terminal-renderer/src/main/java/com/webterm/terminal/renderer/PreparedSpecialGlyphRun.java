@@ -55,9 +55,6 @@ final class PreparedSpecialGlyphRun {
     int[] columns = new int[count];
     int[] left = new int[count];
     int[] right = new int[count];
-    TerminalSpecialGlyphPainter.ClipPolicy clipPolicy =
-        TerminalSpecialGlyphPainter.clipPolicy(
-            TerminalSpecialGlyphPainter.familyFromPreparedCode(families[0]));
     for (int i = 0; i < count; i++) {
       CompiledTerminalLine.SpecialGlyphSpan span =
           (CompiledTerminalLine.SpecialGlyphSpan) spans.get(start + i);
@@ -68,6 +65,9 @@ final class PreparedSpecialGlyphRun {
       left[i] = spanLeftPx[start + i];
       right[i] = spanRightPx[start + i];
     }
+    TerminalSpecialGlyphPainter.ClipPolicy clipPolicy =
+        TerminalSpecialGlyphPainter.clipPolicy(
+            TerminalSpecialGlyphPainter.familyFromPreparedCode(families[0]));
     return new PreparedSpecialGlyphRun(
         start, end, spanLeftPx[start], spanRightPx[end - 1], spans.get(start).style(),
         clipPolicy, codePoints, families, columns, left, right);
@@ -79,7 +79,7 @@ final class PreparedSpecialGlyphRun {
 
   long estimatedBytes() {
     return 80L
-        + (long) codePoints.length * Integer.BYTES * 3L
+        + (long) codePoints.length * Integer.BYTES * 4L
         + (long) columns.length * Integer.BYTES
         + families.length;
   }
