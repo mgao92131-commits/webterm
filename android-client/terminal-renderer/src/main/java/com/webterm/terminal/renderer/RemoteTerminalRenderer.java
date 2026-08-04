@@ -254,13 +254,22 @@ public final class RemoteTerminalRenderer {
   public void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
                      @NonNull TerminalViewportState viewport, boolean cursorBlinkOn,
                      @Nullable TerminalLineRenderNodeCache lineCache) {
-    render(canvas, model, viewport, TerminalAnimationState.cursorOnly(cursorBlinkOn), lineCache);
+    render(canvas, model, viewport, TerminalAnimationState.cursorOnly(cursorBlinkOn), lineCache,
+        null);
   }
 
   void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
               @NonNull TerminalViewportState viewport,
               @NonNull TerminalAnimationState animationState,
               @Nullable TerminalLineRenderNodeCache lineCache) {
+    render(canvas, model, viewport, animationState, lineCache, null);
+  }
+
+  void render(@NonNull Canvas canvas, @NonNull RemoteTerminalModel.RenderSnapshot model,
+              @NonNull TerminalViewportState viewport,
+              @NonNull TerminalAnimationState animationState,
+              @Nullable TerminalLineRenderNodeCache lineCache,
+              @Nullable TerminalPreparedLineCache preparedLineCache) {
     if (workStats != null) workStats.reset();
     long renderStartedNanos = System.nanoTime();
     boolean samplePhases = (++phaseMetricsFrame & 63) == 1;
@@ -362,10 +371,12 @@ public final class RemoteTerminalRenderer {
         visibleHistoryRows++;
       }
       TerminalLineRenderNodeCache.LineDrawResult cacheResult;
+      PreparedTerminalLine preparedLine = null;
       CompiledTerminalLine compiledLine = null;
       if (useCache) {
         long nodeStartedNanos = samplePhases ? System.nanoTime() : 0L;
-        cacheResult = lineCache.drawOrRecord(canvas, line, y, !active);
+        cacheResult = lineCache.drawOrRecord(
+            canvas, line, y, !active, preparedLineCache);
         if (samplePhases) {
           renderNodeDrawOrRecordNanos += System.nanoTime() - nodeStartedNanos;
         }
@@ -373,17 +384,37 @@ public final class RemoteTerminalRenderer {
         cacheResult = TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE;
       }
       if (cacheResult == TerminalLineRenderNodeCache.LineDrawResult.UNAVAILABLE) {
-        compiledLine = compileLine(line, model.columns, palette, canvasBackground);
+        if (preparedLineCache != null) {
+          preparedLine = preparedLineCache.getOrPrepare(
+              line, this, model.columns, palette, canvasBackground);
+          compiledLine = preparedLine.compiledLine;
+        } else {
+          compiledLine = compileLine(line, model.columns, palette, canvasBackground);
+        }
         long drawStartedNanos = samplePhases ? System.nanoTime() : 0L;
-        drawCompiledLineContent(canvas, compiledLine, y, canvasBackground);
+        if (preparedLine != null) {
+          drawPreparedLineContent(canvas, preparedLine, y, canvasBackground);
+        } else {
+          drawCompiledLineContent(canvas, compiledLine, y, canvasBackground);
+        }
         if (samplePhases) {
           canvasDrawNanos += System.nanoTime() - drawStartedNanos;
         }
       }
+      if (preparedLine == null && preparedLineCache != null) {
+        preparedLine = preparedLineCache.get(line);
+        if (preparedLine != null) compiledLine = preparedLine.compiledLine;
+      }
       if (compiledLine == null && lineCache != null) {
         compiledLine = lineCache.compiledLineForLine(line);
       }
-      if (compiledLine != null && compiledLine.visibleBlinkKinds() != 0) {
+      if (preparedLine != null && preparedLine.visibleBlinkKinds != 0) {
+        long blinkStartedNanos = samplePhases ? System.nanoTime() : 0L;
+        drawBlinkOverlayForLine(canvas, preparedLine, y, animationState);
+        if (samplePhases) {
+          canvasDrawNanos += System.nanoTime() - blinkStartedNanos;
+        }
+      } else if (compiledLine != null && compiledLine.visibleBlinkKinds() != 0) {
         long blinkStartedNanos = samplePhases ? System.nanoTime() : 0L;
         drawBlinkOverlayForLine(canvas, compiledLine, y, animationState);
         if (samplePhases) {
@@ -394,7 +425,7 @@ public final class RemoteTerminalRenderer {
       drawSelectionOverlayForRow(canvas, model.columns, palette, line, y,
           historySeq, screenRow, normalizedSelection, canvasBackground);
       if (active && cursorVisible && cursor.row == screenRow) {
-        drawCursorOverlayForRow(canvas, model.columns, palette, line, compiledLine, y,
+        drawCursorOverlayForRow(canvas, model.columns, palette, line, preparedLine, compiledLine, y,
             screenRow, cursor, canvasBackground, animationState);
       }
       if (samplePhases) {
@@ -504,6 +535,25 @@ public final class RemoteTerminalRenderer {
     return compiled;
   }
 
+  PreparedTerminalLine compileAndPrepareLine(
+      @NonNull RenderLine line,
+      int columns,
+      @NonNull TerminalPalette palette,
+      int canvasBackground) {
+    CompiledTerminalLine compiled = compileLine(line, columns, palette, canvasBackground);
+    List<CompiledTerminalLine.Span> spans = compiled.spans();
+    PreparedTextLayout[] layouts = new PreparedTextLayout[spans.size()];
+    for (int i = 0; i < spans.size(); i++) {
+      CompiledTerminalLine.Span span = spans.get(i);
+      if (span instanceof CompiledTerminalLine.TextSpan) {
+        CompiledTerminalLine.TextSpan textSpan =
+            (CompiledTerminalLine.TextSpan) span;
+        layouts[i] = textPainter.prepare(textSpan, geometry, paintFor(textSpan.fontRole()));
+      }
+    }
+    return new PreparedTerminalLine(compiled, layouts);
+  }
+
   void drawCompiledLineContent(Canvas canvas, CompiledTerminalLine line,
                                float rowY, int canvasBackground) {
     if (workStats == null) {
@@ -519,9 +569,28 @@ public final class RemoteTerminalRenderer {
     }
   }
 
+  void drawPreparedLineContent(
+      @NonNull Canvas canvas,
+      @NonNull PreparedTerminalLine prepared,
+      float rowY,
+      int canvasBackground) {
+    if (workStats == null) {
+      drawPreparedLineContentMeasured(canvas, prepared, rowY, canvasBackground);
+      return;
+    }
+    long startedNanos = System.nanoTime();
+    try {
+      drawPreparedLineContentMeasured(canvas, prepared, rowY, canvasBackground);
+    } finally {
+      workStats.compiledLineDrawCount++;
+      workStats.compiledLineDrawNanos += Math.max(0L, System.nanoTime() - startedNanos);
+    }
+  }
+
   private void drawCompiledLineContentMeasured(
       Canvas canvas, CompiledTerminalLine line, float rowY, int canvasBackground) {
-    for (CompiledTerminalLine.Span span : line.spans()) {
+    for (int i = 0; i < line.spans().size(); i++) {
+      CompiledTerminalLine.Span span = line.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
       int left = geometry.columnEdgePx(span.startColumn());
       int right = geometry.columnEdgePx(span.endColumn());
@@ -533,6 +602,28 @@ public final class RemoteTerminalRenderer {
       if (!style.hidden() && !style.hasBlink()) {
         drawSpanForeground(canvas, span, rowY, style.foreground(),
             style.underlineColor(), false);
+      }
+    }
+  }
+
+  private void drawPreparedLineContentMeasured(
+      @NonNull Canvas canvas,
+      @NonNull PreparedTerminalLine prepared,
+      float rowY,
+      int canvasBackground) {
+    CompiledTerminalLine line = prepared.compiledLine;
+    for (int i = 0; i < line.spans().size(); i++) {
+      CompiledTerminalLine.Span span = line.spans().get(i);
+      CompiledTerminalLine.CompiledStyle style = span.style();
+      int left = geometry.columnEdgePx(span.startColumn());
+      int right = geometry.columnEdgePx(span.endColumn());
+      if (style.background() != canvasBackground) {
+        bgPaint.setColor(style.background());
+        canvas.drawRect(left, rowY, right, rowY + geometry.lineHeightPx(), bgPaint);
+      }
+      if (!style.hidden() && !style.hasBlink()) {
+        drawSpanForeground(canvas, span, rowY, style.foreground(),
+            style.underlineColor(), false, prepared.layoutAt(i));
       }
     }
   }
@@ -557,6 +648,22 @@ public final class RemoteTerminalRenderer {
     }
   }
 
+  private void drawBlinkOverlayForLine(
+      @NonNull Canvas canvas,
+      @NonNull PreparedTerminalLine prepared,
+      float rowY,
+      @NonNull TerminalAnimationState animationState) {
+    CompiledTerminalLine compiled = prepared.compiledLine;
+    for (int i = 0; i < compiled.spans().size(); i++) {
+      CompiledTerminalLine.Span span = compiled.spans().get(i);
+      CompiledTerminalLine.CompiledStyle style = span.style();
+      if (style.hasBlink() && animationState.blinkForegroundVisible(style)) {
+        drawSpanForeground(canvas, span, rowY, style.foreground(),
+            style.underlineColor(), false, prepared.layoutAt(i));
+      }
+    }
+  }
+
   private void drawSpanForeground(
       Canvas canvas,
       CompiledTerminalLine.Span span,
@@ -564,14 +671,32 @@ public final class RemoteTerminalRenderer {
       int foreground,
       int underlineColor,
       boolean overrideForeground) {
+    drawSpanForeground(canvas, span, rowY, foreground, underlineColor,
+        overrideForeground, null);
+  }
+
+  private void drawSpanForeground(
+      Canvas canvas,
+      CompiledTerminalLine.Span span,
+      float rowY,
+      int foreground,
+      int underlineColor,
+      boolean overrideForeground,
+      @Nullable PreparedTextLayout preparedLayout) {
     CompiledTerminalLine.CompiledStyle style = span.style();
     int left = geometry.columnEdgePx(span.startColumn());
     int right = geometry.columnEdgePx(span.endColumn());
     if (span instanceof CompiledTerminalLine.TextSpan) {
       CompiledTerminalLine.TextSpan textSpan =
           (CompiledTerminalLine.TextSpan) span;
-      textPainter.draw(canvas, textSpan, geometry, rowY,
-          paintFor(textSpan.fontRole()), foreground, overrideForeground);
+      Paint textPaint = paintFor(textSpan.fontRole());
+      if (preparedLayout == null) {
+        textPainter.draw(canvas, textSpan, geometry, rowY, textPaint,
+            foreground, overrideForeground);
+      } else {
+        textPainter.drawPrepared(canvas, textSpan, preparedLayout, geometry, rowY,
+            textPaint, foreground, overrideForeground);
+      }
     } else if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
       CompiledTerminalLine.SpecialGlyphSpan special =
           (CompiledTerminalLine.SpecialGlyphSpan) span;
@@ -627,6 +752,7 @@ public final class RemoteTerminalRenderer {
   /** 在已绘制的行上追加光标覆盖层。 */
   private void drawCursorOverlayForRow(Canvas canvas, int columns, TerminalPalette palette,
                                        RenderLine line,
+                                       @Nullable PreparedTerminalLine preparedLine,
                                        @Nullable CompiledTerminalLine compiledLine,
                                        float y, int screenRow,
                                        TerminalCursor cursor, int canvasBackground,
@@ -671,12 +797,15 @@ public final class RemoteTerminalRenderer {
       canvas.clipRect(left, Math.round(y), right,
           Math.round(y) + geometry.lineHeightPx());
       try {
+        if (preparedLine != null) compiledLine = preparedLine.compiledLine;
         if (compiledLine == null) return;
-        for (CompiledTerminalLine.Span span : compiledLine.spans()) {
+        for (int i = 0; i < compiledLine.spans().size(); i++) {
+          CompiledTerminalLine.Span span = compiledLine.spans().get(i);
           if (!span.intersectsColumns(col, col + columnWidth)) continue;
           if (!animationState.foregroundVisible(span.style())) continue;
           drawSpanForeground(canvas, span, y, cursorForeground,
-              cursorUnderlineColor, true);
+              cursorUnderlineColor, true,
+              preparedLine == null ? null : preparedLine.layoutAt(i));
         }
       } finally {
         canvas.restoreToCount(saveCount);

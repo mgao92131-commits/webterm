@@ -142,6 +142,7 @@ public final class RemoteTerminalView extends View {
 
   private final RemoteTerminalRenderer renderer;
   private final TerminalLineRenderNodeCache lineCache = new TerminalLineRenderNodeCache();
+  private final TerminalPreparedLineCache preparedLineCache = new TerminalPreparedLineCache();
   private final GestureAndScaleRecognizer gestureRecognizer;
   private final Scroller scroller;
   private final Paint selectionHandlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -493,15 +494,18 @@ public final class RemoteTerminalView extends View {
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     if (snapshot == null) return;
     TerminalLineRenderNodeCache cache = canvas.isHardwareAccelerated() ? lineCache : null;
+    int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
+        snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
+    preparedLineCache.beginFrame(snapshot, renderer, canvasBackground,
+        fontGeneration, paletteGeneration, styleGeneration);
     if (cache != null) {
-      int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
-          snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
       cache.beginFrame(snapshot, renderer, snapshot.palette, canvasBackground,
           fontGeneration, paletteGeneration, styleGeneration);
     }
     try {
       renderer.render(canvas, snapshot, viewport,
-          new TerminalAnimationState(cursorBlinkOn, slowBlinkOn, fastBlinkOn), cache);
+          new TerminalAnimationState(cursorBlinkOn, slowBlinkOn, fastBlinkOn), cache,
+          preparedLineCache);
       drawSelectionHandles(canvas, snapshot);
     } finally {
       if (cache != null) cache.endFrame();
@@ -1877,6 +1881,10 @@ public final class RemoteTerminalView extends View {
         (long) Math.ceil((getHeight() - contentTop) / rowHeight) + 1L);
     int canvasBackground = RemoteTerminalRenderer.resolveColor(snapshot.palette,
         snapshot.palette.reverseVideo ? snapshot.palette.defaultFg : snapshot.palette.defaultBg);
+    // Blink 调度可能发生在下一次 onDraw 之前；同步 generation 后，metadata 查询可以复用
+    // 已有 prepared line，首次新行只做一次轻量扫描。
+    preparedLineCache.beginFrame(snapshot, renderer, canvasBackground,
+        fontGeneration, paletteGeneration, styleGeneration);
     for (long axisRow = first; axisRow < last; axisRow++) {
       UnifiedContentAxis.Item item = axis.itemAtRow(axisRow);
       if (item == null
@@ -1884,8 +1892,8 @@ public final class RemoteTerminalView extends View {
           || item.line == null) {
         continue;
       }
-      int rowKinds = renderer.visibleBlinkKinds(item.line, snapshot.columns,
-          snapshot.palette, canvasBackground);
+      int rowKinds = preparedLineCache.visibleBlinkKinds(
+          item.line, renderer, snapshot.columns, snapshot.palette, canvasBackground);
       if (rowKinds != 0) result.add(axisRow, rowKinds);
     }
     return result;

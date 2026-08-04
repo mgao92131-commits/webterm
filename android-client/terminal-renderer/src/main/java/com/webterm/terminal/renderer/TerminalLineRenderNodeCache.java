@@ -127,6 +127,15 @@ public final class TerminalLineRenderNodeCache {
 
   LineDrawResult drawOrRecord(@NonNull Canvas canvas, @Nullable RenderLine line,
                               float rowTop, boolean historyLine) {
+    return drawOrRecord(canvas, line, rowTop, historyLine, null);
+  }
+
+  LineDrawResult drawOrRecord(
+      @NonNull Canvas canvas,
+      @Nullable RenderLine line,
+      float rowTop,
+      boolean historyLine,
+      @Nullable TerminalPreparedLineCache preparedLineCache) {
     if (line == null || frameRenderer == null || framePalette == null
         || widthPx <= 0 || heightPx <= 0) {
       return LineDrawResult.UNAVAILABLE;
@@ -155,7 +164,7 @@ public final class TerminalLineRenderNodeCache {
       cached = obtainEntry(line.key().lineId());
       if (cached == null) return LineDrawResult.UNAVAILABLE;
     }
-    if (!record(cached, line)) return LineDrawResult.UNAVAILABLE;
+    if (!record(cached, line, preparedLineCache)) return LineDrawResult.UNAVAILABLE;
     cached.lastUsedFrame = frameNumber;
     cached.lastDrawnFrame = frameNumber;
     if (historyLine) frameHistoryMisses++;
@@ -232,18 +241,31 @@ public final class TerminalLineRenderNodeCache {
     TerminalRenderMetrics.renderNodeVictimScan(scanned, allPinned);
   }
 
-  private boolean record(@NonNull CachedLine cached, @NonNull RenderLine line) {
+  private boolean record(
+      @NonNull CachedLine cached,
+      @NonNull RenderLine line,
+      @Nullable TerminalPreparedLineCache preparedLineCache) {
     cached.node.setPosition(0, 0, widthPx, heightPx);
     long startedNanos = System.nanoTime();
     Canvas recordingCanvas = cached.node.beginRecording(widthPx, heightPx);
     int saveCount = recordingCanvas.save();
     try {
       recordingCanvas.translate(leftBleedPx, topBleedPx);
-      CompiledTerminalLine compiled = frameRenderer.compileLine(
-          line, columns, framePalette, frameCanvasBackground);
-      cached.compiledLine = compiled;
-      frameRenderer.drawCompiledLineContent(recordingCanvas, compiled, 0f,
-          frameCanvasBackground);
+      if (preparedLineCache != null) {
+        PreparedTerminalLine prepared = preparedLineCache.getOrPrepare(
+            line, frameRenderer, columns, framePalette, frameCanvasBackground);
+        frameRenderer.drawPreparedLineContent(recordingCanvas, prepared, 0f,
+            frameCanvasBackground);
+        // 新路径让 CPU 结果归 prepared cache 所有，RenderNode entry 只保存 display list。
+        cached.compiledLine = null;
+      } else {
+        // 兼容未接入 prepared cache 的旧测试/调用方；生产 View 会走上面的独立缓存路径。
+        CompiledTerminalLine compiled = frameRenderer.compileLine(
+            line, columns, framePalette, frameCanvasBackground);
+        cached.compiledLine = compiled;
+        frameRenderer.drawCompiledLineContent(recordingCanvas, compiled, 0f,
+            frameCanvasBackground);
+      }
     } finally {
       recordingCanvas.restoreToCount(saveCount);
       cached.node.endRecording();

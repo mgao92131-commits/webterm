@@ -45,12 +45,66 @@ final class TerminalTextPainter {
       @androidx.annotation.NonNull Paint textPaint,
       int foregroundOverride,
       boolean useForegroundOverride) {
+    PreparedTextLayout prepared = prepare(span, geometry, textPaint);
+    drawPrepared(canvas, span, prepared, geometry, rowY, textPaint,
+        foregroundOverride, useForegroundOverride);
+  }
+
+  /** 在当前 Paint/geometry 下计算一次 TextSpan 的布局，供多个绘制后端复用。 */
+  PreparedTextLayout prepare(
+      @androidx.annotation.NonNull CompiledTerminalLine.TextSpan span,
+      @androidx.annotation.NonNull TerminalCellGeometry geometry,
+      @androidx.annotation.NonNull Paint textPaint) {
+    applyStyle(textPaint, span.style(), span.style().foreground(), false);
+    if (span.style().hidden()) {
+      return new PreparedTextLayout(true, null, null);
+    }
+
+    boolean batchAvailable = prepareBatchAdvances(span.text(), textPaint);
+    if (batchAvailable && canDrawWholeRun(span, geometry, prefixAdvances)) {
+      return new PreparedTextLayout(true, null, null);
+    }
+    if (!batchAvailable && canDrawWholeRunLegacy(span, geometry, textPaint)) {
+      return new PreparedTextLayout(true, null, null);
+    }
+
+    if (workStats != null) workStats.clusterFallbackCount++;
+    int clusterCount = span.clusterCount();
+    float[] drawX = new float[clusterCount];
+    float[] scales = new float[clusterCount];
+    for (int cluster = 0; cluster < clusterCount; cluster++) {
+      int start = span.clusterUtf16Start(cluster);
+      int end = span.clusterUtf16End(cluster);
+      float x = geometry.textOriginX(span.clusterColumn(cluster));
+      float expectedWidth = geometry.columnEdgePx(
+          span.clusterColumn(cluster) + span.clusterWidth(cluster))
+          - geometry.columnEdgePx(span.clusterColumn(cluster));
+      float measuredWidth = batchAvailable
+          ? prefixAdvances[end] - prefixAdvances[start]
+          : clusterAdvance(textPaint, span.text(), start, end, 0, span.text().length());
+      if (measuredWidth <= 0f) measuredWidth = textPaint.measureText(span.text(), start, end);
+      glyphFitter.fit(fitScratch, measuredWidth, expectedWidth, x,
+          geometry.baselineOffset(), span.clusterFitMode(cluster));
+      drawX[cluster] = fitScratch.drawX;
+      scales[cluster] = fitScratch.scale;
+    }
+    return new PreparedTextLayout(false, drawX, scales);
+  }
+
+  void drawPrepared(
+      @androidx.annotation.NonNull Canvas canvas,
+      @androidx.annotation.NonNull CompiledTerminalLine.TextSpan span,
+      @androidx.annotation.NonNull PreparedTextLayout prepared,
+      @androidx.annotation.NonNull TerminalCellGeometry geometry,
+      float rowY,
+      @androidx.annotation.NonNull Paint textPaint,
+      int foregroundOverride,
+      boolean useForegroundOverride) {
     CompiledTerminalLine.CompiledStyle style = span.style();
     applyStyle(textPaint, style, foregroundOverride, useForegroundOverride);
     if (style.hidden()) return;
 
-    boolean batchAvailable = prepareBatchAdvances(span.text(), textPaint);
-    if (batchAvailable && canDrawWholeRun(span, geometry, prefixAdvances)) {
+    if (prepared.drawWholeRun || !prepared.hasClusterLayout()) {
       canvas.drawTextRun(
           span.text(),
           0,
@@ -64,28 +118,23 @@ final class TerminalTextPainter {
       return;
     }
 
-    if (batchAvailable) {
-      if (workStats != null) workStats.clusterFallbackCount++;
-      drawClusters(canvas, span, geometry, rowY, textPaint, true);
-      return;
-    }
-
-    if (canDrawWholeRunLegacy(span, geometry, textPaint)) {
+    for (int cluster = 0; cluster < span.clusterCount(); cluster++) {
+      int start = span.clusterUtf16Start(cluster);
+      int end = span.clusterUtf16End(cluster);
+      float drawX = prepared.clusterDrawX[cluster];
+      float scale = prepared.clusterScale[cluster];
+      float baselineY = rowY + geometry.baselineOffset();
+      boolean savedMatrix = scale < 0.999999f;
+      if (savedMatrix) {
+        canvas.save();
+        canvas.translate(drawX, baselineY);
+        canvas.scale(scale, scale);
+        canvas.translate(-drawX, -baselineY);
+      }
       canvas.drawTextRun(
-          span.text(),
-          0,
-          span.text().length(),
-          0,
-          span.text().length(),
-          geometry.textOriginX(span.startColumn()),
-          rowY + geometry.baselineOffset(),
-          false,
-          textPaint);
-      return;
+          span.text(), start, end, 0, span.text().length(), drawX, baselineY, false, textPaint);
+      if (savedMatrix) canvas.restore();
     }
-
-    if (workStats != null) workStats.clusterFallbackCount++;
-    drawClusters(canvas, span, geometry, rowY, textPaint, false);
   }
 
   private static void applyStyle(Paint paint, CompiledTerminalLine.CompiledStyle style,
@@ -138,51 +187,6 @@ final class TerminalTextPainter {
     return true;
   }
 
-  private void drawClusters(
-      Canvas canvas,
-      CompiledTerminalLine.TextSpan span,
-      TerminalCellGeometry geometry,
-      float rowY,
-      Paint paint,
-      boolean useBatchAdvances) {
-    String text = span.text();
-    int contextStart = 0;
-    int contextEnd = text.length();
-    for (int cluster = 0; cluster < span.clusterCount(); cluster++) {
-      int start = span.clusterUtf16Start(cluster);
-      int end = span.clusterUtf16End(cluster);
-      float x = geometry.textOriginX(span.clusterColumn(cluster));
-      float expectedWidth = geometry.columnEdgePx(
-          span.clusterColumn(cluster) + span.clusterWidth(cluster))
-          - geometry.columnEdgePx(span.clusterColumn(cluster));
-      float measuredWidth = useBatchAdvances
-          ? prefixAdvances[end] - prefixAdvances[start]
-          : clusterAdvance(paint, text, start, end, contextStart, contextEnd);
-      if (measuredWidth <= 0f) measuredWidth = paint.measureText(text, start, end);
-
-      glyphFitter.fit(fitScratch, measuredWidth, expectedWidth, x,
-          rowY + geometry.baselineOffset(), span.clusterFitMode(cluster));
-      float drawX = fitScratch.drawX;
-      boolean savedMatrix = fitScratch.scale < 0.999999f;
-      if (savedMatrix) {
-        canvas.save();
-        canvas.translate(drawX, fitScratch.baselineY);
-        canvas.scale(fitScratch.scale, fitScratch.scale);
-        canvas.translate(-drawX, -fitScratch.baselineY);
-      }
-      canvas.drawTextRun(
-          text,
-          start,
-          end,
-          contextStart,
-          contextEnd,
-          drawX,
-          fitScratch.baselineY,
-          false,
-          paint);
-      if (savedMatrix) canvas.restore();
-    }
-  }
 
   private boolean prepareBatchAdvances(CharSequence text, Paint paint) {
     int textLength = text.length();
