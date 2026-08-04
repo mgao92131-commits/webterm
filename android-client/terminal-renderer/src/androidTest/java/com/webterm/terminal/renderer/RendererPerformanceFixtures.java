@@ -32,6 +32,7 @@ final class RendererPerformanceFixtures {
     DECORATION_DOTTED,
     DECORATION_DASHED,
     DECORATION_MIXED,
+    BACKGROUND_TUI,
     MIXED_TUI
   }
 
@@ -99,6 +100,9 @@ final class RendererPerformanceFixtures {
         case DECORATION_MIXED:
           fillMixedDecoration(cells, row);
           break;
+        case BACKGROUND_TUI:
+          fillBackgroundTui(cells, row);
+          break;
         case MIXED_TUI:
           fillMixedTui(cells, row);
           break;
@@ -162,6 +166,25 @@ final class RendererPerformanceFixtures {
           TerminalColor.DEFAULT_BG, TerminalColor.rgb(0xFFAA33),
           attrs[(column / 4 + row) % attrs.length]);
       cells[column] = new CellValue("x", (byte) 1, style, null);
+    }
+  }
+
+  private static void fillBackgroundTui(CellValue[] cells, int row) {
+    String[] glyphs = {"A", "─", "█", "界", "⣿", "B", "░", "C"};
+    int column = 0;
+    int index = row % glyphs.length;
+    while (column < cells.length) {
+      String text = glyphs[index++ % glyphs.length];
+      int width = ("界".equals(text)) ? 2 : 1;
+      if (column + width > cells.length) break;
+      int block = column / 16;
+      StyleValue style = new StyleValue(
+          TerminalColor.rgb(0xDDEEFF),
+          TerminalColor.rgb((block & 1) == 0 ? 0x102030 : 0x203010),
+          null, 0);
+      cells[column] = new CellValue(text, (byte) width, style, null);
+      if (width == 2) cells[column + 1] = CellValue.SPACER;
+      column += width;
     }
   }
 
