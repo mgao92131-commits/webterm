@@ -7,14 +7,17 @@ import androidx.annotation.Nullable;
 final class PreparedTerminalLine {
   @NonNull final CompiledTerminalLine compiledLine;
   @NonNull final PreparedTextLayout[] textLayouts;
+  @NonNull final PreparedLineDrawPlan drawPlan;
   final int visibleBlinkKinds;
   final long estimatedBytes;
 
   PreparedTerminalLine(
       @NonNull CompiledTerminalLine compiledLine,
-      @NonNull PreparedTextLayout[] textLayouts) {
+      @NonNull PreparedTextLayout[] textLayouts,
+      @NonNull PreparedLineDrawPlan drawPlan) {
     this.compiledLine = compiledLine;
     this.textLayouts = textLayouts;
+    this.drawPlan = drawPlan;
     this.visibleBlinkKinds = compiledLine.visibleBlinkKinds();
 
     long bytes = 96L;
@@ -29,6 +32,7 @@ final class PreparedTerminalLine {
     for (PreparedTextLayout layout : textLayouts) {
       if (layout != null) bytes += layout.estimatedBytes;
     }
+    bytes += drawPlan.estimatedBytes();
     estimatedBytes = bytes;
   }
 

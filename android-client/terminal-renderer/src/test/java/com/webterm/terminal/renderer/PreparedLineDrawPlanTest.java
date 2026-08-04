@@ -1,0 +1,53 @@
+package com.webterm.terminal.renderer;
+
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+
+import com.webterm.terminal.model.CellValue;
+import com.webterm.terminal.model.LineBody;
+import com.webterm.terminal.model.LineKey;
+import com.webterm.terminal.model.RenderLine;
+import com.webterm.terminal.model.TerminalPalette;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
+
+@RunWith(RobolectricTestRunner.class)
+@Config(manifest = Config.NONE, sdk = 35)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+public final class PreparedLineDrawPlanTest {
+  private static final int BACKGROUND = 0xFF000000;
+
+  @Test
+  public void preparedPlanPreservesSpanBoundsAndClassifiesOperations() {
+    CellValue[] cells = new CellValue[] {
+        new CellValue("A", (byte) 1, null, null),
+        new CellValue("─", (byte) 1, null, null),
+        new CellValue("B", (byte) 1, null, null),
+        new CellValue("C", (byte) 1,
+            new com.webterm.terminal.model.StyleValue(
+                com.webterm.terminal.model.TerminalColor.rgb(0xFFFFFF),
+                com.webterm.terminal.model.TerminalColor.rgb(0x223344), null, 1 << 8), null)
+    };
+    RenderLine line = new RenderLine(
+        new LineKey(1L, 1L), new LineBody(4, false, cells));
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(10f, 20f, 15f);
+    CompiledTerminalLine compiled = renderer.compileLine(
+        line, 4, TerminalPalette.defaults(), BACKGROUND);
+    TerminalCellGeometry geometry = new TerminalCellGeometry();
+    geometry.update(10f, 20f, 15f);
+    PreparedLineDrawPlan plan = PreparedLineDrawPlan.build(compiled, geometry, BACKGROUND);
+
+    assertArrayEquals(new int[] {0, 10, 20, 30}, plan.spanLeftPx);
+    assertArrayEquals(new int[] {10, 20, 30, 40}, plan.spanRightPx);
+    assertEquals(compiled.spans().size(), plan.staticForegroundSpanIndexes.length
+        + plan.slowBlinkSpanIndexes.length + plan.fastBlinkSpanIndexes.length);
+    assertEquals(1, plan.specialGlyphSpanIndexes.length);
+    assertEquals(1, plan.backgroundSpanIndexes.length);
+    assertEquals(0, plan.decorationSpanIndexes.length);
+  }
+}

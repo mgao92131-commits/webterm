@@ -565,7 +565,8 @@ public final class RemoteTerminalRenderer {
         layouts[i] = textPainter.prepare(textSpan, geometry, paintFor(textSpan.fontRole()));
       }
     }
-    return new PreparedTerminalLine(compiled, layouts);
+    return new PreparedTerminalLine(
+        compiled, layouts, PreparedLineDrawPlan.build(compiled, geometry, canvasBackground));
   }
 
   void drawCompiledLineContent(Canvas canvas, CompiledTerminalLine line,
@@ -637,12 +638,13 @@ public final class RemoteTerminalRenderer {
       float rowY,
       int canvasBackground) {
     CompiledTerminalLine line = prepared.compiledLine;
+    PreparedLineDrawPlan plan = prepared.drawPlan;
     for (int i = 0; i < line.spans().size(); i++) {
       if (workStats != null) workStats.preparedSpanVisitCount++;
       CompiledTerminalLine.Span span = line.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
-      int left = geometry.columnEdgePx(span.startColumn());
-      int right = geometry.columnEdgePx(span.endColumn());
+      int left = plan.spanLeftPx[i];
+      int right = plan.spanRightPx[i];
       if (style.background() != canvasBackground) {
         bgPaint.setColor(style.background());
         if (workStats != null) {
@@ -659,7 +661,7 @@ public final class RemoteTerminalRenderer {
           }
         }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
-            style.underlineColor(), false, prepared.layoutAt(i));
+            style.underlineColor(), false, prepared.layoutAt(i), left, right);
       }
     }
   }
@@ -697,6 +699,7 @@ public final class RemoteTerminalRenderer {
       float rowY,
       @NonNull TerminalAnimationState animationState) {
     CompiledTerminalLine compiled = prepared.compiledLine;
+    PreparedLineDrawPlan plan = prepared.drawPlan;
     for (int i = 0; i < compiled.spans().size(); i++) {
       CompiledTerminalLine.Span span = compiled.spans().get(i);
       CompiledTerminalLine.CompiledStyle style = span.style();
@@ -709,7 +712,8 @@ public final class RemoteTerminalRenderer {
           }
         }
         drawSpanForeground(canvas, span, rowY, style.foreground(),
-            style.underlineColor(), false, prepared.layoutAt(i));
+            style.underlineColor(), false, prepared.layoutAt(i),
+            plan.spanLeftPx[i], plan.spanRightPx[i]);
       }
     }
   }
@@ -736,6 +740,21 @@ public final class RemoteTerminalRenderer {
     CompiledTerminalLine.CompiledStyle style = span.style();
     int left = geometry.columnEdgePx(span.startColumn());
     int right = geometry.columnEdgePx(span.endColumn());
+    drawSpanForeground(canvas, span, rowY, foreground, underlineColor, overrideForeground,
+        preparedLayout, left, right);
+  }
+
+  private void drawSpanForeground(
+      Canvas canvas,
+      CompiledTerminalLine.Span span,
+      float rowY,
+      int foreground,
+      int underlineColor,
+      boolean overrideForeground,
+      @Nullable PreparedTextLayout preparedLayout,
+      int left,
+      int right) {
+    CompiledTerminalLine.CompiledStyle style = span.style();
     if (span instanceof CompiledTerminalLine.TextSpan) {
       CompiledTerminalLine.TextSpan textSpan =
           (CompiledTerminalLine.TextSpan) span;
