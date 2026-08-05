@@ -159,6 +159,19 @@ public final class PreparedLineDrawPlanTest {
     assertEquals(30, plan.staticDecorationRuns[0].rightPx);
   }
 
+  @Test
+  public void preparedSpecialGlyphEstimateCountsFourIntArrays() {
+    RenderLine line = new RenderLine(new LineKey(7L, 1L), new LineBody(2, false,
+        new CellValue[] {
+            new CellValue("▀", (byte) 1, null, null),
+            new CellValue("▄", (byte) 1, null, null)
+        }));
+    PreparedLineDrawPlan plan = buildPlan(line, 2);
+
+    // 80-byte run header + 4 int arrays + one byte family entry per glyph.
+    assertEquals(114L, plan.staticSpecialGlyphRuns[0].estimatedBytes());
+  }
+
   private static PreparedLineDrawPlan buildPlan(RenderLine line, int columns) {
     RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
     renderer.setFontMetrics(10f, 20f, 15f);

@@ -5,7 +5,7 @@
 分支：`agent/android-renderer-performance-round3`  
 Round 2 基线：`b2326f53`  
 Round 3 操作量基线：`57e212f5`  
-最终实现提交：`e65469fa`
+最终实现提交：`81de941d`（含 Round 3 hardening）
 
 本轮只改 `terminal-renderer` 的 Prepared 绘制计划、背景/装饰/特殊 glyph 绘制路径和测试基准，没有修改终端协议、CellValue 宽度语义、模型快照合并、字体路由或 Prepared cache 的默认预算。
 
@@ -28,7 +28,7 @@ Round 3 操作量基线：`57e212f5`
 
 ## 操作量结果
 
-数据来自 API 36 `medium_phone(AVD) - 16`、14sp、默认字体、每场景 10 次预热和 30 次采样；原始结果见 [android-renderer-performance-round3-final.jsonl](android-renderer-performance-round3-final.jsonl)。这些是 renderer cold/prepared-hit 微基准，不是完整应用帧时间。
+初始数据来自 API 36 `medium_phone(AVD) - 16`、14sp、默认字体、每场景 10 次预热和 30 次采样；原始结果见 [android-renderer-performance-round3-final.jsonl](android-renderer-performance-round3-final.jsonl)。这些是 renderer cold/prepared-hit 微基准，不是完整应用帧时间。Hardening 后的复测见 [android-renderer-performance-round3-hardening-api36.jsonl](android-renderer-performance-round3-hardening-api36.jsonl)。
 
 | 场景 | Round 3 基线 P95 | 最终 P95 | 主要变化 |
 | --- | ---: | ---: | --- |
@@ -47,14 +47,23 @@ P95 会受模拟器负载影响，表格只用于同一设备上的方向性观�
 
 ## 真实 View 滚动基准
 
-执行的是 opt-in 的 `RemoteTerminalViewRound2AcceptanceBenchmarkTest`，经过生产 `RemoteTerminalView`、`TerminalLineRenderNodeCache` 和 `TerminalPreparedLineCache`；不是裸 RenderNode 录制。
+执行的是 opt-in 的 `RemoteTerminalViewRound2AcceptanceBenchmarkTest`，经过生产 `RemoteTerminalView`、`TerminalLineRenderNodeCache` 和 `TerminalPreparedLineCache`；不是裸 RenderNode 录制。Hardening 后复测原始结果见 [android-renderer-performance-round3-view-hardening-api36.jsonl](android-renderer-performance-round3-view-hardening-api36.jsonl)。
 
 | 场景 | View P95 | FrameMetrics P95 | RenderNode records | hits | Prepared hits/misses | max bytes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1200 行简单回滚 | 17.280 ms | 25.925 ms | 2691 | 1621 | 318/94 | 4.68 MiB |
-| 5000 行复杂 TUI | 16.333 ms | 35.060 ms | 4350 | 56 | 178/183 | 11.94 MiB |
+| 1200 行简单回滚 | 17.457 ms | 24.313 ms | 2691 | 1621 | 630/2061 | 4.44 MiB |
+| 5000 行复杂 TUI | 15.535 ms | 50.204 ms | 4350 | 56 | 2824/4013 | 11.42 MiB |
 
-当前 API 36 模拟器的 FrameMetrics 样本在这次运行中全部超过 16.67ms；这说明测试环境有明显长帧，但不能证明长帧全部来自 RenderNode record。复杂场景的 View 侧 P95 接近预算，Prepared cache 保持在 12 MiB 预算内。
+Prepared hit/miss 现在直接累加每帧计数，不再把 frame-local counter 当作累计 counter；因此它们与实际生产路径访问量处于同一统计口径。当前 API 36 模拟器的 FrameMetrics 样本在这次运行中全部超过 16.67ms；这说明测试环境有明显长帧，但不能证明长帧全部来自 RenderNode record。复杂场景的 View 侧 P95 接近预算，Prepared cache 保持在 12 MiB 预算内。
+
+## Hardening 修复
+
+- 背景和 decoration run 现在同时检查物理像素边界，不会跨过被编译器省略的默认空白或 spacer；
+- 移除 draw plan 中生产绘制不再使用的索引数组，降低 Prepared cache 单行估算；
+- 修正 `PreparedSpecialGlyphRun` 的四组 `int[]` 内存估算；
+- Special glyph clip safety 已对完整 Block `U+2580..U+259F` 和 Braille `U+2800..U+28FF` 做 Bitmap 越界扫描；
+- 增加 gap parity 和 400 条固定种子随机 prepared-vs-legacy bitmap 测试；
+- GitHub Actions Android Gradle 验证改为 literal block，避免 shell 把续行反斜杠解析为任务参数。
 
 ## RenderNode 预热决策
 
@@ -71,6 +80,7 @@ P95 会受模拟器负载影响，表格只用于同一设备上的方向性观�
 - 显式 Round 3 renderer 操作量基准，API 36
 - 显式真实 View 滚动/缓存 churn 基准，API 36
 - legacy逐 Span 与 prepared plan Bitmap parity
+- gap、decoration key、special glyph clip safety 和随机 prepared-vs-legacy parity 测试
 - `git diff --check`
 
 尚未验证：
@@ -79,7 +89,7 @@ P95 会受模拟器负载影响，表格只用于同一设备上的方向性观�
 - 真实 Android 设备；
 - GitHub Actions/CI workflow。
 
-因此本报告可以宣布第三轮 renderer 代码和 API 36 验收完成，但不能把设备矩阵状态写成完整发布通过。
+因此本报告可以宣布第三轮 renderer hardening 代码和 API 36 验收完成，但不能把设备矩阵状态写成完整发布通过。GitHub Actions workflow 已修正，尚未产生远程 workflow run。
 
 ## 后续热点
 
