@@ -310,7 +310,12 @@ public final class TerminalSessionRuntime {
     this.model = model;
     this.modelExecutor = modelExecutor;
     this.model.bindRenderPublicationAuthority(renderPublicationAuthority);
-    this.model.bindRenderPublicationExecutor(modelExecutor, this::dispatchRenderNeeded);
+    this.model.bindRenderPublicationExecutor(
+        modelExecutor,
+        (publicationVersion, screenRevision) -> {
+          pipelineMetrics.onPublicationCreated(publicationVersion, screenRevision);
+          dispatchRenderNeeded();
+        });
     this.historyDemandMailbox =
         new HistoryDemandMailbox(modelExecutor, this::applyHistoryDemandUpdate);
     this.callbackExecutor = callbackExecutor;
@@ -757,14 +762,6 @@ public final class TerminalSessionRuntime {
         "screenRevision", screenRevision));
   }
 
-  /** 若模型操作推进了 publicationVersion，则同步 published 水位。 */
-  private void recordPublicationAdvance(long versionBefore) {
-    long versionAfter = model.lastPublicationVersion();
-    if (versionAfter > versionBefore) {
-      pipelineMetrics.onPublicationCreated(versionAfter, model.screenRevision);
-    }
-  }
-
   private static String ownerType(@Nullable Object owner) {
     return owner == null ? "none" : owner.getClass().getName();
   }
@@ -1111,7 +1108,6 @@ public final class TerminalSessionRuntime {
         decoded.bodies,
         decoded.missingKeys,
         0);
-    long publicationBefore = model.lastPublicationVersion();
     HistoryBodyResult bodyResult = model.applyLineBodyBatch(
         batch,
         new BodyBatchRequestContext(
@@ -1127,7 +1123,6 @@ public final class TerminalSessionRuntime {
     }
     if (bodyResult instanceof HistoryBodyResult.Applied) {
       recordCapturedModelState(false);
-      recordPublicationAdvance(publicationBefore);
     }
   }
 
@@ -1747,7 +1742,6 @@ public final class TerminalSessionRuntime {
     String failureStage = "APPLY";
     long commitBaseRevision = 0;
     long commitTargetRevision = 0;
-    long publicationBefore = model.lastPublicationVersion();
     long revisionBefore = model.screenRevision;
     try {
       switch (envelope.getPayloadCase()) {
@@ -1930,18 +1924,15 @@ public final class TerminalSessionRuntime {
       return;
     }
     TerminalRenderMetrics.modelApplyDuration(System.nanoTime() - applyStartedNanos);
-    updatePipelineAfterApply(envelope.getPayloadCase(), publicationBefore, revisionBefore);
+    updatePipelineAfterApply(envelope.getPayloadCase(), revisionBefore);
   }
 
   private void updatePipelineAfterApply(
       @NonNull TerminalScreenV3Proto.ScreenEnvelope.PayloadCase payloadCase,
-      long publicationBefore,
       long revisionBefore) {
     switch (payloadCase) {
-      case BASELINE:
-      case TERMINAL_COMMIT:
-        // 用 lastPublicationVersion 计数器而非 peek：UI 可能在 apply 与水位更新之间已消费 pending。
-        recordPublicationAdvance(publicationBefore);
+    case BASELINE:
+    case TERMINAL_COMMIT:
         if (model.screenRevision != revisionBefore) {
           pipelineMetrics.onModelApplied(model.screenRevision);
         }
@@ -2202,9 +2193,7 @@ public final class TerminalSessionRuntime {
     modelExecutor.execute(() -> {
       fullRenderRequestScheduled.set(false);
       if (isClosingOrClosed()) return;
-      long publicationBefore = model.lastPublicationVersion();
       model.requestFullRender();
-      recordPublicationAdvance(publicationBefore);
     });
   }
 

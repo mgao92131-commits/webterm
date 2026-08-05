@@ -46,7 +46,7 @@ public final class RemoteTerminalModel {
       new AtomicReference<>();
   private final AtomicLong publicationVersion = new AtomicLong();
   private Executor publicationExecutor;
-  private Runnable publicationFlushedListener;
+  private PublicationFlushedListener publicationFlushedListener;
   private boolean publicationFlushScheduled;
   private boolean pendingForceSnapshotRebuild;
   private long snapshotBuildCount;
@@ -54,6 +54,22 @@ public final class RemoteTerminalModel {
   /** 已安装的 projection/body 状态版本，以及最近一次 RenderSnapshot 对应的版本。 */
   private long stateMutationVersion;
   private long snapshotMutationVersion;
+
+  /** 在 RenderSnapshot 真正物化并发布后通知 Runtime 的水位。 */
+  @FunctionalInterface
+  public interface PublicationFlushedListener {
+    void onFlushed(long publicationVersion, long screenRevision);
+  }
+
+  private static final class FlushedPublication {
+    final long publicationVersion;
+    final long screenRevision;
+
+    FlushedPublication(long publicationVersion, long screenRevision) {
+      this.publicationVersion = publicationVersion;
+      this.screenRevision = screenRevision;
+    }
+  }
 
   private static final class RenderPublication {
     final long version;
@@ -129,12 +145,12 @@ public final class RemoteTerminalModel {
    * 后，连续 mutation 只在队尾安排一个 flush task。</p>
    */
   public synchronized void bindRenderPublicationExecutor(Executor executor) {
-    bindRenderPublicationExecutor(executor, null);
+    bindRenderPublicationExecutor(executor, (PublicationFlushedListener) null);
   }
 
   /** 绑定 Runtime 的 render-needed 通知；通知发生在快照真正物化之后。 */
   public synchronized void bindRenderPublicationExecutor(
-      Executor executor, Runnable publicationFlushedListener) {
+      Executor executor, PublicationFlushedListener publicationFlushedListener) {
     if (executor == null) throw new NullPointerException("executor");
     publicationExecutor = executor;
     this.publicationFlushedListener = publicationFlushedListener;
@@ -142,6 +158,16 @@ public final class RemoteTerminalModel {
         && !publicationFlushScheduled) {
       schedulePublicationFlushLocked();
     }
+  }
+
+  /** 保留旧的无参数通知入口，供尚未关心水位的调用方兼容。 */
+  public synchronized void bindRenderPublicationExecutor(
+      Executor executor, Runnable publicationFlushedListener) {
+    bindRenderPublicationExecutor(
+        executor,
+        publicationFlushedListener == null
+            ? (PublicationFlushedListener) null
+            : (version, revision) -> publicationFlushedListener.run());
   }
 
   /**
@@ -541,6 +567,16 @@ public final class RemoteTerminalModel {
 
   private void mergeExtentDirty(HistoryExtent previous, HistoryExtent current) {
     if (previous.equals(current)) return;
+    // 历史只向尾部追加时，旧序号的轴位置完全不变；只标记新增尾部，避免把整个
+    // 历史 extent 误报成 dirty。头部裁剪、重排或收缩仍保留全量退化语义。
+    if (!previous.isEmpty()
+        && !current.isEmpty()
+        && previous.firstSeq == current.firstSeq
+        && current.lastSeq > previous.lastSeq) {
+      pendingRenderDirty.mergeHistoryRange(
+          previous.lastSeq + 1, current.lastSeq, true);
+      return;
+    }
     if (!previous.isEmpty()) {
       pendingRenderDirty.mergeHistoryRange(
           previous.firstSeq, previous.lastSeq, true);
@@ -574,33 +610,39 @@ public final class RemoteTerminalModel {
       publicationFlushScheduled = false;
       // Executor 已关闭时保持旧的同步语义，不能把已安装的 projection 永久留在
       // 没有 RenderSnapshot 的状态。
-      if (flushPendingRenderPublicationLocked()
-          && publicationFlushedListener != null) {
+      FlushedPublication flushed = flushPendingRenderPublicationLocked();
+      if (flushed != null && publicationFlushedListener != null) {
         // 这里只会发生在 executor 拒绝任务的异常兜底路径；正常路径的 listener
         // 在退出 model monitor 后调用。回调本身不能依赖新的 executor 任务。
-        publicationFlushedListener.run();
+        publicationFlushedListener.onFlushed(
+            flushed.publicationVersion, flushed.screenRevision);
       }
     }
   }
 
   private void flushPendingRenderPublication() {
-    Runnable listener = null;
+    PublicationFlushedListener listener = null;
+    FlushedPublication flushed = null;
     synchronized (this) {
       publicationFlushScheduled = false;
-      boolean flushed = flushPendingRenderPublicationLocked();
-      if (flushed) listener = publicationFlushedListener;
+      flushed = flushPendingRenderPublicationLocked();
+      if (flushed != null) listener = publicationFlushedListener;
       if ((!pendingRenderDirty.isEmpty() || !pendingTerminalState.isEmpty())
           && publicationExecutor != null) {
         schedulePublicationFlushLocked();
       }
     }
-    if (listener != null) listener.run();
+    if (listener != null && flushed != null) {
+      listener.onFlushed(flushed.publicationVersion, flushed.screenRevision);
+    }
   }
 
   /** 只在 synchronized(model) 内调用；把当前合并状态物化成一个 publication。 */
-  private boolean flushPendingRenderPublicationLocked() {
-    if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) return false;
+  private FlushedPublication flushPendingRenderPublicationLocked() {
+    if (pendingRenderDirty.isEmpty() && pendingTerminalState.isEmpty()) return null;
     long started = System.nanoTime();
+    RenderSnapshot currentSnapshot;
+    long version;
     try {
       RenderDirtyState currentDirty = pendingRenderDirty;
       TerminalStateUpdate currentState = pendingTerminalState;
@@ -610,8 +652,8 @@ public final class RemoteTerminalModel {
       pendingForceSnapshotRebuild = false;
       publicationFlushCount++;
       publishRenderSnapshot(currentDirty, forceSnapshotRebuild);
-      RenderSnapshot currentSnapshot = renderSnapshot;
-      long version = publicationVersion.incrementAndGet();
+      currentSnapshot = renderSnapshot;
+      version = publicationVersion.incrementAndGet();
       pendingPublication.getAndUpdate(previous -> {
         if (previous == null) {
           return new RenderPublication(
@@ -631,7 +673,7 @@ public final class RemoteTerminalModel {
     } finally {
       TerminalRenderMetrics.renderPublicationDuration(System.nanoTime() - started);
     }
-    return true;
+    return new FlushedPublication(version, currentSnapshot.screenRevision);
   }
 
   private void publishRenderSnapshot(

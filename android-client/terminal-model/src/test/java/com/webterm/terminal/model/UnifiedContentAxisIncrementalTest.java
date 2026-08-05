@@ -55,6 +55,47 @@ public final class UnifiedContentAxisIncrementalTest {
   }
 
   @Test
+  public void appendOneLineSamePageDoesNotRebuildWholeHistory() throws Exception {
+    Fixture fx = fixture(300);
+    HistoryAxisPage page0 = fx.axis.pageForTest(0);
+    HistoryAxisPage page1 = fx.axis.pageForTest(1);
+    long beforeFullRebuilds = TerminalRenderMetrics.historyAxisFullRebuildCount();
+    long beforeScanned = TerminalRenderMetrics.historyAxisRowsScanned();
+
+    assertTrue(fx.model.applyTerminalCommit(appendHistoryCommit(301)));
+    fx.model.consumeRenderUpdate();
+
+    UnifiedContentAxis after = fx.model.renderSnapshot().contentAxis;
+    assertSame(page0, after.pageForTest(0));
+    assertSame(page1, after.pageForTest(1));
+    assertTrue("new tail page must be rebuilt", after.pageForTest(2) != fx.axis.pageForTest(2));
+    assertEquals(0,
+        TerminalRenderMetrics.historyAxisFullRebuildCount() - beforeFullRebuilds);
+    assertTrue("tail append should scan at most two pages",
+        TerminalRenderMetrics.historyAxisRowsScanned() - beforeScanned <= 256);
+    assertEquals(301, after.historyRowCount());
+  }
+
+  @Test
+  public void appendAcrossPageBoundaryKeepsExistingPages() throws Exception {
+    Fixture fx = fixture(256);
+    HistoryAxisPage page0 = fx.axis.pageForTest(0);
+    HistoryAxisPage page1 = fx.axis.pageForTest(1);
+    long beforeFullRebuilds = TerminalRenderMetrics.historyAxisFullRebuildCount();
+
+    assertTrue(fx.model.applyTerminalCommit(appendHistoryCommit(257)));
+    fx.model.consumeRenderUpdate();
+
+    UnifiedContentAxis after = fx.model.renderSnapshot().contentAxis;
+    assertSame(page0, after.pageForTest(0));
+    assertSame(page1, after.pageForTest(1));
+    assertNotNull(after.pageForTest(2));
+    assertEquals(0,
+        TerminalRenderMetrics.historyAxisFullRebuildCount() - beforeFullRebuilds);
+    assertEquals(257, after.historyRowCount());
+  }
+
+  @Test
   public void generationChangeForcesFullHistoryRebuild() throws Exception {
     Fixture fx = fixture(200);
     long before = TerminalRenderMetrics.historyAxisFullRebuildCount();
@@ -83,6 +124,18 @@ public final class UnifiedContentAxisIncrementalTest {
             0),
         new HistoryRequestContext(new ProjectionIdentity("i1", 1, 1), fromSeq, toSeq, fromSeq));
     assertTrue(result instanceof HistoryBodyResult.Applied);
+  }
+
+  private static TerminalCommit appendHistoryCommit(long newSeq) {
+    LineKey key = new LineKey(20_000 + newSeq, 1);
+    return SemanticTestData.commitLegacy(
+        "i1", 1, 1, 2, 1, 1, TerminalBufferKind.MAIN,
+        List.of(new LineBodyRecord(key, SemanticTestData.body("append" + newSeq))),
+        null,
+        new HistoryMutation(
+            new HistoryExtent(1, newSeq),
+            List.of(new HistoryPush(newSeq, key))),
+        null, null, null);
   }
 
   private static Fixture fixture(int historyRows) {

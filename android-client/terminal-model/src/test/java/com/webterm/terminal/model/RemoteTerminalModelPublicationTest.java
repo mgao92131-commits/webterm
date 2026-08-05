@@ -113,6 +113,28 @@ public final class RemoteTerminalModelPublicationTest {
   }
 
   @Test
+  public void queuedPublicationListenerReceivesFlushedVersionAndRevision() {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    QueueExecutor executor = new QueueExecutor();
+    AtomicLong callbackVersion = new AtomicLong();
+    AtomicLong callbackRevision = new AtomicLong();
+    model.bindRenderPublicationExecutor(executor, (version, revision) -> {
+      callbackVersion.set(version);
+      callbackRevision.set(revision);
+    });
+
+    assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));
+    executor.runAll();
+    RenderUpdate update = model.consumeRenderUpdate();
+
+    assertNotNull(update);
+    assertTrue("callback version must identify the flushed update",
+        callbackVersion.get() == update.publicationVersion);
+    assertTrue("callback revision must identify the flushed snapshot",
+        callbackRevision.get() == update.snapshot.screenRevision);
+  }
+
+  @Test
   public void vsyncConsumeDoesNotWaitForModelMonitor() throws Exception {
     RemoteTerminalModel model = new RemoteTerminalModel();
     assertTrue(model.applyBaseline(SemanticTestData.baseline(1, 1)));

@@ -182,13 +182,24 @@ public final class UnifiedContentAxis {
     HistoryExtent extent = surface.historyCatalog.extent();
     if (extent.isEmpty()) return HistoryPart.EMPTY;
 
-    boolean canIncremental = previous != null
+    boolean sameExtentIncremental = previous != null
         && previous.extent != null
         && previous.extent.equals(extent)
         && dirty != null
         && dirty.historyChanged
         && !dirty.historyStructureChanged
         && dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
+
+    boolean tailAppendIncremental = previous != null
+        && previous.extent != null
+        && !previous.extent.isEmpty()
+        && previous.extent.firstSeq == extent.firstSeq
+        && extent.lastSeq > previous.extent.lastSeq
+        && dirty != null
+        && dirty.historyChanged
+        && dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
+
+    boolean canIncremental = sameExtentIncremental || tailAppendIncremental;
 
     if (!canIncremental) {
       return buildHistoryFull(surface, "structure_or_unknown");
@@ -289,8 +300,14 @@ public final class UnifiedContentAxis {
     long started = System.nanoTime();
     Map<Long, SegmentBlock> blocks = new HashMap<>();
     if (previous != null) blocks.putAll(previous.blocksByPage);
-    long firstPage = fullRebuild ? dirtyFirstPage : previous.firstPage;
-    long lastPage = fullRebuild ? dirtyLastPage : previous.lastPage;
+    long extentFirstPage = HistoryResidencyIndex.pageNumber(extent.firstSeq);
+    long extentLastPage = HistoryResidencyIndex.pageNumber(extent.lastSeq);
+    long firstPage = fullRebuild
+        ? dirtyFirstPage
+        : Math.min(previous.firstPage, extentFirstPage);
+    long lastPage = fullRebuild
+        ? dirtyLastPage
+        : Math.max(previous.lastPage, extentLastPage);
     int pagesVisited = 0;
     int itemsVisited = 0;
     int itemsCreated = 0;
