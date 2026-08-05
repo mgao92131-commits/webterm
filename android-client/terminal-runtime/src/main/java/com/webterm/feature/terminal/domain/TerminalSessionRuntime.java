@@ -1053,10 +1053,9 @@ public final class TerminalSessionRuntime {
                   }
                   return;
                 }
-                if (!activeBatchStillRelevant(active)) {
-                  HistoryDemandMetrics.obsoleteBatchDropped(result.bodies.size());
-                  return;
-                }
+                // 不要求批次仍与当前可见区间相交：批次可能是合法的方向性预取。
+                // beginApplying、投影 identity 和 HistoryBodyReducer 会共同决定
+                // 响应是否仍可安全写入正文缓存。
                 applyDecodedLineBodyBatch(active, result);
               } finally {
                 if (owned) visibleBodyLoader.complete(active);
@@ -1130,14 +1129,6 @@ public final class TerminalSessionRuntime {
       recordCapturedModelState(false);
       recordPublicationAdvance(publicationBefore);
     }
-  }
-
-  private boolean activeBatchStillRelevant(
-      @NonNull VisibleBodyLoader.ActiveRequest active) {
-    VisibleBodyLoader.Demand demand = visibleBodyLoader.latestDemand();
-    if (demand == null) return false;
-    return active.batch.plannedFromSeq <= demand.visibleToSeq
-        && demand.visibleFromSeq <= active.batch.plannedToSeq;
   }
 
   private boolean handleBatchFailure(@NonNull LineBodyBatchSource.Failure failure) {
