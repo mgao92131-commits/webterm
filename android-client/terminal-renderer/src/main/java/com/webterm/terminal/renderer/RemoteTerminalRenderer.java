@@ -640,7 +640,7 @@ public final class RemoteTerminalRenderer {
     CompiledTerminalLine line = prepared.compiledLine;
     PreparedLineDrawPlan plan = prepared.drawPlan;
     for (int backgroundRunIndex = 0;
-         backgroundRunIndex < plan.backgroundSpanIndexes.length;
+         backgroundRunIndex < plan.backgroundStartPx.length;
          backgroundRunIndex++) {
       bgPaint.setColor(plan.backgroundColors[backgroundRunIndex]);
       if (workStats != null) {

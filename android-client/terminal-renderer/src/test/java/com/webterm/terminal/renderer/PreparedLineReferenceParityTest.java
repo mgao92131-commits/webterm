@@ -74,6 +74,63 @@ public final class PreparedLineReferenceParityTest {
     optimized.recycle();
   }
 
+  @Test
+  public void preparedPlanMatchesLegacyAcrossOmittedDefaultBlankGap() {
+    StyleValue styled = new StyleValue(
+        TerminalColor.rgb(0xE0E0E0), TerminalColor.rgb(0x203040),
+        TerminalColor.rgb(0x40FF80), 1 << 3);
+    CellValue[] cells = new CellValue[] {
+        new CellValue("A", (byte) 1, styled, null),
+        CellValue.EMPTY,
+        new CellValue("B", (byte) 1, styled, null)
+    };
+    RenderLine line = new RenderLine(
+        new LineKey(8_002L, 1L), new LineBody(3, false, cells));
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(CELL_WIDTH, LINE_HEIGHT, 15f);
+    CompiledTerminalLine compiled = renderer.compileLine(
+        line, 3, TerminalPalette.defaults(), BACKGROUND);
+    PreparedTerminalLine prepared = renderer.compileAndPrepareLine(
+        line, 3, TerminalPalette.defaults(), BACKGROUND);
+
+    Bitmap legacy = Bitmap.createBitmap(3 * CELL_WIDTH, LINE_HEIGHT, Bitmap.Config.ARGB_8888);
+    Bitmap optimized = Bitmap.createBitmap(3 * CELL_WIDTH, LINE_HEIGHT, Bitmap.Config.ARGB_8888);
+    legacy.eraseColor(BACKGROUND);
+    optimized.eraseColor(BACKGROUND);
+    renderer.drawCompiledLineContent(new Canvas(legacy), compiled, 0f, BACKGROUND);
+    renderer.drawPreparedLineContent(new Canvas(optimized), prepared, 0f, BACKGROUND);
+
+    for (int y = 0; y < legacy.getHeight(); y++) {
+      for (int x = 0; x < legacy.getWidth(); x++) {
+        assertEquals("gap pixel differs at " + x + "," + y,
+            legacy.getPixel(x, y), optimized.getPixel(x, y));
+      }
+    }
+    legacy.recycle();
+    optimized.recycle();
+  }
+
+  @Test
+  public void decorationRunIgnoresUnusedStrikeColorWhenStrikeIsOff() {
+    StyleValue first = new StyleValue(
+        TerminalColor.rgb(0xFF0000), null, TerminalColor.rgb(0x00FF00), 1 << 3);
+    StyleValue second = new StyleValue(
+        TerminalColor.rgb(0x0000FF), null, TerminalColor.rgb(0x00FF00), 1 << 3);
+    RenderLine line = new RenderLine(new LineKey(8_003L, 1L), new LineBody(2, false,
+        new CellValue[] {
+            new CellValue("A", (byte) 1, first, null),
+            new CellValue("B", (byte) 1, second, null)
+        }));
+    RemoteTerminalRenderer renderer = new RemoteTerminalRenderer();
+    renderer.setFontMetrics(CELL_WIDTH, LINE_HEIGHT, 15f);
+    PreparedTerminalLine prepared = renderer.compileAndPrepareLine(
+        line, 2, TerminalPalette.defaults(), BACKGROUND);
+
+    assertEquals(1, prepared.drawPlan.staticDecorationRuns.length);
+    assertEquals(0, prepared.drawPlan.staticDecorationRuns[0].leftPx);
+    assertEquals(2 * CELL_WIDTH, prepared.drawPlan.staticDecorationRuns[0].rightPx);
+  }
+
   private static Bitmap bitmap() {
     Bitmap bitmap = Bitmap.createBitmap(COLUMNS * CELL_WIDTH, LINE_HEIGHT,
         Bitmap.Config.ARGB_8888);

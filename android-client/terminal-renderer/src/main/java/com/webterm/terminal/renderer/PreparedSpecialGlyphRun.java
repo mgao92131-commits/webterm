@@ -79,8 +79,10 @@ final class PreparedSpecialGlyphRun {
 
   long estimatedBytes() {
     return 80L
-        + (long) codePoints.length * Integer.BYTES * 4L
+        + (long) codePoints.length * Integer.BYTES
         + (long) columns.length * Integer.BYTES
+        + (long) glyphLeftPx.length * Integer.BYTES
+        + (long) glyphRightPx.length * Integer.BYTES
         + families.length;
   }
 }

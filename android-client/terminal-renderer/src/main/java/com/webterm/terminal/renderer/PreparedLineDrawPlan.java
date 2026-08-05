@@ -17,13 +17,9 @@ final class PreparedLineDrawPlan {
   final int[] staticForegroundSpanIndexes;
   final int[] slowBlinkSpanIndexes;
   final int[] fastBlinkSpanIndexes;
-  final int[] backgroundSpanIndexes;
-  final int[] backgroundEndSpanIndexes;
   final int[] backgroundStartPx;
   final int[] backgroundEndPx;
   final int[] backgroundColors;
-  final int[] decorationSpanIndexes;
-  final int[] specialGlyphSpanIndexes;
   final PreparedDecorationRun[] staticDecorationRuns;
   final PreparedDecorationRun[] slowBlinkDecorationRuns;
   final PreparedDecorationRun[] fastBlinkDecorationRuns;
@@ -39,13 +35,9 @@ final class PreparedLineDrawPlan {
       int[] staticForegroundSpanIndexes,
       int[] slowBlinkSpanIndexes,
       int[] fastBlinkSpanIndexes,
-      int[] backgroundSpanIndexes,
-      int[] backgroundEndSpanIndexes,
       int[] backgroundStartPx,
       int[] backgroundEndPx,
       int[] backgroundColors,
-      int[] decorationSpanIndexes,
-      int[] specialGlyphSpanIndexes,
       PreparedDecorationRun[] staticDecorationRuns,
       PreparedDecorationRun[] slowBlinkDecorationRuns,
       PreparedDecorationRun[] fastBlinkDecorationRuns,
@@ -57,13 +49,9 @@ final class PreparedLineDrawPlan {
     this.staticForegroundSpanIndexes = staticForegroundSpanIndexes;
     this.slowBlinkSpanIndexes = slowBlinkSpanIndexes;
     this.fastBlinkSpanIndexes = fastBlinkSpanIndexes;
-    this.backgroundSpanIndexes = backgroundSpanIndexes;
-    this.backgroundEndSpanIndexes = backgroundEndSpanIndexes;
     this.backgroundStartPx = backgroundStartPx;
     this.backgroundEndPx = backgroundEndPx;
     this.backgroundColors = backgroundColors;
-    this.decorationSpanIndexes = decorationSpanIndexes;
-    this.specialGlyphSpanIndexes = specialGlyphSpanIndexes;
     this.staticDecorationRuns = staticDecorationRuns;
     this.slowBlinkDecorationRuns = slowBlinkDecorationRuns;
     this.fastBlinkDecorationRuns = fastBlinkDecorationRuns;
@@ -76,13 +64,9 @@ final class PreparedLineDrawPlan {
         + arrayBytes(staticForegroundSpanIndexes)
         + arrayBytes(slowBlinkSpanIndexes)
         + arrayBytes(fastBlinkSpanIndexes)
-        + arrayBytes(backgroundSpanIndexes)
-        + arrayBytes(backgroundEndSpanIndexes)
         + arrayBytes(backgroundStartPx)
         + arrayBytes(backgroundEndPx)
         + arrayBytes(backgroundColors)
-        + arrayBytes(decorationSpanIndexes)
-        + arrayBytes(specialGlyphSpanIndexes)
         + objectArrayBytes(staticDecorationRuns)
         + objectArrayBytes(slowBlinkDecorationRuns)
         + objectArrayBytes(fastBlinkDecorationRuns)
@@ -101,8 +85,6 @@ final class PreparedLineDrawPlan {
     int slowCount = 0;
     int fastCount = 0;
     int backgroundCount = 0;
-    int decorationCount = 0;
-    int specialCount = 0;
     int staticDecorationRunCount = 0;
     int slowDecorationRunCount = 0;
     int fastDecorationRunCount = 0;
@@ -113,6 +95,7 @@ final class PreparedLineDrawPlan {
     int previousBackgroundRight = 0;
     int previousBackgroundColor = 0;
     int previousDecorationSpan = -1;
+    int previousDecorationRight = 0;
     ResolvedTerminalStyle.UnderlineKind previousUnderlineKind = null;
     int previousUnderlineColor = 0;
     boolean previousStrike = false;
@@ -140,14 +123,18 @@ final class PreparedLineDrawPlan {
       } else {
         previousBackgroundSpan = -1;
       }
-      if (style.hasVisibleDecoration()) decorationCount++;
       if (style.hasVisibleDecoration()) {
+        int left = geometry.columnEdgePx(span.startColumn());
+        int right = geometry.columnEdgePx(span.endColumn());
+        int underlineColor = normalizedUnderlineColor(style);
+        int strikeColor = normalizedStrikeColor(style);
         CompiledTerminalLine.BlinkKind blinkKind = style.blinkKind();
         boolean sameRun = previousDecorationSpan + 1 == i
+            && previousDecorationRight == left
             && previousUnderlineKind == style.underlineKind()
-            && previousUnderlineColor == style.underlineColor()
+            && previousUnderlineColor == underlineColor
             && previousStrike == style.strike()
-            && previousStrikeColor == style.foreground()
+            && previousStrikeColor == strikeColor
             && previousBlinkKind == blinkKind;
         if (!sameRun) {
           if (blinkKind == CompiledTerminalLine.BlinkKind.FAST) fastDecorationRunCount++;
@@ -155,17 +142,21 @@ final class PreparedLineDrawPlan {
           else staticDecorationRunCount++;
         }
         previousDecorationSpan = i;
+        previousDecorationRight = right;
         previousUnderlineKind = style.underlineKind();
-        previousUnderlineColor = style.underlineColor();
+        previousUnderlineColor = underlineColor;
         previousStrike = style.strike();
-        previousStrikeColor = style.foreground();
+        previousStrikeColor = strikeColor;
         previousBlinkKind = blinkKind;
       } else {
         previousDecorationSpan = -1;
+        previousDecorationRight = 0;
         previousUnderlineKind = null;
+        previousUnderlineColor = 0;
+        previousStrike = false;
+        previousStrikeColor = 0;
         previousBlinkKind = CompiledTerminalLine.BlinkKind.NONE;
       }
-      if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) specialCount++;
       if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
         boolean sameRun = i > 0
             && spans.get(i - 1) instanceof CompiledTerminalLine.SpecialGlyphSpan
@@ -190,13 +181,9 @@ final class PreparedLineDrawPlan {
     int[] staticIndexes = new int[staticCount];
     int[] slowIndexes = new int[slowCount];
     int[] fastIndexes = new int[fastCount];
-    int[] backgroundIndexes = new int[backgroundCount];
-    int[] backgroundEndIndexes = new int[backgroundCount];
     int[] backgroundStart = new int[backgroundCount];
     int[] backgroundEnd = new int[backgroundCount];
     int[] backgroundColors = new int[backgroundCount];
-    int[] decorationIndexes = new int[decorationCount];
-    int[] specialIndexes = new int[specialCount];
     PreparedDecorationRun[] staticDecorationRuns =
         new PreparedDecorationRun[staticDecorationRunCount];
     PreparedDecorationRun[] slowDecorationRuns =
@@ -213,9 +200,6 @@ final class PreparedLineDrawPlan {
     int slowIndex = 0;
     int fastIndex = 0;
     int backgroundIndex = 0;
-    int decorationIndex = 0;
-    int specialIndex = 0;
-    int decorationSourceIndex = 0;
     int staticDecorationIndex = 0;
     int slowDecorationIndex = 0;
     int fastDecorationIndex = 0;
@@ -231,19 +215,16 @@ final class PreparedLineDrawPlan {
       }
       if (style.background() != canvasBackground) {
         boolean startsRun = backgroundIndex == 0
-            || backgroundEndIndexes[backgroundIndex - 1] != i
+            || backgroundEnd[backgroundIndex - 1] != left[i]
             || backgroundColors[backgroundIndex - 1] != style.background();
         if (startsRun) {
-          backgroundIndexes[backgroundIndex] = i;
           backgroundStart[backgroundIndex] = left[i];
           backgroundColors[backgroundIndex] = style.background();
           backgroundIndex++;
         }
-        backgroundEndIndexes[backgroundIndex - 1] = i + 1;
         backgroundEnd[backgroundIndex - 1] = right[i];
       }
       if (style.hasVisibleDecoration()) {
-        decorationIndexes[decorationIndex++] = i;
         CompiledTerminalLine.BlinkKind blinkKind = style.blinkKind();
         PreparedDecorationRun[] target;
         int targetIndex;
@@ -260,14 +241,16 @@ final class PreparedLineDrawPlan {
         PreparedDecorationRun run = targetIndex == 0 ? null : target[targetIndex - 1];
         boolean canExtend = run != null
             && run.endSpanIndexExclusive == i
+            && run.rightPx == left[i]
             && run.underlineKind == style.underlineKind()
-            && run.underlineColor == style.underlineColor()
+            && run.underlineColor == normalizedUnderlineColor(style)
             && run.strike == style.strike()
-            && run.strikeColor == style.foreground();
+            && run.strikeColor == normalizedStrikeColor(style);
         if (!canExtend) {
           run = new PreparedDecorationRun(
-              i, i + 1, left[i], right[i], style.underlineKind(), style.underlineColor(),
-              style.strike(), style.foreground(), blinkKind);
+              i, i + 1, left[i], right[i], style.underlineKind(),
+              normalizedUnderlineColor(style), style.strike(), normalizedStrikeColor(style),
+              blinkKind);
           target[targetIndex] = run;
           if (blinkKind == CompiledTerminalLine.BlinkKind.FAST) fastDecorationIndex++;
           else if (blinkKind == CompiledTerminalLine.BlinkKind.SLOW) slowDecorationIndex++;
@@ -276,10 +259,6 @@ final class PreparedLineDrawPlan {
           run.endSpanIndexExclusive = i + 1;
           run.rightPx = right[i];
         }
-        decorationSourceIndex++;
-      }
-      if (span instanceof CompiledTerminalLine.SpecialGlyphSpan) {
-        specialIndexes[specialIndex++] = i;
       }
     }
     int staticSpecialIndex = 0;
@@ -316,11 +295,21 @@ final class PreparedLineDrawPlan {
       start = end;
     }
     return new PreparedLineDrawPlan(
-        left, right, staticIndexes, slowIndexes, fastIndexes, backgroundIndexes,
-        backgroundEndIndexes,
-        backgroundStart, backgroundEnd, backgroundColors, decorationIndexes, specialIndexes,
+        left, right, staticIndexes, slowIndexes, fastIndexes,
+        backgroundStart, backgroundEnd, backgroundColors,
         staticDecorationRuns, slowDecorationRuns, fastDecorationRuns,
         staticSpecialRuns, slowSpecialRuns, fastSpecialRuns);
+  }
+
+  private static int normalizedUnderlineColor(
+      @NonNull CompiledTerminalLine.CompiledStyle style) {
+    return style.underlineKind() == ResolvedTerminalStyle.UnderlineKind.NONE
+        ? 0 : style.underlineColor();
+  }
+
+  private static int normalizedStrikeColor(
+      @NonNull CompiledTerminalLine.CompiledStyle style) {
+    return style.strike() ? style.foreground() : 0;
   }
 
   long estimatedBytes() {
