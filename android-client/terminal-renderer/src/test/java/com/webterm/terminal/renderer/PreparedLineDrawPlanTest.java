@@ -168,8 +168,8 @@ public final class PreparedLineDrawPlanTest {
         }));
     PreparedLineDrawPlan plan = buildPlan(line, 2);
 
-    // 80-byte run header + 4 int arrays + one byte family entry per glyph.
-    assertEquals(114L, plan.staticSpecialGlyphRuns[0].estimatedBytes());
+    // 80-byte run estimate + five array headers and their element payloads.
+    assertEquals(194L, plan.staticSpecialGlyphRuns[0].estimatedBytes());
   }
 
   private static PreparedLineDrawPlan buildPlan(RenderLine line, int columns) {
