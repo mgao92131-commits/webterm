@@ -7,6 +7,7 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 import java.util.BitSet;
+import java.util.List;
 
 public final class RenderDirtyStateMergeTest {
 
@@ -191,5 +192,28 @@ public final class RenderDirtyStateMergeTest {
 
     assertFalse(dirty.fullInvalidate);
     assertTrue(dirty.screenRegionInvalidate);
+  }
+
+  @Test
+  public void disjointHistoryRangesStaySeparate() {
+    RenderDirtyState dirty = state();
+    dirty.mergeHistoryRange(1000, 1100, false);
+    dirty.mergeHistoryRange(100_000, 100_000, false);
+
+    assertEquals(List.of(
+        new HistorySeqRange(1000, 1100),
+        new HistorySeqRange(100_000, 100_000)), dirty.historyRanges());
+    assertFalse(dirty.historyRangesOverflow);
+  }
+
+  @Test
+  public void tooManyHistoryRangesRequestFullAxisRebuild() {
+    RenderDirtyState dirty = state();
+    for (int i = 0; i < RenderDirtyState.MAX_HISTORY_DIRTY_RANGES + 1; i++) {
+      dirty.mergeHistoryRange(10_000L + i * 100L, 10_000L + i * 100L, false);
+    }
+
+    assertTrue(dirty.historyRangesOverflow);
+    assertTrue(dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq);
   }
 }

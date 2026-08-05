@@ -258,6 +258,8 @@ public final class ScreenProjectionReducer {
       }
 
       tx.bodyCache().evictIfNeeded(pins == null ? EvictionPins.NONE : pins);
+      List<HistorySeqRange> evictedHistoryRanges =
+          tx.bodyCache().evictedHistoryRanges();
 
       TerminalSurfaceState nextSurface = tx.commit();
       TerminalSurfaceState main =
@@ -277,7 +279,8 @@ public final class ScreenProjectionReducer {
           commit.palette == null ? current.palette : commit.palette);
       return new ProjectionResult.Applied(
           next, new ProjectionDelta(
-              false, changedRows, exposedRows, screenScrollRows, historyChanged, false));
+              false, changedRows, exposedRows, screenScrollRows, historyChanged, false,
+              evictedHistoryRanges));
     } catch (CommitValidationException invalidHistory) {
       return new ProjectionResult.NeedsBaseline(
           ProjectionFault.INVALID_HISTORY_MUTATION);

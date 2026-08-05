@@ -1207,8 +1207,8 @@ public final class RemoteTerminalView extends View {
     // extent/geometry 变化，或旧调用方没有提供精确范围时，保留安全 FULL 退化。
     if (visibleHistoryChanged) {
       boolean hasRange = dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
-      if (dirty.historyStructureChanged || !hasRange) {
-        setFull(plan, dirty.historyStructureChanged
+      if (dirty.historyStructureChanged || dirty.historyRangesOverflow || !hasRange) {
+        setFull(plan, dirty.historyStructureChanged || dirty.historyRangesOverflow
             ? TerminalRenderMetrics.FullInvalidateReason.HISTORY_STRUCTURE_CHANGED
             : TerminalRenderMetrics.FullInvalidateReason.HISTORY_RANGE_UNKNOWN);
         return plan;

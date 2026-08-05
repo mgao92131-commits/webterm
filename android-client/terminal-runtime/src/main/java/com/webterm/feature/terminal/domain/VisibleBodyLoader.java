@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -131,13 +132,22 @@ public final class VisibleBodyLoader {
   private long nextCallId = 1;
   private long nextDemandEpoch = 1;
   private long lastPlannedDemandEpoch = Long.MIN_VALUE;
+  /** 同一个静止 demand 只允许完成一批方向性预取，避免响应后无限泵送。 */
+  private long purePrefetchStoppedDemandEpoch = Long.MIN_VALUE;
+  private String latestDemandInstanceId = "";
+  private long latestDemandLayoutEpoch;
+  private long latestDemandHistoryGeneration;
   private boolean closed;
 
   public synchronized void setDemand(@Nullable Demand demand) {
     if (closed) return;
     latestDemand = demand;
+    latestDemandInstanceId = "";
+    latestDemandLayoutEpoch = 0;
+    latestDemandHistoryGeneration = 0;
     // setDemand 只用于投影尚未完整时的占位需求；它没有对应的已规划批次。
     pendingPlan = null;
+    purePrefetchStoppedDemandEpoch = Long.MIN_VALUE;
     if (demand != null) {
       nextDemandEpoch = Math.max(nextDemandEpoch, demand.demandEpoch + 1);
     }
@@ -157,6 +167,18 @@ public final class VisibleBodyLoader {
     Demand candidate = new Demand(
         visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
         nextDemandEpoch++, createdAtNanos);
+    boolean sameDemand = latestDemand != null
+        && latestDemand.visibleFromSeq == candidate.visibleFromSeq
+        && latestDemand.visibleToSeq == candidate.visibleToSeq
+        && latestDemand.anchorSeq == candidate.anchorSeq
+        && latestDemand.direction == candidate.direction
+        && latestDemand.visibleRowCount == candidate.visibleRowCount
+        && Objects.equals(latestDemandInstanceId, instanceId)
+        && latestDemandLayoutEpoch == layoutEpoch
+        && latestDemandHistoryGeneration == generation;
+    if (sameDemand && purePrefetchStoppedDemandEpoch == latestDemand.demandEpoch) {
+      return latestDemand;
+    }
 
     // 活动请求已经覆盖新视口时，不需要重新规划；新 Demand 复用活动请求的
     // epoch，响应仍归属于同一个在途批次。
@@ -171,6 +193,9 @@ public final class VisibleBodyLoader {
       latestDemand = new Demand(
           visibleFromSeq, visibleToSeq, anchorSeq, direction, rows,
           activeRequest.batch.demandEpoch, createdAtNanos);
+      latestDemandInstanceId = instanceId;
+      latestDemandLayoutEpoch = layoutEpoch;
+      latestDemandHistoryGeneration = generation;
       HistoryDemandMetrics.fetchCoveredByActive();
       return latestDemand;
     }
@@ -181,6 +206,9 @@ public final class VisibleBodyLoader {
         extent, history, bodyCache, catalog);
     if (missing == null) {
       latestDemand = candidate;
+      latestDemandInstanceId = instanceId;
+      latestDemandLayoutEpoch = layoutEpoch;
+      latestDemandHistoryGeneration = generation;
       pendingPlan = new PendingPlan(null);
       HistoryDemandMetrics.fetchPlanReused();
       return latestDemand;
@@ -198,6 +226,10 @@ public final class VisibleBodyLoader {
       HistoryDemandMetrics.fetchCancelledForDistance();
     }
     latestDemand = candidate;
+    if (!sameDemand) purePrefetchStoppedDemandEpoch = Long.MIN_VALUE;
+    latestDemandInstanceId = instanceId;
+    latestDemandLayoutEpoch = layoutEpoch;
+    latestDemandHistoryGeneration = generation;
     pendingPlan = new PendingPlan(missing);
     HistoryDemandMetrics.fetchPlanCreated();
     return latestDemand;
@@ -237,6 +269,10 @@ public final class VisibleBodyLoader {
     if (demand.demandEpoch > 0) lastPlannedDemandEpoch = demand.demandEpoch;
     PlanState state = new PlanState();
     try {
+      if (demand.demandEpoch > 0
+          && demand.demandEpoch == purePrefetchStoppedDemandEpoch) {
+        return null;
+      }
       if (closed || extent.isEmpty()
           || !extent.contains(demand.visibleFromSeq)
           || !extent.contains(demand.visibleToSeq)) {
@@ -312,6 +348,9 @@ public final class VisibleBodyLoader {
   public synchronized boolean begin(@NonNull Batch batch, @NonNull Runnable onCancel) {
     if (closed || activeRequest != null) return false;
     activeRequest = new ActiveRequest(nextCallId++, batch, () -> onCancel.run());
+    if (batch.visibleKeyCount == 0 && batch.prefetchKeyCount > 0) {
+      purePrefetchStoppedDemandEpoch = batch.demandEpoch;
+    }
     return true;
   }
 
@@ -325,7 +364,18 @@ public final class VisibleBodyLoader {
 
   public synchronized void clearDemand() {
     latestDemand = null;
+    latestDemandInstanceId = "";
+    latestDemandLayoutEpoch = 0;
+    latestDemandHistoryGeneration = 0;
     pendingPlan = null;
+    purePrefetchStoppedDemandEpoch = Long.MIN_VALUE;
+  }
+
+  /** 网络失败后允许同一 demand 重试；成功的纯预取不会自动继续扩展。 */
+  public synchronized void allowPurePrefetchRetry(@NonNull Batch batch) {
+    if (purePrefetchStoppedDemandEpoch == batch.demandEpoch) {
+      purePrefetchStoppedDemandEpoch = Long.MIN_VALUE;
+    }
   }
 
   public synchronized void close() {
@@ -337,6 +387,7 @@ public final class VisibleBodyLoader {
     }
     latestDemand = null;
     pendingPlan = null;
+    purePrefetchStoppedDemandEpoch = Long.MIN_VALUE;
   }
 
   public synchronized boolean closed() { return closed; }

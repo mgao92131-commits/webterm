@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.AbstractList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * RenderSnapshot 的统一纵向内容轴：历史前缀（已加载行或缺失范围）后接 ActiveRows。
@@ -188,6 +190,7 @@ public final class UnifiedContentAxis {
         && dirty != null
         && dirty.historyChanged
         && !dirty.historyStructureChanged
+        && !dirty.historyRangesOverflow
         && dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
 
     boolean tailAppendIncremental = previous != null
@@ -197,6 +200,7 @@ public final class UnifiedContentAxis {
         && extent.lastSeq > previous.extent.lastSeq
         && dirty != null
         && dirty.historyChanged
+        && !dirty.historyRangesOverflow
         && dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq;
 
     boolean canIncremental = sameExtentIncremental || tailAppendIncremental;
@@ -205,23 +209,35 @@ public final class UnifiedContentAxis {
       return buildHistoryFull(surface, "structure_or_unknown");
     }
 
-    long fromSeq = Math.max(extent.firstSeq, dirty.changedHistoryFromSeq);
-    long toSeq = Math.min(extent.lastSeq, dirty.changedHistoryToSeq);
-    if (fromSeq > toSeq) {
+    List<HistorySeqRange> dirtyRanges = dirty.historyRanges();
+    if (dirtyRanges.isEmpty()
+        && dirty.changedHistoryFromSeq <= dirty.changedHistoryToSeq) {
+      dirtyRanges = List.of(new HistorySeqRange(
+          dirty.changedHistoryFromSeq, dirty.changedHistoryToSeq));
+    }
+    if (dirtyRanges.isEmpty()) {
       return previous;
     }
 
-    long firstPage = HistoryResidencyIndex.pageNumber(fromSeq);
-    long lastPage = HistoryResidencyIndex.pageNumber(toSeq);
+    Set<Long> dirtyPages = new HashSet<>();
+    for (HistorySeqRange range : dirtyRanges) {
+      long fromSeq = Math.max(extent.firstSeq, range.fromSeq());
+      long toSeq = Math.min(extent.lastSeq, range.toSeq());
+      if (fromSeq > toSeq) continue;
+      long firstPage = HistoryResidencyIndex.pageNumber(fromSeq);
+      long lastPage = HistoryResidencyIndex.pageNumber(toSeq);
+      for (long page = firstPage; page <= lastPage; page++) dirtyPages.add(page);
+    }
+    if (dirtyPages.isEmpty()) return previous;
     Map<Long, HistoryAxisPage> pages = new HashMap<>(previous.pages);
     int rebuilt = 0;
     int reused = previous.pages.size();
     int scanned = 0;
-    for (long pageNumber = firstPage; pageNumber <= lastPage; pageNumber++) {
+    for (long pageNumber : dirtyPages) {
       HistoryAxisPage page = buildPage(surface, extent, pageNumber);
       scanned += HistoryResidencyIndex.PAGE_SIZE;
       rebuilt++;
-      reused--;
+      if (previous.pages.containsKey(pageNumber)) reused--;
       if (page.isEmpty()) {
         pages.remove(pageNumber);
       } else {
@@ -229,7 +245,7 @@ public final class UnifiedContentAxis {
       }
     }
     SegmentIndex segments = updateSegmentIndex(
-        extent, pages, previous.segmentIndex, firstPage, lastPage, false);
+        extent, pages, previous.segmentIndex, dirtyPages, false);
     return new HistoryPart(
         extent, Collections.unmodifiableMap(pages), segments,
         extent.logicalSize(), rebuilt, Math.max(0, reused), scanned, false);
@@ -248,7 +264,7 @@ public final class UnifiedContentAxis {
       if (!page.isEmpty()) pages.put(pageNumber, page);
     }
     SegmentIndex segments = updateSegmentIndex(
-        extent, pages, null, firstPage, lastPage, true);
+        extent, pages, null, null, true);
     TerminalRenderMetrics.historyAxisFullRebuild(reason);
     return new HistoryPart(
         extent, Collections.unmodifiableMap(pages), segments,
@@ -296,23 +312,21 @@ public final class UnifiedContentAxis {
    */
   private static SegmentIndex updateSegmentIndex(
       HistoryExtent extent, Map<Long, HistoryAxisPage> pages,
-      SegmentIndex previous, long dirtyFirstPage, long dirtyLastPage, boolean fullRebuild) {
+      SegmentIndex previous, Set<Long> dirtyPages, boolean fullRebuild) {
     long started = System.nanoTime();
     Map<Long, SegmentBlock> blocks = new HashMap<>();
     if (previous != null) blocks.putAll(previous.blocksByPage);
     long extentFirstPage = HistoryResidencyIndex.pageNumber(extent.firstSeq);
     long extentLastPage = HistoryResidencyIndex.pageNumber(extent.lastSeq);
     long firstPage = fullRebuild
-        ? dirtyFirstPage
-        : Math.min(previous.firstPage, extentFirstPage);
+        ? extentFirstPage : Math.min(previous.firstPage, extentFirstPage);
     long lastPage = fullRebuild
-        ? dirtyLastPage
-        : Math.max(previous.lastPage, extentLastPage);
+        ? extentLastPage : Math.max(previous.lastPage, extentLastPage);
     int pagesVisited = 0;
     int itemsVisited = 0;
     int itemsCreated = 0;
     for (long pageNumber = firstPage; pageNumber <= lastPage; pageNumber++) {
-      if (!fullRebuild && (pageNumber < dirtyFirstPage || pageNumber > dirtyLastPage)) continue;
+      if (!fullRebuild && (dirtyPages == null || !dirtyPages.contains(pageNumber))) continue;
       HistoryAxisPage page = pages.get(pageNumber);
       SegmentBlock block = SegmentBlock.create(extent, pageNumber, page);
       blocks.put(pageNumber, block);

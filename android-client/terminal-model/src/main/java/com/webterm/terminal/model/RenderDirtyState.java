@@ -1,6 +1,9 @@
 package com.webterm.terminal.model;
 
 import java.util.BitSet;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 一个尚未交给 Canvas 的累计渲染脏区。
@@ -15,6 +18,8 @@ import java.util.BitSet;
  * {@link #fullInvalidate}。</p>
  */
 public final class RenderDirtyState {
+  /** 超过此数量后退化为一次完整 history rebuild，避免脏区元数据无界增长。 */
+  public static final int MAX_HISTORY_DIRTY_RANGES = 16;
   public boolean fullInvalidate;
   /**
    * 无法继续建立精确屏幕行映射时，只刷新实时 Screen 区域，不升到整 View。
@@ -32,6 +37,9 @@ public final class RenderDirtyState {
   public long changedHistoryToSeq = 0;
   /** extent/geometry 改变了历史逻辑位置，不能按单一 seq 范围局部失效。 */
   public boolean historyStructureChanged;
+  /** 离散历史脏区过多时为 true；ContentAxis 应安全退化为 full rebuild。 */
+  public boolean historyRangesOverflow;
+  private final List<HistorySeqRange> changedHistoryRanges = new ArrayList<>();
   public boolean geometryChanged;
   public boolean cursorChanged;
   public int previousCursorRow = -1;
@@ -47,6 +55,11 @@ public final class RenderDirtyState {
         && screenScrollRows == 0 && exposedScreenRows.isEmpty() && !historyChanged
         && !geometryChanged && !cursorChanged && !paletteChanged && !stylesChanged
         && !linksChanged && !modesChanged && !activeBufferChanged;
+  }
+
+  /** 返回已合并的离散历史脏区；交换 publication 后该列表不再修改。 */
+  public List<HistorySeqRange> historyRanges() {
+    return Collections.unmodifiableList(changedHistoryRanges);
   }
 
   void merge(boolean fullInvalidate, BitSet changedRows, int screenScrollRows, BitSet exposedRows,
@@ -138,6 +151,30 @@ public final class RenderDirtyState {
       changedHistoryFromSeq = Math.min(changedHistoryFromSeq, fromSeq);
       changedHistoryToSeq = Math.max(changedHistoryToSeq, toSeq);
     }
+    if (historyRangesOverflow) return;
+    long mergedFrom = fromSeq;
+    long mergedTo = toSeq;
+    for (int i = changedHistoryRanges.size() - 1; i >= 0; i--) {
+      HistorySeqRange existing = changedHistoryRanges.get(i);
+      if (strictlyBefore(existing.toSeq(), mergedFrom)
+          || strictlyBefore(mergedTo, existing.fromSeq())) {
+        continue;
+      }
+      mergedFrom = Math.min(mergedFrom, existing.fromSeq());
+      mergedTo = Math.max(mergedTo, existing.toSeq());
+      changedHistoryRanges.remove(i);
+    }
+    changedHistoryRanges.add(new HistorySeqRange(mergedFrom, mergedTo));
+    changedHistoryRanges.sort((left, right) -> Long.compare(left.fromSeq(), right.fromSeq()));
+    if (changedHistoryRanges.size() > MAX_HISTORY_DIRTY_RANGES) {
+      changedHistoryRanges.clear();
+      historyRangesOverflow = true;
+    }
+  }
+
+  private static boolean strictlyBefore(long leftTo, long rightFrom) {
+    return leftTo < rightFrom
+        && (leftTo == Long.MAX_VALUE || leftTo + 1 < rightFrom);
   }
 
   void mergeFrom(RenderDirtyState other, int rowCount) {
@@ -151,9 +188,19 @@ public final class RenderDirtyState {
       markScreenRegionInvalidate();
     }
     if (other.historyChanged) {
-      mergeHistoryRange(other.changedHistoryFromSeq, other.changedHistoryToSeq,
-          other.historyStructureChanged);
+      if (other.historyRangesOverflow) {
+        historyRangesOverflow = true;
+      }
+      if (!other.changedHistoryRanges.isEmpty()) {
+        for (HistorySeqRange range : other.changedHistoryRanges) {
+          mergeHistoryRange(range.fromSeq(), range.toSeq(), other.historyStructureChanged);
+        }
+      } else {
+        mergeHistoryRange(other.changedHistoryFromSeq, other.changedHistoryToSeq,
+            other.historyStructureChanged);
+      }
     }
+    historyRangesOverflow |= other.historyRangesOverflow;
   }
 
   /**

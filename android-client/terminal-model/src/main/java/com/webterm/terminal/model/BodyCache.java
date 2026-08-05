@@ -74,6 +74,7 @@ public final class BodyCache {
     private long historyBytes;
     private final Set<EvictionPins.CriticalEvictionReason> criticalEvictions =
         new HashSet<>();
+    private final List<HistorySeqRange> evictedHistoryRanges = new ArrayList<>();
 
     private Editor(BodyCache source) {
       budget = source.budget;
@@ -84,6 +85,9 @@ public final class BodyCache {
 
     public LineBody body(LineKey key) { return bodies.get(key); }
     public LineKey residentKey(long historySeq) { return residency.key(historySeq); }
+
+    /** 本事务中从 history residency 移除、可参与正文清理的 key。 */
+    public Set<LineKey> removedKeys() { return residency.removedKeys(); }
 
     public Editor setHistoryExtent(HistoryExtent extent) {
       residency.setExtent(extent);
@@ -159,7 +163,7 @@ public final class BodyCache {
         long first = HistoryResidencyIndex.pageFirstSeq(page);
         long last = HistoryResidencyIndex.pageLastSeq(page);
         if (safePins.intersectsAny(first, last)) continue;
-        removePage(page);
+        removePage(page, true);
         pagesRemoved++;
       }
 
@@ -179,7 +183,7 @@ public final class BodyCache {
           EvictionPins.CriticalEvictionReason reason =
               safePins.criticalReason(first, last);
           if (reason != null) criticalEvictions.add(reason);
-          removePage(page);
+          removePage(page, true);
           pagesRemoved++;
           if (reason != null) criticalCount++;
         }
@@ -189,6 +193,11 @@ public final class BodyCache {
       EVICTION_PAGES_REMOVED.addAndGet(pagesRemoved);
       EVICTION_CRITICAL_COUNT.addAndGet(criticalCount);
       return this;
+    }
+
+    /** 本事务因容量淘汰而失去正文驻留的 history 页范围。 */
+    public List<HistorySeqRange> evictedHistoryRanges() {
+      return List.copyOf(evictedHistoryRanges);
     }
 
     /** 只检查本事务失去引用的 key，避免每次 Commit 扫描完整正文缓存。 */
@@ -224,10 +233,18 @@ public final class BodyCache {
       return historyBytes;
     }
 
-    private void removePage(long page) {
-      for (HistoryResidencyIndex.ResidentEntry entry : residency.pageEntries(page)) {
+    private void removePage(long page, boolean recordEviction) {
+      List<HistoryResidencyIndex.ResidentEntry> entries = residency.pageEntries(page);
+      for (HistoryResidencyIndex.ResidentEntry entry : entries) {
         LineBody body = bodies.get(entry.key());
         if (body != null) historyBytes -= body.estimatedBytes;
+      }
+      if (recordEviction && !entries.isEmpty()) {
+        long from = Math.max(residency.extent().firstSeq,
+            HistoryResidencyIndex.pageFirstSeq(page));
+        long to = Math.min(residency.extent().lastSeq,
+            HistoryResidencyIndex.pageLastSeq(page));
+        if (from <= to) evictedHistoryRanges.add(new HistorySeqRange(from, to));
       }
       residency.removePage(page);
     }

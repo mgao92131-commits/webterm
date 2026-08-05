@@ -51,6 +51,7 @@ public final class TerminalSurfaceTransaction {
     } else {
       Set<LineKey> removedActive = new HashSet<>(source.activeRows.keys());
       removedActive.removeAll(activeRows.keys());
+      removedActive.addAll(bodyCache.removedKeys());
       bodyCache.removeUnreferenced(activeRows.keys(), nextCatalog, removedActive);
       nextCache = bodyCache.commit();
     }

@@ -274,7 +274,7 @@ public final class RemoteTerminalModel {
     boolean bufferChanged = previous.activeBuffer != next.activeBuffer;
     boolean renderChanged = delta.screenChanged() || delta.historyChanged()
         || delta.geometryChanged() || cursorChanged || modesChanged
-        || paletteChanged || bufferChanged;
+        || paletteChanged || bufferChanged || !delta.evictedHistoryRanges().isEmpty();
     return new StagedCommit(commit.baseRevision, () -> {
       HistoryExtent oldExtent = previous.mainSurface.historyCatalog.extent();
       install(next);
@@ -284,6 +284,10 @@ public final class RemoteTerminalModel {
           delta.historyChanged(), delta.geometryChanged(), cursorChanged,
           previous.cursor.row, next.cursor.row,
           paletteChanged, false, false, modesChanged, bufferChanged);
+      if (!delta.evictedHistoryRanges().isEmpty()) {
+        reuseHistoryTopologyForNextPublish = false;
+        mergeHistoryRanges(delta.evictedHistoryRanges());
+      }
       if (delta.historyChanged()) {
         historyTopologyKnown = false;
         // Baseline 的兼容拓扑复用只对当前 pending publication 有效；一旦队尾又
@@ -356,10 +360,8 @@ public final class RemoteTerminalModel {
     reuseHistoryTopologyForNextPublish = false;
     stateMutationVersion++;
     if (activeBuffer == TerminalBufferKind.MAIN) {
-      if (applied.changedFromSeq() > 0 && applied.changedToSeq() >= applied.changedFromSeq()) {
-        pendingRenderDirty.mergeHistoryRange(
-            applied.changedFromSeq(), applied.changedToSeq(), false);
-      }
+      mergeHistoryRanges(applied.changedRanges());
+      mergeHistoryRanges(applied.evictedRanges());
       pendingTerminalState.merge(false, true, false, false, 0, 0);
       publishPendingRenderUpdate();
     } else {
@@ -392,8 +394,8 @@ public final class RemoteTerminalModel {
     reuseHistoryTopologyForNextPublish = false;
     stateMutationVersion++;
     if (activeBuffer == TerminalBufferKind.MAIN) {
-      pendingRenderDirty.mergeHistoryRange(
-          applied.changedFromSeq(), applied.changedToSeq(), false);
+      mergeHistoryRanges(applied.changedRanges());
+      mergeHistoryRanges(applied.evictedRanges());
       pendingTerminalState.merge(false, true, false, false, 0, 0);
       publishPendingRenderUpdate();
     } else {
@@ -563,6 +565,16 @@ public final class RemoteTerminalModel {
     }
     pendingRenderDirty.mergeHistoryRange(
         from == Long.MAX_VALUE ? 1 : from, to, structureChanged);
+  }
+
+  private void mergeHistoryRanges(List<HistorySeqRange> ranges) {
+    if (ranges == null) return;
+    for (HistorySeqRange range : ranges) {
+      if (range != null) {
+        pendingRenderDirty.mergeHistoryRange(
+            range.fromSeq(), range.toSeq(), false);
+      }
+    }
   }
 
   private void mergeExtentDirty(HistoryExtent previous, HistoryExtent current) {

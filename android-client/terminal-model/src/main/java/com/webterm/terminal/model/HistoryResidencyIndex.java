@@ -174,6 +174,8 @@ public final class HistoryResidencyIndex {
       firstResidentSeq = source.firstResidentSeq;
     }
 
+    public HistoryExtent extent() { return extent; }
+
     public Editor setExtent(HistoryExtent next) {
       if (next == null) throw new IllegalArgumentException("history extent missing");
       HistoryExtent previous = extent;

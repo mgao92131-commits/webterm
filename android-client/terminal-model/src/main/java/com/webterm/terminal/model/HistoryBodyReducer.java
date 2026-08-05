@@ -1,6 +1,8 @@
 package com.webterm.terminal.model;
 
 import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -73,6 +75,7 @@ public final class HistoryBodyReducer {
     int stale = 0;
     long changedFrom = Long.MAX_VALUE;
     long changedTo = 0;
+    List<HistorySeqRange> changedRanges = new ArrayList<>();
     Set<LineKey> seenKeys = new HashSet<>();
     try {
       for (LineBodyRecord entry : response.bodies) {
@@ -94,6 +97,7 @@ public final class HistoryBodyReducer {
           tx.bodyCache().putHistory(historySeq, entry.key(), entry.body());
           changedFrom = Math.min(changedFrom, historySeq);
           changedTo = Math.max(changedTo, historySeq);
+          changedRanges.add(new HistorySeqRange(historySeq, historySeq));
         } else {
           tx.bodyCache().putBody(entry.key(), entry.body());
         }
@@ -114,12 +118,15 @@ public final class HistoryBodyReducer {
         return new HistoryBodyResult.StaleIgnored(stale);
       }
       tx.bodyCache().evictIfNeeded(pins == null ? EvictionPins.NONE : pins);
+      List<HistorySeqRange> evictedRanges = tx.bodyCache().evictedHistoryRanges();
       return new HistoryBodyResult.Applied(
           tx.commit(),
           changedFrom == Long.MAX_VALUE ? 0 : changedFrom,
           changedTo,
           applied,
-          stale);
+          stale,
+          HistorySeqRange.coalesce(changedRanges),
+          HistorySeqRange.coalesce(evictedRanges));
     } catch (CommitValidationException conflict) {
       return new HistoryBodyResult.Rejected(
           conflict.failure == CommitFailure.LINE_CONTENT_CONFLICT

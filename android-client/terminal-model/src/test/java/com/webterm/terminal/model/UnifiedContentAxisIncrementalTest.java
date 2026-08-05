@@ -7,7 +7,10 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.Executor;
 import org.junit.Test;
 
 public final class UnifiedContentAxisIncrementalTest {
@@ -96,6 +99,68 @@ public final class UnifiedContentAxisIncrementalTest {
   }
 
   @Test
+  public void evictionRangesKeepContentAxisResidencyConsistent() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel(1, 1);
+    assertTrue(model.applyBaseline(baseline(256, 1)));
+    model.consumeRenderUpdate();
+
+    HistoryBodyResult result = model.applyHistoryBody(
+        new HistoryRangeResult(
+            "evict", "i1", 1, 1, HistoryRangeResult.Status.OK,
+            new HistoryExtent(1, 256), allHistoryEntries(1, 256), 0),
+        new HistoryRequestContext(
+            new ProjectionIdentity("i1", 1, 1), 1, 256, 1));
+    assertTrue(result instanceof HistoryBodyResult.Applied);
+    HistoryBodyResult.Applied applied = (HistoryBodyResult.Applied) result;
+    assertTrue("small budget must evict at least one page",
+        !applied.evictedRanges().isEmpty());
+
+    RemoteTerminalModel.RenderSnapshot snapshot = model.renderSnapshot();
+    for (int index = 0; index < 256; index++) {
+      SlotState state = snapshot.history.slotStateAt(index);
+      UnifiedContentAxis.Item item = snapshot.contentAxis.itemAtRow(index);
+      if (state == SlotState.LOADED) {
+        assertEquals(UnifiedContentAxis.Kind.LOADED_LINE, item.kind);
+      } else {
+        assertEquals(UnifiedContentAxis.Kind.MISSING_HISTORY_RANGE, item.kind);
+        assertTrue("evicted body must not remain in the axis", item.line == null);
+      }
+    }
+  }
+
+  @Test
+  public void disjointBodyFillAndTailAppendRebuildOnlyAffectedPages() throws Exception {
+    RemoteTerminalModel model = new RemoteTerminalModel();
+    assertTrue(model.applyBaseline(baseline(512, 1)));
+    model.consumeRenderUpdate();
+    UnifiedContentAxis before = model.renderSnapshot().contentAxis;
+    HistoryAxisPage page1 = before.pageForTest(1);
+    HistoryAxisPage page2 = before.pageForTest(2);
+    HistoryAxisPage page3 = before.pageForTest(3);
+
+    QueueExecutor executor = new QueueExecutor();
+    model.bindRenderPublicationExecutor(executor);
+    assertTrue(model.applyHistoryBody(
+        new HistoryRangeResult(
+            "fill", "i1", 1, 1, HistoryRangeResult.Status.OK,
+            new HistoryExtent(1, 512), allHistoryEntries(1, 10), 0),
+        new HistoryRequestContext(
+            new ProjectionIdentity("i1", 1, 1), 1, 10, 1))
+        instanceof HistoryBodyResult.Applied);
+    assertTrue(model.applyTerminalCommit(appendHistoryCommit(513)));
+    assertEquals(1, executor.size());
+    executor.runAll();
+
+    UnifiedContentAxis after = model.renderSnapshot().contentAxis;
+    assertSame(page1, after.pageForTest(1));
+    assertSame(page2, after.pageForTest(2));
+    assertSame(page3, after.pageForTest(3));
+    assertEquals(513, after.historyRowCount());
+    assertEquals(UnifiedContentAxis.Kind.LOADED_LINE, after.itemAtRow(0).kind);
+    assertNotNull(after.pageForTest(4));
+  }
+
+  @Test
   public void generationChangeForcesFullHistoryRebuild() throws Exception {
     Fixture fx = fixture(200);
     long before = TerminalRenderMetrics.historyAxisFullRebuildCount();
@@ -124,6 +189,15 @@ public final class UnifiedContentAxisIncrementalTest {
             0),
         new HistoryRequestContext(new ProjectionIdentity("i1", 1, 1), fromSeq, toSeq, fromSeq));
     assertTrue(result instanceof HistoryBodyResult.Applied);
+  }
+
+  private static List<HistoryBodyEntry> allHistoryEntries(long fromSeq, long toSeq) {
+    List<HistoryBodyEntry> entries = new ArrayList<>();
+    for (long seq = fromSeq; seq <= toSeq; seq++) {
+      entries.add(new HistoryBodyEntry(
+          seq, new LineKey(900 + seq - 1, 1), SemanticTestData.body("h" + seq)));
+    }
+    return entries;
   }
 
   private static TerminalCommit appendHistoryCommit(long newSeq) {
@@ -177,6 +251,22 @@ public final class UnifiedContentAxisIncrementalTest {
     Fixture(RemoteTerminalModel model, UnifiedContentAxis axis) {
       this.model = model;
       this.axis = axis;
+    }
+  }
+
+  private static final class QueueExecutor implements Executor {
+    private final Queue<Runnable> tasks = new ArrayDeque<>();
+
+    @Override
+    public void execute(Runnable command) {
+      tasks.add(command);
+    }
+
+    int size() { return tasks.size(); }
+
+    void runAll() {
+      Runnable task;
+      while ((task = tasks.poll()) != null) task.run();
     }
   }
 }

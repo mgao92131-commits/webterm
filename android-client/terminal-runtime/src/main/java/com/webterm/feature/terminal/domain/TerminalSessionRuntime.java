@@ -1089,6 +1089,7 @@ public final class TerminalSessionRuntime {
           public void onFailure(@NonNull LineBodyBatchSource.Failure failure) {
             modelExecutor.execute(() -> {
               if (visibleBodyLoader.closed()) return;
+              visibleBodyLoader.allowPurePrefetchRetry(active.batch);
               visibleBodyLoader.complete(active);
               refreshEvictionPins();
               if (handleBatchFailure(failure)) return;

@@ -78,8 +78,12 @@ public final class TerminalSessionRuntimePrefetchTest {
     executor.runAll();
 
     assertNotNull("pure prefetch body must be applied", model.bodyCache().body(prefetchedKey));
-    assertEquals("remaining history may schedule the next disjoint prefetch", 2,
-        source.fetchCount);
+    assertEquals("a stable demand must not drain the whole history", 1, source.fetchCount);
+
+    // 只有新的 viewport demand 才允许开启下一批方向性预取。
+    runtime.onVisibleHistoryDemand(250, 259, 250, -1, 10);
+    executor.runAll();
+    assertEquals("a new demand may start another prefetch", 2, source.fetchCount);
     Set<LineKey> firstKeys = Set.copyOf(source.batches.get(0).keys);
     for (LineKey key : source.batches.get(1).keys) {
       assertTrue("applied prefetch must not be requested again", !firstKeys.contains(key));
