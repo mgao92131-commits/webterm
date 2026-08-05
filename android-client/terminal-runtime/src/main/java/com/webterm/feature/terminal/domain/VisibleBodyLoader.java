@@ -11,7 +11,6 @@ import com.webterm.terminal.model.LineKey;
 import com.webterm.terminal.model.SlotState;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -63,6 +62,7 @@ public final class VisibleBodyLoader {
     public final long plannedToSeq;
     public final int visibleKeyCount;
     public final int prefetchKeyCount;
+    private final Set<LineKey> keySet;
 
     public Batch(
         String instanceId, long layoutEpoch, long historyGeneration,
@@ -78,7 +78,10 @@ public final class VisibleBodyLoader {
       this.plannedToSeq = plannedToSeq;
       this.visibleKeyCount = visibleKeyCount;
       this.prefetchKeyCount = prefetchKeyCount;
+      this.keySet = Set.copyOf(this.keys);
     }
+
+    boolean containsKey(LineKey key) { return keySet.contains(key); }
   }
 
   static final class PendingPlan {
@@ -399,7 +402,6 @@ public final class VisibleBodyLoader {
       Batch active, long visibleFromSeq, long visibleToSeq,
       HistoryExtent extent, HistoryRenderView history,
       BodyCache bodyCache, HistoryCatalog catalog) {
-    Set<LineKey> activeKeys = new HashSet<>(active.keys);
     long from = Math.max(visibleFromSeq, extent.firstSeq);
     long to = Math.min(visibleToSeq, extent.lastSeq);
     for (long seq = from; seq <= to; seq++) {
@@ -407,7 +409,7 @@ public final class VisibleBodyLoader {
       if (index < 0 || history.slotStateAt(index) == SlotState.LOADED) continue;
       LineKey key = catalog.key(seq);
       if (key == null || bodyCache.body(key) != null) continue;
-      if (!activeKeys.contains(key)) return false;
+      if (!active.containsKey(key)) return false;
     }
     return true;
   }

@@ -206,7 +206,11 @@ public final class TerminalSessionRuntime {
   private final TerminalPipelineMetrics pipelineMetrics = new TerminalPipelineMetrics();
 
   private volatile State state = State.DISCONNECTED;
+  private volatile long stateChangedAtNanos = System.nanoTime();
   private final AtomicBoolean closeRequested = new AtomicBoolean();
+  /** 断线回调已同步进入 RECONNECTING，但恢复动作仍排在 modelExecutor 队列中的窗口。 */
+  private final AtomicBoolean recoveryRequestPending = new AtomicBoolean();
+  private final AtomicLong recoveryRequestPendingSinceNanos = new AtomicLong();
   private final LayoutLeaseCoordinator layoutLeaseCoordinator;
   /**
    * Screen 连接代际。网络回调可以早于 modelExecutor 中的任务完成；任何断线、替换或
@@ -427,6 +431,23 @@ public final class TerminalSessionRuntime {
     Map<String, Object> result = new LinkedHashMap<>(pipelineMetrics.snapshot());
     result.putAll(recoveryArbiter.diagnosticsSnapshot());
     result.putAll(screenMailbox.diagnosticsSnapshot());
+    boolean pendingRecoveryRequest = recoveryRequestPending.get();
+    long pendingSinceNanos = recoveryRequestPendingSinceNanos.get();
+    long nowNanos = System.nanoTime();
+    long pendingAgeMs = pendingRecoveryRequest && pendingSinceNanos > 0L
+        ? Math.max(0L, nowNanos - pendingSinceNanos) / 1_000_000L : 0L;
+    long reconnectingAgeMs = state == State.RECONNECTING && stateChangedAtNanos > 0L
+        ? Math.max(0L, nowNanos - stateChangedAtNanos) / 1_000_000L : 0L;
+    boolean reconnectingWithoutRecovery = state == State.RECONNECTING
+        && connection != null
+        && !connectionRequiresReplacement
+        && !pendingRecoveryRequest
+        && !recoveryArbiter.isRecovering()
+        && reconnectingAgeMs >= 2_000L;
+    result.put("recoveryRequestPending", pendingRecoveryRequest);
+    result.put("recoveryRequestPendingAgeMs", pendingAgeMs);
+    result.put("reconnectingAgeMs", reconnectingAgeMs);
+    result.put("reconnectingWithoutRecovery", reconnectingWithoutRecovery);
     result.put("sessionHash", DiagnosticIdHasher.processHash(sessionId));
     result.put("runtimeLifecycleId",
         DiagnosticIdHasher.processHash(runtimeLifecycleId));
@@ -527,6 +548,7 @@ public final class TerminalSessionRuntime {
         layoutLeaseCoordinator.invalidate();
         connectionRequiresReplacement = false;
         // 取消在途 timeout、清理 mailbox 和 pending history：状态机归 modelExecutor 所有。
+        markRecoveryRequestPending();
         modelExecutor.execute(() -> {
           bumpSyncGeneration();
           resetResyncRecovery();
@@ -569,6 +591,7 @@ public final class TerminalSessionRuntime {
         // AUTH_REQUIRED 对当前 screen channel 是终态，和传输断线一样废弃旧
         // resync timeout、mailbox 与 history request；PTY 本身仍存活，所以状态
         // 保持 RECONNECTING 并交给上层刷新凭据后重建 channel。
+        markRecoveryRequestPending();
         modelExecutor.execute(() -> {
           bumpSyncGeneration();
           resetResyncRecovery();
@@ -1958,6 +1981,12 @@ public final class TerminalSessionRuntime {
     }
   }
 
+  private void markRecoveryRequestPending() {
+    if (recoveryRequestPending.compareAndSet(false, true)) {
+      recoveryRequestPendingSinceNanos.set(System.nanoTime());
+    }
+  }
+
   private boolean requestRecovery(
       @NonNull RecoveryArbiter.Level level,
       @NonNull String reason,
@@ -1974,6 +2003,8 @@ public final class TerminalSessionRuntime {
     boolean wasRecovering = recoveryArbiter.isRecovering();
     boolean accepted = recoveryArbiter.request(
         level, reason, epoch, currentTransportGeneration(), externalActionStarted);
+    recoveryRequestPending.set(false);
+    recoveryRequestPendingSinceNanos.set(0L);
     if (accepted) {
       Diagnostics.warn("terminal_recovery",
           wasRecovering ? "recovery_upgraded" : "recovery_started",
@@ -2214,6 +2245,7 @@ public final class TerminalSessionRuntime {
   private void updateState(@NonNull State newState) {
     State previous = state;
     state = newState;
+    stateChangedAtNanos = System.nanoTime();
     if (previous == State.LIVE && clearsHistoryDemand(newState)) {
       historyDemandMailbox.invalidatePending();
       modelExecutor.execute(() -> {
