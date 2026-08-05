@@ -332,20 +332,11 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
     long misses;
     long evictions;
     long maxBytes;
-    private long previousHits;
-    private long previousMisses;
-    private long previousEvictions;
 
     void record(TerminalPreparedLineCache cache) {
-      long currentHits = cache.hitCountForTest();
-      long currentMisses = cache.missCountForTest();
-      long currentEvictions = cache.evictionCountForTest();
-      hits += Math.max(0L, currentHits - previousHits);
-      misses += Math.max(0L, currentMisses - previousMisses);
-      evictions += Math.max(0L, currentEvictions - previousEvictions);
-      previousHits = currentHits;
-      previousMisses = currentMisses;
-      previousEvictions = currentEvictions;
+      hits += cache.hitCountForTest();
+      misses += cache.missCountForTest();
+      evictions += cache.evictionCountForTest();
       maxBytes = Math.max(maxBytes, cache.estimatedBytesForTest());
     }
   }

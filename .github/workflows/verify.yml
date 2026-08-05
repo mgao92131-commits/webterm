@@ -90,9 +90,16 @@ jobs:
           java-version: '17'
           cache: gradle
       # diag 变体基于 release 且开启 minify/资源压缩，必须进 CI 才能持续验证 R8 不裁剪诊断类。
-      - run: ./gradlew :terminal-renderer:testDebugUnitTest :terminal-model:test \
-          :terminal-runtime:testDebugUnitTest lintDebug assembleDebug assembleDiag \
-          --no-daemon --console=plain
+      - run: |
+          ./gradlew \
+            :terminal-renderer:testDebugUnitTest \
+            :terminal-model:test \
+            :terminal-runtime:testDebugUnitTest \
+            lintDebug \
+            assembleDebug \
+            assembleDiag \
+            --no-daemon \
+            --console=plain
       - run: git diff --check
 
   android-renderer-instrumentation:
