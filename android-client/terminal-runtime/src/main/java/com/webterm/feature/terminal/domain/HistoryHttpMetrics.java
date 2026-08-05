@@ -2,6 +2,7 @@ package com.webterm.feature.terminal.domain;
 
 import androidx.annotation.NonNull;
 
+import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -86,6 +87,14 @@ public final class HistoryHttpMetrics {
         if (context != null) context.connectEndNanos = System.nanoTime();
       }
 
+      @Override public void requestHeadersStart(@NonNull Call call) {
+        CallContext context = context(call);
+        if (context != null
+            && "close".equalsIgnoreCase(call.request().header("Connection"))) {
+          context.owner.add(c -> c.requestConnectionCloseCount.incrementAndGet());
+        }
+      }
+
       @Override public void connectionAcquired(
           @NonNull Call call, @NonNull Connection connection) {
         CallContext context = context(call);
@@ -117,7 +126,40 @@ public final class HistoryHttpMetrics {
           context.responseHeadersNanos = System.nanoTime();
           context.gzipResponse =
               "gzip".equalsIgnoreCase(response.header("Content-Encoding", ""));
+          context.owner.add(c -> {
+            if (response.protocol() == Protocol.HTTP_2) {
+              c.httpProtocolHttp2Count.incrementAndGet();
+            } else {
+              c.httpProtocolHttp1Count.incrementAndGet();
+            }
+            if ("close".equalsIgnoreCase(response.header("Connection", ""))) {
+              c.responseConnectionCloseCount.incrementAndGet();
+            }
+            if (response.header("Content-Length") == null) {
+              c.unknownContentLengthCount.incrementAndGet();
+            } else {
+              c.knownContentLengthCount.incrementAndGet();
+            }
+          });
         }
+      }
+
+      @Override public void connectionReleased(
+          @NonNull Call call, @NonNull Connection connection) {
+        CallContext context = context(call);
+        if (context != null) {
+          context.owner.add(c -> c.connectionReleasedCount.incrementAndGet());
+        }
+      }
+
+      @Override public void callEnd(@NonNull Call call) {
+        CallContext context = context(call);
+        if (context != null) context.owner.add(c -> c.callEndCount.incrementAndGet());
+      }
+
+      @Override public void callFailed(@NonNull Call call, @NonNull IOException ioe) {
+        CallContext context = context(call);
+        if (context != null) context.owner.add(c -> c.callFailedCount.incrementAndGet());
       }
 
       @Override public void responseBodyEnd(@NonNull Call call, long byteCount) {
@@ -272,6 +314,15 @@ public final class HistoryHttpMetrics {
     final AtomicLong connectionAcquiredCount = new AtomicLong();
     final AtomicLong newConnectionCount = new AtomicLong();
     final AtomicLong connectionReusedCount = new AtomicLong();
+    final AtomicLong connectionReleasedCount = new AtomicLong();
+    final AtomicLong callEndCount = new AtomicLong();
+    final AtomicLong callFailedCount = new AtomicLong();
+    final AtomicLong requestConnectionCloseCount = new AtomicLong();
+    final AtomicLong responseConnectionCloseCount = new AtomicLong();
+    final AtomicLong knownContentLengthCount = new AtomicLong();
+    final AtomicLong unknownContentLengthCount = new AtomicLong();
+    final AtomicLong httpProtocolHttp1Count = new AtomicLong();
+    final AtomicLong httpProtocolHttp2Count = new AtomicLong();
     final AtomicLong tlsHandshakeCount = new AtomicLong();
     final AtomicLong gzipResponseCount = new AtomicLong();
     final AtomicLong connectDurationTotalNanos = new AtomicLong();
@@ -309,6 +360,15 @@ public final class HistoryHttpMetrics {
       out.put("connectionAcquiredCount", connectionAcquiredCount.get());
       out.put("newConnectionCount", newConnectionCount.get());
       out.put("connectionReusedCount", connectionReusedCount.get());
+      out.put("connectionReleasedCount", connectionReleasedCount.get());
+      out.put("callEndCount", callEndCount.get());
+      out.put("callFailedCount", callFailedCount.get());
+      out.put("requestConnectionCloseCount", requestConnectionCloseCount.get());
+      out.put("responseConnectionCloseCount", responseConnectionCloseCount.get());
+      out.put("knownContentLengthCount", knownContentLengthCount.get());
+      out.put("unknownContentLengthCount", unknownContentLengthCount.get());
+      out.put("httpProtocolHttp1Count", httpProtocolHttp1Count.get());
+      out.put("httpProtocolHttp2Count", httpProtocolHttp2Count.get());
       out.put("tlsHandshakeCount", tlsHandshakeCount.get());
       out.put("gzipResponseCount", gzipResponseCount.get());
       out.put("connectDurationTotalNanos", connectDurationTotalNanos.get());

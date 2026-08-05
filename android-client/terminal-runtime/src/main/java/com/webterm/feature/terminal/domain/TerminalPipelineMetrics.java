@@ -33,6 +33,8 @@ public final class TerminalPipelineMetrics {
   private final AtomicLong lastRenderedScreenRevision = new AtomicLong();
   private final AtomicLong lastRenderFailedScreenRevision = new AtomicLong();
   private final AtomicLong lastRenderedAtNanos = new AtomicLong();
+  private final AtomicLong pipelineWatermarkInvariantViolationCount = new AtomicLong();
+  private long lastWatermarkViolationSignature;
 
   private final AtomicLong renderSuccessCount = new AtomicLong();
   private final AtomicLong renderFailureCount = new AtomicLong();
@@ -178,13 +180,30 @@ public final class TerminalPipelineMetrics {
   /** 稳定字段映射，供后续诊断导出。并发 snapshot 不会看到部分 success 更新。 */
   public synchronized Map<String, Object> snapshot() {
     Map<String, Object> out = new LinkedHashMap<>();
+    long published = lastPublishedVersion.get();
+    long consumed = lastConsumedVersion.get();
+    long handled = lastHandledVersion.get();
+    long rendered = lastRenderedVersion.get();
+    int violationSignature = 0;
+    if (published < consumed) violationSignature |= 1;
+    if (consumed < handled) violationSignature |= 2;
+    if (consumed < rendered) violationSignature |= 4;
+    if (violationSignature != 0 && violationSignature != lastWatermarkViolationSignature) {
+      pipelineWatermarkInvariantViolationCount.incrementAndGet();
+    }
+    lastWatermarkViolationSignature = violationSignature;
+    out.put("pipelineWatermarkInvariantViolationCount",
+        pipelineWatermarkInvariantViolationCount.get());
+    out.put("publishedConsumedGap", Math.max(0L, consumed - published));
+    out.put("consumedHandledGap", Math.max(0L, handled - consumed));
+    out.put("consumedRenderedGap", Math.max(0L, rendered - consumed));
     out.put("lastDecodedScreenRevision", lastDecodedScreenRevision.get());
     out.put("lastModelScreenRevision", lastModelScreenRevision.get());
-    out.put("lastPublishedVersion", lastPublishedVersion.get());
+    out.put("lastPublishedVersion", published);
     out.put("lastPublishedScreenRevision", lastPublishedScreenRevision.get());
-    out.put("lastConsumedVersion", lastConsumedVersion.get());
-    out.put("lastHandledVersion", lastHandledVersion.get());
-    out.put("lastRenderedVersion", lastRenderedVersion.get());
+    out.put("lastConsumedVersion", consumed);
+    out.put("lastHandledVersion", handled);
+    out.put("lastRenderedVersion", rendered);
     out.put("lastRenderFailedVersion", lastRenderFailedVersion.get());
     out.put("lastConsumedScreenRevision", lastConsumedScreenRevision.get());
     out.put("lastHandledScreenRevision", lastHandledScreenRevision.get());
