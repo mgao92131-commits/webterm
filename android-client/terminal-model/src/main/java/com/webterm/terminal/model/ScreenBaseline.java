@@ -46,6 +46,55 @@ public final class ScreenBaseline {
     this.palette = palette;
   }
 
+  /**
+   * 兼容仍携带旧 dictionary-generation 占位参数的 JVM 测试与旧调用方。
+   * 该字段从 screen.v3 Baseline 语义中移除，不参与拓扑或渲染身份。
+   */
+  @Deprecated
+  public ScreenBaseline(
+      String sessionId, String instanceId, long layoutEpoch, long screenRevision,
+      long historyGeneration, int ignoredDictionaryGeneration,
+      int rows, int cols, TerminalBufferKind activeBuffer,
+      HistoryExtent historyExtent, List<HistoryPush> historyBindings,
+      List<LineKey> screenRows, List<LineBodyRecord> screenBodies,
+      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette) {
+    this(sessionId, instanceId, layoutEpoch, screenRevision, historyGeneration,
+        rows, cols, activeBuffer, historyExtent, historyBindings,
+        screenRows, screenBodies, cursor, modes, palette);
+  }
+
+  /** 兼容旧 JVM fixture 直接传入 ScreenLineContent 列表的 Baseline 入口。 */
+  @Deprecated
+  public ScreenBaseline(
+      String sessionId, String instanceId, long layoutEpoch, long screenRevision,
+      long historyGeneration, int ignoredDictionaryGeneration,
+      int rows, int cols, TerminalBufferKind activeBuffer,
+      HistoryExtent historyExtent, List<HistoryPush> historyBindings,
+      List<ScreenLineContent> screen,
+      TerminalCursor cursor, TerminalModes modes, TerminalPalette palette) {
+    this(sessionId, instanceId, layoutEpoch, screenRevision, historyGeneration,
+        rows, cols, activeBuffer, historyExtent, historyBindings,
+        screenRows(screen), screenBodies(screen), cursor, modes, palette);
+  }
+
+  private static List<LineKey> screenRows(List<ScreenLineContent> screen) {
+    java.util.ArrayList<LineKey> rows = new java.util.ArrayList<>();
+    if (screen != null) {
+      for (ScreenLineContent line : screen) rows.add(line.key());
+    }
+    return rows;
+  }
+
+  private static List<LineBodyRecord> screenBodies(List<ScreenLineContent> screen) {
+    java.util.ArrayList<LineBodyRecord> bodies = new java.util.ArrayList<>();
+    if (screen != null) {
+      for (ScreenLineContent line : screen) {
+        bodies.add(new LineBodyRecord(line.key(), line.body()));
+      }
+    }
+    return bodies;
+  }
+
   private static long historyTopologyHash(
       HistoryExtent extent, List<HistoryPush> bindings) {
     long hash = 0xcbf29ce484222325L;
