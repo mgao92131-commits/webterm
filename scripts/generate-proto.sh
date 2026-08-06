@@ -59,7 +59,7 @@ rm -f \
 
 "$PROTOC" \
   --proto_path="$ROOT" \
-  --java_out="$JAVA_OUT_DIR" \
+  --java_out=lite:"$JAVA_OUT_DIR" \
   "${PROTO_FILES[@]}"
 
 # protoc Java 输出的个别空行/泛型声明会带行尾空格，保持 git diff --check 可重现。

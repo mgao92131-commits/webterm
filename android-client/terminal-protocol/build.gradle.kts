@@ -26,7 +26,7 @@ android {
 }
 
 dependencies {
-  api(libs.protobuf.java)
+  api(libs.protobuf.javalite)
   implementation(project(":terminal-model"))
   implementation("androidx.annotation:annotation:1.9.0")
   testImplementation(libs.junit)

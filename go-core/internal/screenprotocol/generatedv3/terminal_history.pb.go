@@ -255,8 +255,8 @@ const file_shared_proto_terminal_history_proto_rawDesc = "" +
 	"\x19LINE_BODY_BATCH_STATUS_OK\x10\x01\x12 \n" +
 	"\x1cLINE_BODY_BATCH_STATUS_STALE\x10\x02\x12'\n" +
 	"#LINE_BODY_BATCH_STATUS_SESSION_GONE\x10\x03\x12$\n" +
-	" LINE_BODY_BATCH_STATUS_RETRYABLE\x10\x04Bt\n" +
-	"'com.webterm.terminal.protocol.generatedB\x14TerminalHistoryProtoZ3webterm/go-core/internal/screenprotocol/generatedv3b\x06proto3"
+	" LINE_BODY_BATCH_STATUS_RETRYABLE\x10\x04Bv\n" +
+	"'com.webterm.terminal.protocol.generatedB\x14TerminalHistoryProtoH\x03Z3webterm/go-core/internal/screenprotocol/generatedv3b\x06proto3"
 
 var (
 	file_shared_proto_terminal_history_proto_rawDescOnce sync.Once

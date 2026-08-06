@@ -5,6 +5,7 @@ package webterm.terminal.screen.v3;
 option go_package = "webterm/go-core/internal/screenprotocol/generatedv3";
 option java_package = "com.webterm.terminal.protocol.generated";
 option java_outer_classname = "TerminalHistoryProto";
+option optimize_for = LITE_RUNTIME;
 
 import "shared/proto/terminal_screen_v3.proto";
 

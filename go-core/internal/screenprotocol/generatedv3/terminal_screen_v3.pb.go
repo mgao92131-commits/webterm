@@ -4222,8 +4222,8 @@ const file_shared_proto_terminal_screen_v3_proto_rawDesc = "" +
 	"\x13MOUSE_BUTTON_MIDDLE\x10\x02\x12\x16\n" +
 	"\x12MOUSE_BUTTON_RIGHT\x10\x03\x12\x16\n" +
 	"\x12MOUSE_BUTTON_WHEEL\x10\x04\x12\x15\n" +
-	"\x11MOUSE_BUTTON_MOVE\x10\x05Bu\n" +
-	"'com.webterm.terminal.protocol.generatedB\x15TerminalScreenV3ProtoZ3webterm/go-core/internal/screenprotocol/generatedv3b\x06proto3"
+	"\x11MOUSE_BUTTON_MOVE\x10\x05Bw\n" +
+	"'com.webterm.terminal.protocol.generatedB\x15TerminalScreenV3ProtoH\x03Z3webterm/go-core/internal/screenprotocol/generatedv3b\x06proto3"
 
 var (
 	file_shared_proto_terminal_screen_v3_proto_rawDescOnce sync.Once

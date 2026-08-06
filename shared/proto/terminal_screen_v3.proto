@@ -5,6 +5,7 @@ package webterm.terminal.screen.v3;
 option go_package = "webterm/go-core/internal/screenprotocol/generatedv3";
 option java_package = "com.webterm.terminal.protocol.generated";
 option java_outer_classname = "TerminalScreenV3Proto";
+option optimize_for = LITE_RUNTIME;
 
 // webterm.screen.v3 是 Android 远程终端渲染逻辑通道协议（line-key 正文模型）。
 // 物理 WebSocket 仍使用 webterm.mux.v1；一个 binary frame 对应一个 envelope。
