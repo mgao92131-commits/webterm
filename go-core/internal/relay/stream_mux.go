@@ -155,6 +155,30 @@ func (s *relayStreamSocket) Write(ctx context.Context, messageType session.Messa
 	return s.mux.writer.writeRaw(ctx, s.conn, encoded)
 }
 
+func (s *relayStreamSocket) WriteParts(ctx context.Context, messageType session.MessageType, parts ...[]byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	select {
+	case <-s.done:
+		return transporterr.ErrRelayStreamClosed
+	default:
+	}
+	frameType := relaycore.FrameTypeWSText
+	if messageType == session.MessageBinary {
+		frameType = relaycore.FrameTypeWSBinary
+	}
+	// 空 payload 的编码结果就是 relaycore header。与 mux tunnel header、protobuf
+	// payload 一起分段写入同一个 Relay WebSocket message，避免两层完整复制。
+	header, err := relaycore.EncodeFrame(relaycore.NewFrame(frameType, s.id, 0, nil))
+	if err != nil {
+		return err
+	}
+	allParts := make([][]byte, 0, len(parts)+1)
+	allParts = append(allParts, header)
+	allParts = append(allParts, parts...)
+	return s.mux.writer.writeRawParts(ctx, s.conn, allParts...)
+}
+
 func (s *relayStreamSocket) Close() error {
 	s.close(true)
 	return nil

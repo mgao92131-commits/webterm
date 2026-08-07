@@ -2,6 +2,8 @@ package screenprotocolv3
 
 import (
 	"errors"
+	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -243,6 +245,129 @@ func TestEncodeLinePreservesWideEmojiCombiningAndColumnHoles(t *testing.T) {
 	if len(wire.GetGlyphMeta()) != 4 {
 		t.Fatalf("glyph metadata entries=%d, want 4", len(wire.GetGlyphMeta()))
 	}
+}
+
+func TestEncodeLineStreamingMatchesSparseFallback(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	texts := []string{"a", " ", "你", "e\u0301", "👩‍💻"}
+	for iteration := 0; iteration < 500; iteration++ {
+		line := terminalengine.Line{ID: 1, Version: uint64(iteration + 1), PhysicalColumns: 120}
+		col := 0
+		for col < 120 {
+			col += rng.Intn(3)
+			if col >= 120 {
+				break
+			}
+			cell := terminalengine.Cell{
+				Text: texts[rng.Intn(len(texts))], Width: 1,
+				StyleID: uint32(rng.Intn(4)), LinkID: uint32(rng.Intn(3)),
+			}
+			if cell.Text == "你" || cell.Text == "👩‍💻" {
+				cell.Width = 2
+			}
+			line.Runs = append(line.Runs, terminalengine.CellRun{Col: col, Cells: []terminalengine.Cell{cell}})
+			col += int(cell.Width)
+		}
+
+		streamed := encodeLineBodyFields(line)
+		reversed := line
+		reversed.Runs = append([]terminalengine.CellRun(nil), line.Runs...)
+		for left, right := 0, len(reversed.Runs)-1; left < right; left, right = left+1, right-1 {
+			reversed.Runs[left], reversed.Runs[right] = reversed.Runs[right], reversed.Runs[left]
+		}
+		fallback := encodeLineBodyFields(reversed)
+		if !proto.Equal(streamed, fallback) {
+			t.Fatalf("iteration %d streaming/fallback mismatch\nstreamed=%v\nfallback=%v",
+				iteration, streamed, fallback)
+		}
+	}
+}
+
+func BenchmarkEncodeLineBodyFieldsStreaming(b *testing.B) {
+	line := benchmarkEncodedLine()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = encodeLineBodyFields(line)
+	}
+}
+
+func BenchmarkEncodeLineBodyFieldsSparseFallback(b *testing.B) {
+	line := benchmarkEncodedLine()
+	line.Runs = make([]terminalengine.CellRun, 0, len(line.Runs[0].Cells))
+	cells := benchmarkEncodedLine().Runs[0].Cells
+	for col := len(cells) - 1; col >= 0; col-- {
+		line.Runs = append(line.Runs, terminalengine.CellRun{
+			Col: col, Cells: []terminalengine.Cell{cells[col]},
+		})
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = encodeLineBodyFields(line)
+	}
+}
+
+func benchmarkEncodedLine() terminalengine.Line {
+	cells := make([]terminalengine.Cell, 0, 120)
+	for col := 0; col < 120; col++ {
+		cells = append(cells, terminalengine.Cell{
+			Text: string(rune('a' + col%26)), Width: 1,
+			StyleID: uint32(col % 8), LinkID: uint32(col % 3),
+		})
+	}
+	return terminalengine.Line{
+		ID: 1, Version: 1, PhysicalColumns: 120,
+		Runs: []terminalengine.CellRun{{Col: 0, Cells: cells}},
+	}
+}
+
+func BenchmarkEncodeBaselineHistoryCatalog(b *testing.B) {
+	for _, historyLines := range []int{0, 1000, 10000} {
+		b.Run("history="+strconv.Itoa(historyLines), func(b *testing.B) {
+			frame := benchmarkBaselineFrame(historyLines)
+			payload, err := EncodeBaseline(frame, 0)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := EncodeBaseline(frame, 0); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(len(payload)), "protobuf_bytes")
+		})
+	}
+}
+
+func benchmarkBaselineFrame(historyLines int) terminalengine.ScreenFrame {
+	const rows, cols = 24, 80
+	frame := terminalengine.ScreenFrame{
+		Kind: terminalengine.FrameSnapshot, SessionID: "benchmark", InstanceID: "instance",
+		Epoch: 1, Seq: 1, Rows: rows, Cols: cols,
+		DictionaryGeneration: 1, HistoryGeneration: 1,
+		Screen: make([]terminalengine.Line, rows),
+	}
+	for row := range frame.Screen {
+		frame.Screen[row] = terminalengine.Line{
+			ID: uint64(historyLines + row + 1), Version: 1,
+			PhysicalColumns: cols, Row: row,
+		}
+	}
+	if historyLines == 0 {
+		return frame
+	}
+	frame.History = terminalengine.HistoryWindow{
+		FirstAvailableHistorySeq: 1,
+		LastIncludedHistorySeq:   uint64(historyLines),
+	}
+	frame.ScrollbackLineage = make([]terminalengine.HistoryPush, historyLines)
+	for index := range frame.ScrollbackLineage {
+		frame.ScrollbackLineage[index] = terminalengine.HistoryPush{
+			HistorySeq: uint64(index + 1), LineID: uint64(index + 1), LineVersion: 1,
+		}
+	}
+	return frame
 }
 
 func TestHandlerRequiresCompleteResumeIdentity(t *testing.T) {

@@ -25,6 +25,8 @@ const (
 	v2AgentErrorMessage      = "agent.error"
 	agentPlaneRealtime       = "realtime"
 	agentPlaneBulk           = "bulk"
+	defaultHeartbeatInterval = 15 * time.Second
+	defaultHeartbeatTimeout  = 5 * time.Second
 )
 
 // Relay 注册错误码（与 relaygateway 的 AgentErr* 常量一一对应）。
@@ -80,9 +82,14 @@ type V2Client struct {
 	http    *HTTPProxy
 	streams *StreamMultiplexer
 
-	// connected 标记本次 runOnce 的 realtime plane 是否注册成功，用于在 Run 循环
+	// connected 标记本次 runOnce 的 realtime/bulk plane 是否都注册成功，用于在 Run 循环
 	// 区分“连接成功后断开”与“连接失败”两类计数（仅旁路指标，不影响重连流程）。
 	connected atomic.Bool
+
+	// Agent 必须主动探测到 Relay 的双向可达性。仅依赖 Read 返回错误无法识别
+	// TUN/代理保留本地 TCP、Relay 已移除注册的半开连接。
+	heartbeatInterval time.Duration
+	heartbeatTimeout  time.Duration
 
 	writeLocks sync.Map // map[*websocket.Conn]*sync.Mutex，两个 plane 绝不共享写锁
 }
@@ -92,9 +99,11 @@ func NewV2(cfg config.RelayConfig, appInstance *app.App) *V2Client {
 	// 提供，Direct Server 复用同一份装配逻辑。
 	router := agentrouter.New(appInstance, "relay")
 	client := &V2Client{
-		cfg:    cfg,
-		app:    appInstance,
-		router: router,
+		cfg:               cfg,
+		app:               appInstance,
+		router:            router,
+		heartbeatInterval: defaultHeartbeatInterval,
+		heartbeatTimeout:  defaultHeartbeatTimeout,
 	}
 	client.http = NewHTTPProxy(router, client)
 	client.streams = NewStreamMultiplexer(router, client, appInstance.Logs())
@@ -164,7 +173,8 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	defer client.streams.CloseAllForConnection(realtimeConn)
 	defer client.writeLocks.Delete(realtimeConn)
 
-	if err := client.registerV2(ctx, realtimeConn, agentPlaneRealtime); err != nil {
+	deviceID, err := client.registerV2(ctx, realtimeConn, agentPlaneRealtime)
+	if err != nil {
 		return err
 	}
 	bulkConn, _, err := websocket.Dial(ctx, relayURL, nil)
@@ -175,46 +185,48 @@ func (client *V2Client) runOnce(ctx context.Context) error {
 	defer bulkConn.Close(websocket.StatusNormalClosure, "")
 	defer client.http.CloseAllForConnection(bulkConn)
 	defer client.writeLocks.Delete(bulkConn)
-	if err := client.registerV2(ctx, bulkConn, agentPlaneBulk); err != nil {
+	if _, err := client.registerV2(ctx, bulkConn, agentPlaneBulk); err != nil {
 		return fmt.Errorf("register bulk plane: %w", err)
 	}
+	client.connected.Store(true)
+	client.app.SetRelayConnected(true, deviceID, app.RelayErrorNone)
 
-	errCh := make(chan error, 2)
-	go func() { errCh <- client.readLoop(ctx, realtimeConn) }()
-	go func() { errCh <- client.readLoop(ctx, bulkConn) }()
+	connectionCtx, cancelConnection := context.WithCancel(ctx)
+	defer cancelConnection()
+	errCh := make(chan error, 4)
+	go func() { errCh <- client.readLoop(connectionCtx, realtimeConn) }()
+	go func() { errCh <- client.readLoop(connectionCtx, bulkConn) }()
+	go func() { errCh <- client.heartbeatLoop(connectionCtx, realtimeConn, agentPlaneRealtime) }()
+	go func() { errCh <- client.heartbeatLoop(connectionCtx, bulkConn, agentPlaneBulk) }()
 	return markRelayError(app.RelayErrorConnectionClosed, true, <-errCh)
 }
 
-func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, plane string) error {
+func (client *V2Client) registerV2(ctx context.Context, conn *websocket.Conn, plane string) (string, error) {
 	if err := writeJSON(ctx, conn, map[string]any{
 		"type":       v2AgentRegisterMessage,
 		"credential": client.cfg.Secret,
 		"deviceName": client.cfg.DeviceName,
 		"plane":      plane,
 	}); err != nil {
-		return markRelayError(app.RelayErrorConnectionClosed, true, err)
+		return "", markRelayError(app.RelayErrorConnectionClosed, true, err)
 	}
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		return markRelayError(app.RelayErrorConnectionClosed, true, err)
+		return "", markRelayError(app.RelayErrorConnectionClosed, true, err)
 	}
 	var response agentRegisterResponse
 	if err := json.Unmarshal(data, &response); err != nil {
-		return markRelayError(app.RelayErrorProtocolFailed, false, errors.New("bad register response"))
+		return "", markRelayError(app.RelayErrorProtocolFailed, false, errors.New("bad register response"))
 	}
 	switch response.Type {
 	case v2AgentRegisteredMessage:
-		if plane == agentPlaneRealtime {
-			client.connected.Store(true)
-			client.app.SetRelayConnected(true, response.DeviceID, app.RelayErrorNone)
-		}
-		return nil
+		return response.DeviceID, nil
 	case v2AgentErrorMessage:
 		// 结构化错误码决定分类与重试策略；错误正文只含稳定 code，不含服务端自由文本。
 		kind, retryable := mapRegisterErrorCode(response.Code, response.Retryable)
-		return markRelayError(kind, retryable, fmt.Errorf("relay register error: code=%s", response.Code))
+		return "", markRelayError(kind, retryable, fmt.Errorf("relay register error: code=%s", response.Code))
 	default:
-		return markRelayError(app.RelayErrorProtocolFailed, false,
+		return "", markRelayError(app.RelayErrorProtocolFailed, false,
 			fmt.Errorf("unexpected register response: %s", response.Type))
 	}
 }
@@ -233,6 +245,34 @@ func (client *V2Client) readLoop(ctx context.Context, conn *websocket.Conn) erro
 			continue
 		}
 		client.handleFrame(ctx, conn, frame)
+	}
+}
+
+// heartbeatLoop 主动验证 Agent -> Relay -> Agent 的双向链路。服务端心跳只能
+// 清理 Relay 侧注册；当本地代理吞掉 TCP close 时，必须由 Agent 自己等待 Pong
+// 超时，才能退出 runOnce 并进入已有的退避重连循环。
+func (client *V2Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn, plane string) error {
+	if client.heartbeatInterval <= 0 {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	ticker := time.NewTicker(client.heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, client.heartbeatTimeout)
+			writeMu := client.writeLock(conn)
+			writeMu.Lock()
+			err := conn.Ping(pingCtx)
+			writeMu.Unlock()
+			cancel()
+			if err != nil {
+				return fmt.Errorf("%s heartbeat: %w", plane, err)
+			}
+		}
 	}
 }
 
@@ -273,6 +313,28 @@ func (client *V2Client) writeRaw(ctx context.Context, conn *websocket.Conn, data
 	writeMu.Lock()
 	defer writeMu.Unlock()
 	return conn.Write(writeCtx, websocket.MessageBinary, data)
+}
+
+func (client *V2Client) writeRawParts(ctx context.Context, conn *websocket.Conn, parts ...[]byte) error {
+	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	writeMu := client.writeLock(conn)
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	writer, err := conn.Writer(writeCtx, websocket.MessageBinary)
+	if err != nil {
+		return err
+	}
+	for _, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+		if _, err := writer.Write(part); err != nil {
+			_ = writer.Close()
+			return err
+		}
+	}
+	return writer.Close()
 }
 
 func (client *V2Client) writeLock(conn *websocket.Conn) *sync.Mutex {

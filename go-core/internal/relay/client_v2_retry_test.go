@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,6 +70,136 @@ func waitForAttempts(t *testing.T, attempts *atomic.Int64, want int64) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %d attempts, got %d", want, attempts.Load())
+}
+
+type heartbeatRelayAttempts struct {
+	realtime atomic.Int64
+	bulk     atomic.Int64
+}
+
+// newHeartbeatRelay 在两个 plane 都完成注册后，选择性地让一个 plane 停止读取。
+// TCP/WebSocket 都保持打开，因此这是 Read 不返回错误的真实半开场景；只有客户端
+// 主动 Ping 等待 Pong 超时，才能触发重连。
+func newHeartbeatRelay(t *testing.T, blackholePlane string, attempts *heartbeatRelayAttempts) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		_, data, err := conn.Read(r.Context())
+		if err != nil {
+			return
+		}
+		var register map[string]any
+		if err := json.Unmarshal(data, &register); err != nil {
+			return
+		}
+		plane, _ := register["plane"].(string)
+		switch plane {
+		case agentPlaneRealtime:
+			attempts.realtime.Add(1)
+		case agentPlaneBulk:
+			attempts.bulk.Add(1)
+		default:
+			return
+		}
+		response, _ := json.Marshal(map[string]any{
+			"type":     v2AgentRegisteredMessage,
+			"deviceId": "device-1",
+		})
+		if err := conn.Write(r.Context(), websocket.MessageText, response); err != nil {
+			return
+		}
+		if plane == blackholePlane {
+			<-release
+			return
+		}
+		for {
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+		server.CloseClientConnections()
+		server.Close()
+	})
+	return server
+}
+
+func waitForHeartbeatAttempts(t *testing.T, attempts *atomic.Int64, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if attempts.Load() >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d registrations, got %d", want, attempts.Load())
+}
+
+// 健康连接跨过多个心跳周期仍保持，不因主动探测产生误重连。
+func TestV2ClientHeartbeatKeepsHealthyPlanes(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	var attempts heartbeatRelayAttempts
+	server := newHeartbeatRelay(t, "", &attempts)
+	client, application := newRetryTestClient(t, server.URL)
+	client.heartbeatInterval = 20 * time.Millisecond
+	client.heartbeatTimeout = 100 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- client.Run(ctx) }()
+	waitForHeartbeatAttempts(t, &attempts.realtime, 1)
+	waitForHeartbeatAttempts(t, &attempts.bulk, 1)
+	time.Sleep(200 * time.Millisecond)
+	if got := attempts.realtime.Load(); got != 1 {
+		t.Fatalf("realtime registrations = %d, want 1", got)
+	}
+	if got := attempts.bulk.Load(); got != 1 {
+		t.Fatalf("bulk registrations = %d, want 1", got)
+	}
+	if connected, _ := application.DiagnosticsRelayStatus()["connected"].(bool); !connected {
+		t.Fatal("relay connected = false after healthy heartbeats")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
+	}
+}
+
+// 任意一个 plane 半开都必须结束整次 runOnce，并由现有 Run 循环重新注册两条
+// 连接；不能继续保持本地 connected、Relay 实际 unavailable 的假在线状态。
+func TestV2ClientHeartbeatReconnectsWhenEitherPlaneIsHalfOpen(t *testing.T) {
+	testutil.SkipIfLoopbackListenUnavailable(t)
+	for _, blackholePlane := range []string{agentPlaneRealtime, agentPlaneBulk} {
+		t.Run(blackholePlane, func(t *testing.T) {
+			var attempts heartbeatRelayAttempts
+			server := newHeartbeatRelay(t, blackholePlane, &attempts)
+			client, _ := newRetryTestClient(t, server.URL)
+			client.heartbeatInterval = 20 * time.Millisecond
+			client.heartbeatTimeout = 50 * time.Millisecond
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() { _ = client.Run(ctx) }()
+
+			// 首次心跳超时后外层退避 1 秒，再次注册 realtime；这证明不是
+			// 只关闭逻辑 stream，而是整组物理连接进入了重连循环。
+			waitForHeartbeatAttempts(t, &attempts.realtime, 2)
+			if got := attempts.bulk.Load(); got < 1 {
+				t.Fatalf("bulk registrations = %d, want at least 1", got)
+			}
+		})
+	}
 }
 
 // 不可重试的凭据错误：只注册一次，随后停止重试并保持阻塞（进程存活），

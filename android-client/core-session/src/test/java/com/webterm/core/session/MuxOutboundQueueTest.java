@@ -87,7 +87,7 @@ public final class MuxOutboundQueueTest {
         MuxOutboundQueue queue = new MuxOutboundQueue(8, 128L);
         queue.offer("webterm.screen.v3", new byte[] {1}, true, result -> {});
         queue.offer("term:manager", new byte[] {1}, true, result -> {});
-        queue.offer("capture-preview", new byte[] {1}, true, result -> {});
+        queue.offer("unknown-preview", new byte[] {1}, true, result -> {});
         queue.offer("term:input", new byte[] {1}, true, result -> {});
 
         assertEquals(MuxOutboundQueue.FrameKind.SCREEN, queue.poll().kind);

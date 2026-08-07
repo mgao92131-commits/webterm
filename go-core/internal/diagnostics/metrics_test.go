@@ -12,6 +12,9 @@ func TestAgentMetricsCounters(t *testing.T) {
 	m.ScreenEncodeFailureCount.Add(5)
 	m.ProjectionExportCount.Add(7)
 	m.ScreenMailboxOverwriteCount.Add(2)
+	m.ActorInputEventWaitBuckets.Observe(900_000)
+	m.PTYEngineWriteNanos.Add(2000)
+	m.PTYEngineWriteBytes.Add(1024)
 
 	snapshot := m.Snapshot()
 	checks := map[string]uint64{
@@ -48,6 +51,22 @@ func TestAgentMetricsCounters(t *testing.T) {
 	writeBuckets, ok := snapshot["writerWriteDurationBuckets"].([]uint64)
 	if !ok || len(writeBuckets) != DurationBucketCount {
 		t.Fatalf("writerWriteDurationBuckets missing or wrong length: %v", snapshot["writerWriteDurationBuckets"])
+	}
+	for _, key := range []string{
+		"actorPTYEventWaitBuckets", "actorInputEventWaitBuckets",
+		"actorResizeEventWaitBuckets", "actorOtherControlEventWaitBuckets",
+		"ptyEngineWriteDurationBuckets",
+	} {
+		buckets, ok := snapshot[key].([]uint64)
+		if !ok || len(buckets) != DurationBucketCount {
+			t.Fatalf("%s missing or wrong length: %v", key, snapshot[key])
+		}
+	}
+	if got := snapshot["actorInputEventWaitP95Nanos"]; got != uint64(1_000_000) {
+		t.Fatalf("actor input P95 = %v, want 1000000", got)
+	}
+	if got := snapshot["ptyEngineWriteNanosPerKiB"]; got != float64(2000) {
+		t.Fatalf("engine write ns/KiB = %v, want 2000", got)
 	}
 }
 
@@ -86,12 +105,16 @@ func TestWriterDepthRegistryMultiWriter(t *testing.T) {
 	a := m.RegisterWriter()
 	b := m.RegisterWriter()
 
-	m.UpdateWriterDepth(a, 80, 0)
-	m.UpdateWriterDepth(b, 20, 0)
+	m.UpdateWriterQueue(a, 80, 0, 8192, 0)
+	m.UpdateWriterQueue(b, 20, 0, 2048, 0)
 	if got := m.WriterTotalQueueCurrentDepth.Load(); got != 100 {
 		t.Fatalf("total depth = %d, want 100", got)
 	}
 	highWater := m.WriterTotalQueueHighWaterDepth.Load()
+	if got := m.WriterTotalQueueCurrentBytes.Load(); got != 10240 {
+		t.Fatalf("total bytes = %d, want 10240", got)
+	}
+	byteHighWater := m.WriterTotalQueueHighWaterBytes.Load()
 
 	m.UpdateWriterDepth(b, 0, 0)
 	if got := m.WriterTotalQueueCurrentDepth.Load(); got != 80 {
@@ -99,6 +122,10 @@ func TestWriterDepthRegistryMultiWriter(t *testing.T) {
 	}
 	if m.WriterTotalQueueHighWaterDepth.Load() < highWater {
 		t.Fatalf("high water decreased: %d < %d", m.WriterTotalQueueHighWaterDepth.Load(), highWater)
+	}
+	if m.WriterTotalQueueHighWaterBytes.Load() < byteHighWater {
+		t.Fatalf("byte high water decreased: %d < %d",
+			m.WriterTotalQueueHighWaterBytes.Load(), byteHighWater)
 	}
 
 	m.UnregisterWriter(a)
@@ -145,13 +172,14 @@ func TestSnapshotCapabilitiesDeclareUninstrumented(t *testing.T) {
 	if !ok {
 		t.Fatalf("snapshot missing capabilities map: %v", snapshot["capabilities"])
 	}
-	for _, name := range []string{"inputMetrics", "resyncMetrics", "durationMetrics"} {
+	for _, name := range []string{"resyncMetrics"} {
 		if caps[name] != false {
 			t.Errorf("capabilities[%q] = %v, want false", name, caps[name])
 		}
 	}
 	for _, name := range []string{
-		"mailboxMetrics", "projectionMetrics", "writerQueueMetrics", "writerDurationMetrics",
+		"mailboxMetrics", "inputMetrics", "projectionMetrics", "durationMetrics",
+		"writerQueueMetrics", "writerDurationMetrics",
 	} {
 		if caps[name] != true {
 			t.Errorf("capabilities[%q] = %v, want true", name, caps[name])

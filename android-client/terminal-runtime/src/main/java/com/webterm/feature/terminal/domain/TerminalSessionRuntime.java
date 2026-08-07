@@ -59,10 +59,14 @@ public final class TerminalSessionRuntime {
     void onAuthenticationRequired(@Nullable String reason);
   }
 
-  /** Bound retained wire data per session when a remote PTY outpaces model parsing. */
+  /** Projection-lane bound when a remote PTY outpaces model parsing. */
   private static final int MAX_PENDING_SCREEN_MESSAGES = 256;
-  /** 单会话待解析屏幕帧的总内存预算；不能只限制条数，因为单帧上限接近 2 MiB。 */
+  /** Projection-lane byte bound; a single frame can approach 2 MiB. */
   private static final long MAX_PENDING_SCREEN_BYTES = 4L * 1024L * 1024L;
+  /** All four lanes share this per-session retained-message budget. */
+  private static final int MAX_PENDING_TOTAL_MESSAGES = 256;
+  /** All four lanes share a 6 MiB cap; lane reservations cannot add up beyond it. */
+  private static final long MAX_PENDING_TOTAL_BYTES = 6L * 1024L * 1024L;
   /** resync 最多重发次数；耗尽后升级为 channel 重建。 */
   private static final int MAX_RESYNC_RETRIES = 3;
   /** 发送 resync 后等待权威 snapshot 的时间，超时按有界退避重发。 */
@@ -202,7 +206,9 @@ public final class TerminalSessionRuntime {
   /** UI full-render 请求的有界 mailbox；至多排队一个 modelExecutor 任务。 */
   private final AtomicBoolean fullRenderRequestScheduled = new AtomicBoolean();
   private final ScreenMailbox screenMailbox =
-      new ScreenMailbox(MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES);
+      new ScreenMailbox(
+          MAX_PENDING_SCREEN_MESSAGES, MAX_PENDING_SCREEN_BYTES,
+          MAX_PENDING_TOTAL_MESSAGES, MAX_PENDING_TOTAL_BYTES);
   private final TerminalPipelineMetrics pipelineMetrics = new TerminalPipelineMetrics();
 
   private volatile State state = State.DISCONNECTED;
@@ -480,10 +486,7 @@ public final class TerminalSessionRuntime {
     return out;
   }
 
-  /**
-   * 当前 screen 连接（可能为 null）。仅供现场捕获会话源取得 TerminalChannel 以打开独立
-   * capture 通道使用，不参与 screen 业务状态。
-   */
+  /** 当前 screen 连接（可能为 null）。 */
   @Nullable
   public ScreenConnection connection() {
     return connection;
@@ -1145,9 +1148,6 @@ public final class TerminalSessionRuntime {
       startForceBaselineRecovery("history body batch missing referenced key");
       return;
     }
-    if (bodyResult instanceof HistoryBodyResult.Applied) {
-      recordCapturedModelState(false);
-    }
   }
 
   private boolean handleBatchFailure(@NonNull LineBodyBatchSource.Failure failure) {
@@ -1397,15 +1397,7 @@ public final class TerminalSessionRuntime {
     if (kind == ScreenMailbox.MessageKind.UNKNOWN) {
       pipelineMetrics.incrementUnknownEnvelopeCount();
     }
-    // 在消息进入 Mailbox 之前记录接收字节；Mailbox 溢出或后续丢弃不影响已通过网络接收的事实。
     TerminalRenderMetrics.inboundScreenFrame(toScreenTrafficKind(kind), payloadBytes);
-    // 捕获点 A：原始 screen protocol bytes 旁路记录（入队前）。不重复 parse。先做一次廉价的
-    // isRecording() 判断，未记录时不构造身份对象；记录时携带流身份供控制器做会话级隔离。
-    if (com.webterm.terminal.model.capture.TerminalCapture.isRecording()) {
-      com.webterm.terminal.model.capture.TerminalCapture.recordWireFrame(
-          captureStreamIdentity(), messageEpoch, System.currentTimeMillis(), kind.name(),
-          copyBytes(frame));
-    }
     ScreenMailbox.Offer offer = screenMailbox.offer(
         messageEpoch, sourceConnection, frame, frameSizeValid, kind);
     TerminalResumeMetrics.screenMailboxHighWater(offer.pendingBytes);
@@ -1807,9 +1799,6 @@ public final class TerminalSessionRuntime {
                 BaselineFaultCode.MODEL_REJECTED_BASELINE);
           }
           canonicalDictionaryState = baselineDictionary;
-          com.webterm.terminal.model.capture.TerminalCapture.recordMappedSnapshot(
-              captureStreamIdentity(), baseline);
-          recordCapturedModelState(true);
           onAuthoritativeSnapshot("BASELINE");
           completeSynchronization();
           pumpVisibleBodies();
@@ -1872,9 +1861,6 @@ public final class TerminalSessionRuntime {
                 System.nanoTime() - commitApplyStartedNanos);
           }
           canonicalDictionaryState = stagedDictionary;
-          com.webterm.terminal.model.capture.TerminalCapture.recordMappedCommit(
-              captureStreamIdentity(), commit);
-          if (renderChanged) recordCapturedModelState(false);
           completeSynchronization();
           pumpVisibleBodies();
           break;
@@ -2069,32 +2055,6 @@ public final class TerminalSessionRuntime {
     return new HistoryExtent(extent.getFirstSeq(), extent.getLastSeq());
   }
 
-
-  /** 构造当前事件流身份，供捕获做会话级隔离。仅在录制时调用。 */
-  com.webterm.terminal.model.capture.CaptureStreamIdentity captureStreamIdentity() {
-    String terminalInstanceId = model.projectionReadView().instanceId;
-    return new com.webterm.terminal.model.capture.CaptureStreamIdentity(
-        sessionId, terminalInstanceId, "");
-  }
-
-  private void recordCapturedModelState(boolean afterBaseline) {
-    if (!com.webterm.terminal.model.capture.TerminalCapture.isRecording()) return;
-    com.webterm.terminal.model.capture.TerminalCapture.recordModelState(
-        captureStreamIdentity(),
-        new com.webterm.terminal.model.capture.CapturedModelState(
-            System.currentTimeMillis(),
-            model.instanceId,
-            model.layoutEpoch,
-            model.screenRevision,
-            model.rows,
-            model.columns,
-            model.activeBuffer == TerminalBufferKind.ALTERNATE ? 1 : 0,
-            model.projectionHealth().complete,
-            afterBaseline,
-            model.displayExtent(),
-            model.remoteAvailableExtent(),
-            afterBaseline));
-  }
 
   private Map<String, Object> diagnosticFields(Object... pairs) {
     Map<String, Object> fields = new HashMap<>();

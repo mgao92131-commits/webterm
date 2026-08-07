@@ -37,6 +37,16 @@ type AgentMetrics struct {
 	ScreenFramesDerivedCount    atomic.Uint64
 	ScreenFramesWrittenCount    atomic.Uint64
 	EmptyCommitSuppressedCount  atomic.Uint64
+	ProjectionPTYChunkCount     atomic.Uint64
+
+	// terminal actor 从外部生产者提交到开始处理的等待时间，按事件类型分开。
+	ActorPTYEventWaitBuckets          DurationBuckets
+	ActorInputEventWaitBuckets        DurationBuckets
+	ActorResizeEventWaitBuckets       DurationBuckets
+	ActorOtherControlEventWaitBuckets DurationBuckets
+	PTYEngineWriteDurationBuckets     DurationBuckets
+	PTYEngineWriteNanos               atomic.Uint64
+	PTYEngineWriteBytes               atomic.Uint64
 
 	// LineBodyBatch 冷历史导出成本。
 	LineBodyBatchProjectorLockNanos atomic.Uint64
@@ -65,6 +75,10 @@ type AgentMetrics struct {
 	WriterDataQueueDepth           atomic.Uint64
 	WriterTotalQueueCurrentDepth   atomic.Uint64
 	WriterTotalQueueHighWaterDepth atomic.Uint64
+	WriterHighQueueCurrentBytes    atomic.Uint64
+	WriterDataQueueCurrentBytes    atomic.Uint64
+	WriterTotalQueueCurrentBytes   atomic.Uint64
+	WriterTotalQueueHighWaterBytes atomic.Uint64
 	// Deprecated alias kept for older readers; mirrors total high water.
 	WriterHighWaterDepth atomic.Uint64
 
@@ -149,10 +163,10 @@ var Default = NewAgentMetrics()
 // 占位零值误读为真实数据；接线埋点后把对应项改为 true 并补上计数器。
 var uninstrumentedCapabilities = map[string]any{
 	"mailboxMetrics":        true,
-	"inputMetrics":          false,
+	"inputMetrics":          true,
 	"resyncMetrics":         false,
 	"projectionMetrics":     true,
-	"durationMetrics":       false,
+	"durationMetrics":       true,
 	"writerQueueMetrics":    true,
 	"writerDurationMetrics": true,
 }
@@ -165,6 +179,13 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 	for key, value := range uninstrumentedCapabilities {
 		capabilities[key] = value
 	}
+	ptyWait := m.ActorPTYEventWaitBuckets.Snapshot()
+	inputWait := m.ActorInputEventWaitBuckets.Snapshot()
+	resizeWait := m.ActorResizeEventWaitBuckets.Snapshot()
+	otherControlWait := m.ActorOtherControlEventWaitBuckets.Snapshot()
+	engineWrite := m.PTYEngineWriteDurationBuckets.Snapshot()
+	engineWriteNanos := m.PTYEngineWriteNanos.Load()
+	engineWriteBytes := m.PTYEngineWriteBytes.Load()
 	return map[string]any{
 		"relayConnectCount":                  m.RelayConnectCount.Load(),
 		"relayDisconnectCount":               m.RelayDisconnectCount.Load(),
@@ -182,6 +203,21 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		"screenFramesDerivedCount":           m.ScreenFramesDerivedCount.Load(),
 		"screenFramesWrittenCount":           m.ScreenFramesWrittenCount.Load(),
 		"emptyCommitSuppressedCount":         m.EmptyCommitSuppressedCount.Load(),
+		"projectionPTYChunkCount":            m.ProjectionPTYChunkCount.Load(),
+		"actorPTYEventWaitBuckets":           ptyWait,
+		"actorPTYEventWaitP50Nanos":          durationPercentileUpperNanos(ptyWait, 0.50),
+		"actorPTYEventWaitP95Nanos":          durationPercentileUpperNanos(ptyWait, 0.95),
+		"actorInputEventWaitBuckets":         inputWait,
+		"actorInputEventWaitP95Nanos":        durationPercentileUpperNanos(inputWait, 0.95),
+		"actorResizeEventWaitBuckets":        resizeWait,
+		"actorResizeEventWaitP95Nanos":       durationPercentileUpperNanos(resizeWait, 0.95),
+		"actorOtherControlEventWaitBuckets":  otherControlWait,
+		"actorOtherControlWaitP95Nanos":      durationPercentileUpperNanos(otherControlWait, 0.95),
+		"ptyEngineWriteDurationBuckets":      engineWrite,
+		"ptyEngineWriteP95Nanos":             durationPercentileUpperNanos(engineWrite, 0.95),
+		"ptyEngineWriteNanos":                engineWriteNanos,
+		"ptyEngineWriteBytes":                engineWriteBytes,
+		"ptyEngineWriteNanosPerKiB":          nanosPerKiB(engineWriteNanos, engineWriteBytes),
 		"lineBodyBatchProjectorLockNanos":    m.LineBodyBatchProjectorLockNanos.Load(),
 		"lineBodyBatchExportNanos":           m.LineBodyBatchExportNanos.Load(),
 		"lineBodyBatchRecordCount":           m.LineBodyBatchRecordCount.Load(),
@@ -202,6 +238,10 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 		"writerDataQueueCurrentDepth":        m.WriterDataQueueDepth.Load(),
 		"writerTotalQueueCurrentDepth":       m.WriterTotalQueueCurrentDepth.Load(),
 		"writerTotalQueueHighWaterDepth":     m.WriterTotalQueueHighWaterDepth.Load(),
+		"writerHighQueueCurrentBytes":        m.WriterHighQueueCurrentBytes.Load(),
+		"writerDataQueueCurrentBytes":        m.WriterDataQueueCurrentBytes.Load(),
+		"writerTotalQueueCurrentBytes":       m.WriterTotalQueueCurrentBytes.Load(),
+		"writerTotalQueueHighWaterBytes":     m.WriterTotalQueueHighWaterBytes.Load(),
 		"writerHighQueueDepth":               m.WriterHighQueueDepth.Load(),
 		"writerDataQueueDepth":               m.WriterDataQueueDepth.Load(),
 		"writerHighWaterDepth":               m.WriterHighWaterDepth.Load(),
@@ -211,10 +251,41 @@ func (m *AgentMetrics) Snapshot() map[string]any {
 	}
 }
 
+func durationPercentileUpperNanos(buckets []uint64, percentile float64) uint64 {
+	var count uint64
+	for _, value := range buckets {
+		count += value
+	}
+	if count == 0 {
+		return 0
+	}
+	target := uint64(float64(count)*percentile + 0.999999)
+	var seen uint64
+	for index, value := range buckets {
+		seen += value
+		if seen >= target {
+			if index < len(DurationBucketUpperBoundsNanos) {
+				return uint64(DurationBucketUpperBoundsNanos[index])
+			}
+			return uint64(DurationBucketUpperBoundsNanos[len(DurationBucketUpperBoundsNanos)-1])
+		}
+	}
+	return uint64(DurationBucketUpperBoundsNanos[len(DurationBucketUpperBoundsNanos)-1])
+}
+
+func nanosPerKiB(nanos, bytes uint64) float64 {
+	if bytes == 0 {
+		return 0
+	}
+	return float64(nanos) * 1024 / float64(bytes)
+}
+
 // WriterDepth 是单个 PhysicalWriter 的 high/data 队列深度快照。
 type WriterDepth struct {
-	High int
-	Data int
+	High      int
+	Data      int
+	HighBytes uint64
+	DataBytes uint64
 }
 
 // WriterDepthRegistry 跟踪多个 PhysicalWriter 的队列深度并维护全局求和。
@@ -238,6 +309,13 @@ func (m *AgentMetrics) RegisterWriter() uint64 {
 
 // UpdateWriterDepth 更新指定 writer 的深度并重算全局 high/data/total 与高水位。
 func (m *AgentMetrics) UpdateWriterDepth(id uint64, high, data int) {
+	m.UpdateWriterQueue(id, high, data, 0, 0)
+}
+
+// UpdateWriterQueue 更新指定 writer 的帧深度与待写 payload 字节数。
+func (m *AgentMetrics) UpdateWriterQueue(
+	id uint64, high, data int, highBytes, dataBytes uint64,
+) {
 	if high < 0 {
 		high = 0
 	}
@@ -252,7 +330,9 @@ func (m *AgentMetrics) UpdateWriterDepth(id uint64, high, data int) {
 	if _, ok := m.writerDepths.writers[id]; !ok {
 		return
 	}
-	m.writerDepths.writers[id] = WriterDepth{High: high, Data: data}
+	m.writerDepths.writers[id] = WriterDepth{
+		High: high, Data: data, HighBytes: highBytes, DataBytes: dataBytes,
+	}
 	m.recomputeWriterDepthsLocked()
 }
 
@@ -277,14 +357,27 @@ func (m *AgentMetrics) ResetWriterDepthsForTest() {
 
 func (m *AgentMetrics) recomputeWriterDepthsLocked() {
 	highSum, dataSum := 0, 0
+	var highByteSum, dataByteSum uint64
 	for _, depth := range m.writerDepths.writers {
 		highSum += depth.High
 		dataSum += depth.Data
+		highByteSum += depth.HighBytes
+		dataByteSum += depth.DataBytes
 	}
 	m.WriterHighQueueDepth.Store(uint64(highSum))
 	m.WriterDataQueueDepth.Store(uint64(dataSum))
 	total := highSum + dataSum
 	m.WriterTotalQueueCurrentDepth.Store(uint64(total))
+	m.WriterHighQueueCurrentBytes.Store(highByteSum)
+	m.WriterDataQueueCurrentBytes.Store(dataByteSum)
+	totalBytes := highByteSum + dataByteSum
+	m.WriterTotalQueueCurrentBytes.Store(totalBytes)
+	for {
+		cur := m.WriterTotalQueueHighWaterBytes.Load()
+		if totalBytes <= cur || m.WriterTotalQueueHighWaterBytes.CompareAndSwap(cur, totalBytes) {
+			break
+		}
+	}
 	for {
 		cur := m.WriterTotalQueueHighWaterDepth.Load()
 		if uint64(total) <= cur {

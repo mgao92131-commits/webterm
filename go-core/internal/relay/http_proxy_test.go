@@ -26,6 +26,9 @@ func (w *capWriter) writeFrame(_ context.Context, _ *websocket.Conn, f relaycore
 }
 
 func (w *capWriter) writeRaw(context.Context, *websocket.Conn, []byte) error { return nil }
+func (w *capWriter) writeRawParts(context.Context, *websocket.Conn, ...[]byte) error {
+	return nil
+}
 
 func (w *capWriter) forStream(id string) []relaycore.Frame {
 	w.mu.Lock()

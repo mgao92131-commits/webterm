@@ -81,7 +81,7 @@ public final class TerminalAttachBlankReproTest {
     owner.resume();
 
     // 检查1：View 的 renderedSnapshot 不应为 null，且内容与模型基线完全一致
-    RemoteTerminalModel.RenderSnapshot snapshot = view.currentRenderedSnapshot();
+    RemoteTerminalModel.RenderSnapshot snapshot = view.renderedSnapshotForTest();
     assertNotNull("Reattached view must have non-null renderedSnapshot", snapshot);
     assertEquals("inst-1", snapshot.instanceId);
     assertEquals(1, snapshot.screenView.size());

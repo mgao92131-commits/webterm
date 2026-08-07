@@ -8,7 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.nio.ByteBuffer;
 
-/** 连接代际感知的三 lane 有界 mailbox；overflow fence 永远先于后续消息处理。 */
+/** 连接代际感知的四 lane 有界 mailbox；overflow fence 永远先于后续消息处理。 */
 public final class ScreenMailbox {
   private static final long[] RESIDENCE_BUCKET_UPPER_NANOS = {
       1_000_000L, 2_000_000L, 4_000_000L, 8_000_000L,
@@ -18,9 +18,10 @@ public final class ScreenMailbox {
   static final int DEFAULT_URGENT_MAX_MESSAGES = 64;
   static final long DEFAULT_URGENT_MAX_BYTES = 512L * 1024L;
   static final int DEFAULT_RELIABLE_MAX_MESSAGES = 32;
-  static final long DEFAULT_RELIABLE_MAX_BYTES = 4L * 1024L * 1024L;
+  // Clipboard effects may approach the protocol's 2 MiB single-frame limit.
+  static final long DEFAULT_RELIABLE_MAX_BYTES = 2L * 1024L * 1024L;
   static final int DEFAULT_BACKGROUND_MAX_MESSAGES = 32;
-  static final long DEFAULT_BACKGROUND_MAX_BYTES = 4L * 1024L * 1024L;
+  static final long DEFAULT_BACKGROUND_MAX_BYTES = 256L * 1024L;
   // Weighted round-robin slots. Keeping the order explicit makes the maximum wait bounded and
   // testable while preserving FIFO inside every lane.
   private static final int LANE_URGENT = 1;
@@ -124,7 +125,9 @@ public final class ScreenMailbox {
     URGENT_FRAME_BUDGET,
     URGENT_BYTE_BUDGET,
     RELIABLE_FRAME_BUDGET,
-    RELIABLE_BYTE_BUDGET
+    RELIABLE_BYTE_BUDGET,
+    AGGREGATE_FRAME_BUDGET,
+    AGGREGATE_BYTE_BUDGET
   }
 
   public static final class Offer {
@@ -159,6 +162,8 @@ public final class ScreenMailbox {
 
   private final int projectionMaxMessages;
   private final long projectionMaxBytes;
+  private final int totalMaxMessages;
+  private final long totalMaxBytes;
   private final int urgentMaxMessages;
   private final long urgentMaxBytes;
   private final int reliableMaxMessages;
@@ -194,6 +199,8 @@ public final class ScreenMailbox {
   private long projectionDrainCount;
   private long projectionPendingMessagesHighWater;
   private long projectionPendingBytesHighWater;
+  private long totalPendingMessagesHighWater;
+  private long totalPendingBytesHighWater;
   private long overflowByFrameBudgetCount;
   private long overflowByByteBudgetCount;
   private long residenceCount;
@@ -204,7 +211,20 @@ public final class ScreenMailbox {
     this(maxMessages, maxBytes,
         DEFAULT_URGENT_MAX_MESSAGES, DEFAULT_URGENT_MAX_BYTES,
         DEFAULT_RELIABLE_MAX_MESSAGES, DEFAULT_RELIABLE_MAX_BYTES,
-        DEFAULT_BACKGROUND_MAX_MESSAGES, DEFAULT_BACKGROUND_MAX_BYTES);
+        DEFAULT_BACKGROUND_MAX_MESSAGES, DEFAULT_BACKGROUND_MAX_BYTES,
+        maxMessages + DEFAULT_URGENT_MAX_MESSAGES + DEFAULT_RELIABLE_MAX_MESSAGES
+            + DEFAULT_BACKGROUND_MAX_MESSAGES,
+        maxBytes + DEFAULT_URGENT_MAX_BYTES + DEFAULT_RELIABLE_MAX_BYTES
+            + DEFAULT_BACKGROUND_MAX_BYTES);
+  }
+
+  ScreenMailbox(int projectionMaxMessages, long projectionMaxBytes,
+                int totalMaxMessages, long totalMaxBytes) {
+    this(projectionMaxMessages, projectionMaxBytes,
+        DEFAULT_URGENT_MAX_MESSAGES, DEFAULT_URGENT_MAX_BYTES,
+        DEFAULT_RELIABLE_MAX_MESSAGES, DEFAULT_RELIABLE_MAX_BYTES,
+        DEFAULT_BACKGROUND_MAX_MESSAGES, DEFAULT_BACKGROUND_MAX_BYTES,
+        totalMaxMessages, totalMaxBytes);
   }
 
   ScreenMailbox(int projectionMaxMessages, long projectionMaxBytes,
@@ -213,14 +233,31 @@ public final class ScreenMailbox {
     this(projectionMaxMessages, projectionMaxBytes,
         urgentMaxMessages, urgentMaxBytes,
         DEFAULT_RELIABLE_MAX_MESSAGES, DEFAULT_RELIABLE_MAX_BYTES,
-        backgroundMaxMessages, backgroundMaxBytes);
+        backgroundMaxMessages, backgroundMaxBytes,
+        projectionMaxMessages + urgentMaxMessages + DEFAULT_RELIABLE_MAX_MESSAGES
+            + backgroundMaxMessages,
+        projectionMaxBytes + urgentMaxBytes + DEFAULT_RELIABLE_MAX_BYTES
+            + backgroundMaxBytes);
   }
 
   ScreenMailbox(int projectionMaxMessages, long projectionMaxBytes,
                 int urgentMaxMessages, long urgentMaxBytes,
                 int reliableMaxMessages, long reliableMaxBytes,
                 int backgroundMaxMessages, long backgroundMaxBytes) {
+    this(projectionMaxMessages, projectionMaxBytes,
+        urgentMaxMessages, urgentMaxBytes, reliableMaxMessages, reliableMaxBytes,
+        backgroundMaxMessages, backgroundMaxBytes,
+        projectionMaxMessages + urgentMaxMessages + reliableMaxMessages + backgroundMaxMessages,
+        projectionMaxBytes + urgentMaxBytes + reliableMaxBytes + backgroundMaxBytes);
+  }
+
+  ScreenMailbox(int projectionMaxMessages, long projectionMaxBytes,
+                int urgentMaxMessages, long urgentMaxBytes,
+                int reliableMaxMessages, long reliableMaxBytes,
+                int backgroundMaxMessages, long backgroundMaxBytes,
+                int totalMaxMessages, long totalMaxBytes) {
     if (projectionMaxMessages < 1 || projectionMaxBytes < 1
+        || totalMaxMessages < 1 || totalMaxBytes < 1
         || urgentMaxMessages < 1 || urgentMaxBytes < 1
         || reliableMaxMessages < 1 || reliableMaxBytes < 1
         || backgroundMaxMessages < 1 || backgroundMaxBytes < 1) {
@@ -228,6 +265,8 @@ public final class ScreenMailbox {
     }
     this.projectionMaxMessages = projectionMaxMessages;
     this.projectionMaxBytes = projectionMaxBytes;
+    this.totalMaxMessages = totalMaxMessages;
+    this.totalMaxBytes = totalMaxBytes;
     this.urgentMaxMessages = urgentMaxMessages;
     this.urgentMaxBytes = urgentMaxBytes;
     this.reliableMaxMessages = reliableMaxMessages;
@@ -257,6 +296,8 @@ public final class ScreenMailbox {
     long nextProjectionBytes = pendingProjectionBytes + (projection ? payloadBytes : 0L);
     long nextUrgentBytes = pendingUrgentBytes + (urgent ? payloadBytes : 0L);
     long nextReliableBytes = pendingReliableBytes + (reliable ? payloadBytes : 0L);
+    boolean aggregateFrameExceeded = pendingMessages() + 1 > totalMaxMessages;
+    boolean aggregateByteExceeded = pendingBytes + payloadBytes > totalMaxBytes;
     long droppedBackgroundMessages = 0L;
     long droppedBackgroundBytes = 0L;
     if (projection) {
@@ -276,7 +317,8 @@ public final class ScreenMailbox {
       overflowByByteBudgetCount++;
       fenceReason = "screen mailbox rejected oversized frame";
     } else if (projection && (pendingProjectionMessages >= projectionMaxMessages
-        || nextProjectionBytes > projectionMaxBytes)) {
+        || nextProjectionBytes > projectionMaxBytes
+        || aggregateFrameExceeded || aggregateByteExceeded)) {
       long discarded = pendingProjectionBytes + payloadBytes;
       long discardedMessages = pendingProjectionMessages + 1L;
       projectionMessages.clear();
@@ -289,19 +331,29 @@ public final class ScreenMailbox {
       fenceOverflows++;
       fenceBytes = Math.max(fenceBytes, discarded);
       fenceMessages += discardedMessages;
-      fenceReason = nextProjectionBytes > projectionMaxBytes
-          ? "screen mailbox exceeded byte budget"
-          : "screen mailbox exceeded frame budget";
-      fenceOverflowKind = nextProjectionBytes > projectionMaxBytes
-          ? OverflowKind.PROJECTION_BYTE_BUDGET
-          : OverflowKind.PROJECTION_FRAME_BUDGET;
-      if (nextProjectionBytes > projectionMaxBytes) {
+      boolean byteExceeded = nextProjectionBytes > projectionMaxBytes || aggregateByteExceeded;
+      fenceReason = aggregateByteExceeded
+          ? "screen mailbox exceeded aggregate byte budget"
+          : aggregateFrameExceeded
+              ? "screen mailbox exceeded aggregate frame budget"
+              : byteExceeded
+                  ? "screen mailbox exceeded byte budget"
+                  : "screen mailbox exceeded frame budget";
+      fenceOverflowKind = aggregateByteExceeded
+          ? OverflowKind.AGGREGATE_BYTE_BUDGET
+          : aggregateFrameExceeded
+              ? OverflowKind.AGGREGATE_FRAME_BUDGET
+              : byteExceeded
+                  ? OverflowKind.PROJECTION_BYTE_BUDGET
+                  : OverflowKind.PROJECTION_FRAME_BUDGET;
+      if (byteExceeded) {
         overflowByByteBudgetCount++;
       } else {
         overflowByFrameBudgetCount++;
       }
     } else if (urgent && (urgentMessages.size() >= urgentMaxMessages
-        || nextUrgentBytes > urgentMaxBytes)) {
+        || nextUrgentBytes > urgentMaxBytes
+        || aggregateFrameExceeded || aggregateByteExceeded)) {
       long discarded = pendingBytes + payloadBytes;
       long discardedMessages = pendingMessages() + 1L;
       clearQueues();
@@ -311,18 +363,28 @@ public final class ScreenMailbox {
       fenceBytes = Math.max(fenceBytes, discarded);
       fenceMessages += discardedMessages;
       fenceRebuildChannel = true;
-      fenceReason = nextUrgentBytes > urgentMaxBytes
-          ? "screen mailbox urgent control exceeded byte budget"
-          : "screen mailbox urgent control exceeded frame budget";
-      fenceOverflowKind = nextUrgentBytes > urgentMaxBytes
-          ? OverflowKind.URGENT_BYTE_BUDGET : OverflowKind.URGENT_FRAME_BUDGET;
-      if (nextUrgentBytes > urgentMaxBytes) {
+      boolean byteExceeded = nextUrgentBytes > urgentMaxBytes || aggregateByteExceeded;
+      fenceReason = aggregateByteExceeded
+          ? "screen mailbox urgent control exceeded aggregate byte budget"
+          : aggregateFrameExceeded
+              ? "screen mailbox urgent control exceeded aggregate frame budget"
+              : byteExceeded
+                  ? "screen mailbox urgent control exceeded byte budget"
+                  : "screen mailbox urgent control exceeded frame budget";
+      fenceOverflowKind = aggregateByteExceeded
+          ? OverflowKind.AGGREGATE_BYTE_BUDGET
+          : aggregateFrameExceeded
+              ? OverflowKind.AGGREGATE_FRAME_BUDGET
+              : byteExceeded
+                  ? OverflowKind.URGENT_BYTE_BUDGET : OverflowKind.URGENT_FRAME_BUDGET;
+      if (byteExceeded) {
         overflowByByteBudgetCount++;
       } else {
         overflowByFrameBudgetCount++;
       }
     } else if (reliable && (reliableMessages.size() >= reliableMaxMessages
-        || nextReliableBytes > reliableMaxBytes)) {
+        || nextReliableBytes > reliableMaxBytes
+        || aggregateFrameExceeded || aggregateByteExceeded)) {
       long discarded = pendingBytes + payloadBytes;
       long discardedMessages = pendingMessages() + 1L;
       clearQueues();
@@ -332,12 +394,21 @@ public final class ScreenMailbox {
       fenceBytes = Math.max(fenceBytes, discarded);
       fenceMessages += discardedMessages;
       fenceRebuildChannel = true;
-      fenceReason = nextReliableBytes > reliableMaxBytes
-          ? "screen mailbox reliable control exceeded byte budget"
-          : "screen mailbox reliable control exceeded frame budget";
-      fenceOverflowKind = nextReliableBytes > reliableMaxBytes
-          ? OverflowKind.RELIABLE_BYTE_BUDGET : OverflowKind.RELIABLE_FRAME_BUDGET;
-      if (nextReliableBytes > reliableMaxBytes) {
+      boolean byteExceeded = nextReliableBytes > reliableMaxBytes || aggregateByteExceeded;
+      fenceReason = aggregateByteExceeded
+          ? "screen mailbox reliable control exceeded aggregate byte budget"
+          : aggregateFrameExceeded
+              ? "screen mailbox reliable control exceeded aggregate frame budget"
+              : byteExceeded
+                  ? "screen mailbox reliable control exceeded byte budget"
+                  : "screen mailbox reliable control exceeded frame budget";
+      fenceOverflowKind = aggregateByteExceeded
+          ? OverflowKind.AGGREGATE_BYTE_BUDGET
+          : aggregateFrameExceeded
+              ? OverflowKind.AGGREGATE_FRAME_BUDGET
+              : byteExceeded
+                  ? OverflowKind.RELIABLE_BYTE_BUDGET : OverflowKind.RELIABLE_FRAME_BUDGET;
+      if (byteExceeded) {
         overflowByByteBudgetCount++;
       } else {
         overflowByFrameBudgetCount++;
@@ -365,14 +436,18 @@ public final class ScreenMailbox {
       } else {
         while (!backgroundMessages.isEmpty()
             && (backgroundMessages.size() >= backgroundMaxMessages
-                || pendingBackgroundBytes + payloadBytes > backgroundMaxBytes)) {
+                || pendingBackgroundBytes + payloadBytes > backgroundMaxBytes
+                || pendingMessages() + 1 > totalMaxMessages
+                || pendingBytes + payloadBytes > totalMaxBytes)) {
           Message dropped = backgroundMessages.removeFirst();
           pendingBackgroundBytes -= dropped.payload.remaining();
           pendingBytes -= dropped.payload.remaining();
           droppedBackgroundMessages++;
           droppedBackgroundBytes += dropped.payload.remaining();
         }
-        if (payloadBytes <= backgroundMaxBytes) {
+        if (payloadBytes <= backgroundMaxBytes
+            && pendingMessages() + 1 <= totalMaxMessages
+            && pendingBytes + payloadBytes <= totalMaxBytes) {
           backgroundMessages.addLast(message);
           pendingBackgroundBytes += payloadBytes;
           pendingBytes += payloadBytes;
@@ -382,6 +457,8 @@ public final class ScreenMailbox {
         }
       }
     }
+    totalPendingMessagesHighWater = Math.max(totalPendingMessagesHighWater, pendingMessages());
+    totalPendingBytesHighWater = Math.max(totalPendingBytesHighWater, pendingBytes);
     boolean schedule = !drainScheduled;
     drainScheduled = true;
     return new Offer(
@@ -491,6 +568,8 @@ public final class ScreenMailbox {
     out.put("projectionDrainRate", drainRate);
     out.put("projectionPendingMessagesHighWater", projectionPendingMessagesHighWater);
     out.put("projectionPendingBytesHighWater", projectionPendingBytesHighWater);
+    out.put("totalPendingMessagesHighWater", totalPendingMessagesHighWater);
+    out.put("totalPendingBytesHighWater", totalPendingBytesHighWater);
     out.put("mailboxResidenceP50", percentileMillis(0.50d));
     out.put("mailboxResidenceP95", percentileMillis(0.95d));
     out.put("mailboxResidenceP99", percentileMillis(0.99d));
@@ -499,6 +578,8 @@ public final class ScreenMailbox {
         pendingProjectionMessages / (double) projectionMaxMessages);
     out.put("byteBudgetUtilization",
         pendingProjectionBytes / (double) projectionMaxBytes);
+    out.put("totalFrameBudgetUtilization", pendingMessages() / (double) totalMaxMessages);
+    out.put("totalByteBudgetUtilization", pendingBytes / (double) totalMaxBytes);
     out.put("overflowByFrameBudgetCount", overflowByFrameBudgetCount);
     out.put("overflowByByteBudgetCount", overflowByByteBudgetCount);
     return out;

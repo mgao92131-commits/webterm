@@ -250,29 +250,63 @@ func encodeLineBodyFields(line terminalengine.Line) *pb.LineBodyRecord {
 		Wrapped:         line.Wrapped,
 		PhysicalColumns: uint32(line.PhysicalColumns),
 	}
-	type positionedCell struct {
-		col  int
-		cell terminalengine.Cell
-	}
-	var cells []positionedCell
 	lastCol := 0
+	previousEnd := 0
+	ordered := true
 	for _, run := range line.Runs {
 		col := run.Col
+		if col < previousEnd {
+			ordered = false
+		}
 		for _, cell := range run.Cells {
-			width := int(cell.Width)
-			if width != 2 {
-				width = 1
-			}
-			cells = append(cells, positionedCell{col: col, cell: cell})
+			width := encodedCellWidth(cell)
 			col += width
 			if !isDefaultTrailingCell(cell) && col > lastCol {
 				lastCol = col
 			}
 		}
+		if col > previousEnd {
+			previousEnd = col
+		}
 	}
-	byCol := make(map[int]terminalengine.Cell, len(cells))
-	for _, item := range cells {
-		byCol[item.col] = item.cell
+	if !ordered {
+		return encodeSparseLineBodyFields(line, wire, lastCol)
+	}
+	wire.Utf8Text = make([]byte, 0, lastCol)
+	wire.GlyphMeta = make([]byte, 0, lastCol)
+	var span *pb.StyleSpan
+	col := 0
+	for _, run := range line.Runs {
+		for col < run.Col && col < lastCol {
+			appendEncodedCell(wire, &span, col, terminalengine.Cell{Text: " ", Width: 1})
+			col++
+		}
+		col = run.Col
+		for _, cell := range run.Cells {
+			if col >= lastCol {
+				break
+			}
+			appendEncodedCell(wire, &span, col, cell)
+			col += encodedCellWidth(cell)
+		}
+	}
+	for col < lastCol {
+		appendEncodedCell(wire, &span, col, terminalengine.Cell{Text: " ", Width: 1})
+		col++
+	}
+	return wire
+}
+
+func encodeSparseLineBodyFields(
+	line terminalengine.Line, wire *pb.LineBodyRecord, lastCol int,
+) *pb.LineBodyRecord {
+	byCol := make(map[int]terminalengine.Cell)
+	for _, run := range line.Runs {
+		col := run.Col
+		for _, cell := range run.Cells {
+			byCol[col] = cell
+			col += encodedCellWidth(cell)
+		}
 	}
 	var span *pb.StyleSpan
 	for col := 0; col < lastCol; {
@@ -280,32 +314,45 @@ func encodeLineBodyFields(line terminalengine.Line) *pb.LineBodyRecord {
 		if !ok {
 			cell = terminalengine.Cell{Text: " ", Width: 1}
 		}
-		width := int(cell.Width)
-		if width != 2 {
-			width = 1
-		}
-		text := cell.Text
-		if text == "" {
-			text = " "
-		}
-		encoded := []byte(text)
-		wire.Utf8Text = append(wire.Utf8Text, encoded...)
-		var scratch [binary.MaxVarintLen64]byte
-		n := binary.PutUvarint(scratch[:], uint64(len(encoded))<<1|uint64(width-1))
-		wire.GlyphMeta = append(wire.GlyphMeta, scratch[:n]...)
-		if cell.StyleID != 0 || cell.LinkID != 0 {
-			if span != nil && span.EndCol == int32(col) && span.StyleId == cell.StyleID && span.LinkId == cell.LinkID {
-				span.EndCol = int32(col + width)
-			} else {
-				span = &pb.StyleSpan{StartCol: int32(col), EndCol: int32(col + width), StyleId: cell.StyleID, LinkId: cell.LinkID}
-				wire.StyleSpans = append(wire.StyleSpans, span)
-			}
-		} else {
-			span = nil
-		}
-		col += width
+		appendEncodedCell(wire, &span, col, cell)
+		col += encodedCellWidth(cell)
 	}
 	return wire
+}
+
+func appendEncodedCell(
+	wire *pb.LineBodyRecord, span **pb.StyleSpan, col int, cell terminalengine.Cell,
+) {
+	width := encodedCellWidth(cell)
+	text := cell.Text
+	if text == "" {
+		text = " "
+	}
+	wire.Utf8Text = append(wire.Utf8Text, text...)
+	var scratch [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(scratch[:], uint64(len(text))<<1|uint64(width-1))
+	wire.GlyphMeta = append(wire.GlyphMeta, scratch[:n]...)
+	if cell.StyleID == 0 && cell.LinkID == 0 {
+		*span = nil
+		return
+	}
+	if *span != nil && (*span).EndCol == int32(col) &&
+		(*span).StyleId == cell.StyleID && (*span).LinkId == cell.LinkID {
+		(*span).EndCol = int32(col + width)
+		return
+	}
+	*span = &pb.StyleSpan{
+		StartCol: int32(col), EndCol: int32(col + width),
+		StyleId: cell.StyleID, LinkId: cell.LinkID,
+	}
+	wire.StyleSpans = append(wire.StyleSpans, *span)
+}
+
+func encodedCellWidth(cell terminalengine.Cell) int {
+	if cell.Width == 2 {
+		return 2
+	}
+	return 1
 }
 
 func isDefaultTrailingCell(cell terminalengine.Cell) bool {

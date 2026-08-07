@@ -156,7 +156,7 @@ public final class RemoteTerminalViewRound2AcceptanceBenchmarkTest {
 
       AtomicReference<Boolean> returnedToTail = new AtomicReference<>(false);
       scenario.onActivity(activity -> returnedToTail.set(
-          viewRef.get().captureDiagnostics().followTail));
+          viewRef.get().renderDiagnostics().followTail));
       assertTrue("returning to offset zero must restore follow-tail", returnedToTail.get());
       scenario.onActivity(activity -> activity.getWindow()
           .removeOnFrameMetricsAvailableListener(frameMetrics));

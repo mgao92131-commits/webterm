@@ -5,6 +5,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -38,12 +40,12 @@ import com.webterm.terminal.model.TerminalSelection;
 import com.webterm.terminal.model.TerminalStateUpdate;
 import com.webterm.terminal.model.TerminalViewportState;
 import com.webterm.terminal.model.StyleValue;
-import com.webterm.terminal.model.capture.CapturedScreenshot;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.nio.ByteBuffer;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -220,12 +222,12 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
       while (System.nanoTime() < deadline && !blinkOff.get()) {
         scenario.onActivity(activity -> blinkOff.set(
-            !viewRef.get().captureDiagnostics().cursorBlinkOn));
+            !viewRef.get().renderDiagnostics().cursorBlinkOn));
         if (!blinkOff.get()) Thread.sleep(100L);
       }
       assertTrue("cursor blink did not reach the off phase", blinkOff.get());
 
-      // captureDiagnostics() observes the state transition before the posted
+      // renderDiagnostics() observes the state transition before the posted
       // invalidation necessarily reaches onDraw(). Force one frame after the
       // off phase and sample metrics only after that frame has completed.
       DrawWaiter blinkOffDraw = new DrawWaiter();
@@ -259,8 +261,8 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
     TerminalRenderMetrics.Snapshot afterFirst;
     TerminalRenderMetrics.Snapshot afterBlinkOff;
-    AtomicReference<CapturedScreenshot> onShot = new AtomicReference<>();
-    AtomicReference<CapturedScreenshot> offShot = new AtomicReference<>();
+    AtomicReference<PixelSnapshot> onShot = new AtomicReference<>();
+    AtomicReference<PixelSnapshot> offShot = new AtomicReference<>();
 
     try (ActivityScenario<ClipboardTestActivity> scenario =
              ActivityScenario.launch(ClipboardTestActivity.class)) {
@@ -286,7 +288,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       afterFirst = TerminalRenderMetrics.snapshot();
 
       waitForBlinkState(scenario, viewRef, true, 2_000L);
-      scenario.onActivity(activity -> onShot.set(viewRef.get().captureScreenshot()));
+      scenario.onActivity(activity -> onShot.set(renderPixels(viewRef.get())));
       waitForBlinkState(scenario, viewRef, false, 2_000L);
 
       DrawWaiter blinkOffDraw = new DrawWaiter();
@@ -297,7 +299,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       assertTrue("text blink off draw did not complete", blinkOffDraw.await());
       scenario.onActivity(activity -> {
         blinkOffDraw.detach(viewRef.get());
-        offShot.set(viewRef.get().captureScreenshot());
+        offShot.set(renderPixels(viewRef.get()));
       });
       afterBlinkOff = TerminalRenderMetrics.snapshot();
     }
@@ -435,8 +437,8 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     TerminalRenderMetrics.Snapshot afterFirst;
     TerminalRenderMetrics.Snapshot afterOff;
     TerminalRenderMetrics.Snapshot afterOn;
-    AtomicReference<CapturedScreenshot> offShot = new AtomicReference<>();
-    AtomicReference<CapturedScreenshot> onShot = new AtomicReference<>();
+    AtomicReference<PixelSnapshot> offShot = new AtomicReference<>();
+    AtomicReference<PixelSnapshot> onShot = new AtomicReference<>();
 
     try (ActivityScenario<ClipboardTestActivity> scenario =
              ActivityScenario.launch(ClipboardTestActivity.class)) {
@@ -475,7 +477,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       assertTrue("small-cache blink off draw did not complete", offDraw.await());
       scenario.onActivity(activity -> {
         offDraw.detach(viewRef.get());
-        offShot.set(viewRef.get().captureScreenshot());
+        offShot.set(renderPixels(viewRef.get()));
       });
       afterOff = TerminalRenderMetrics.snapshot();
 
@@ -488,7 +490,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       assertTrue("small-cache blink on draw did not complete", onDraw.await());
       scenario.onActivity(activity -> {
         onDraw.detach(viewRef.get());
-        onShot.set(viewRef.get().captureScreenshot());
+        onShot.set(renderPixels(viewRef.get()));
       });
       afterOn = TerminalRenderMetrics.snapshot();
     }
@@ -510,8 +512,8 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
     TerminalRenderMetrics.Snapshot afterFirst;
     TerminalRenderMetrics.Snapshot afterSelection;
-    AtomicReference<CapturedScreenshot> beforeSelectionShot = new AtomicReference<>();
-    AtomicReference<CapturedScreenshot> afterSelectionShot = new AtomicReference<>();
+    AtomicReference<PixelSnapshot> beforeSelectionShot = new AtomicReference<>();
+    AtomicReference<PixelSnapshot> afterSelectionShot = new AtomicReference<>();
 
     try (ActivityScenario<ClipboardTestActivity> scenario =
              ActivityScenario.launch(ClipboardTestActivity.class)) {
@@ -525,7 +527,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       assertTrue("selection baseline draw did not complete", firstDraw.await());
       scenario.onActivity(activity -> {
         firstDraw.detach(viewRef.get());
-        beforeSelectionShot.set(viewRef.get().captureScreenshot());
+        beforeSelectionShot.set(renderPixels(viewRef.get()));
       });
       afterFirst = TerminalRenderMetrics.snapshot();
 
@@ -545,7 +547,7 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
       assertTrue("selection overlay draw did not complete", selectionDraw.await());
       scenario.onActivity(activity -> {
         selectionDraw.detach(viewRef.get());
-        afterSelectionShot.set(viewRef.get().captureScreenshot());
+        afterSelectionShot.set(renderPixels(viewRef.get()));
       });
       afterSelection = TerminalRenderMetrics.snapshot();
     }
@@ -751,7 +753,22 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     assertTrue("text blink did not reach expected phase=" + expected, state.get() == expected);
   }
 
-  private static int differentPixels(CapturedScreenshot first, CapturedScreenshot second) {
+  private static PixelSnapshot renderPixels(RemoteTerminalView view) {
+    int width = view.getWidth();
+    int height = view.getHeight();
+    if (width <= 0 || height <= 0) return null;
+    Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    try {
+      view.draw(new Canvas(bitmap));
+      ByteBuffer pixels = ByteBuffer.allocate(width * height * 4);
+      bitmap.copyPixelsToBuffer(pixels);
+      return new PixelSnapshot(pixels.array(), width, height);
+    } finally {
+      bitmap.recycle();
+    }
+  }
+
+  private static int differentPixels(PixelSnapshot first, PixelSnapshot second) {
     if (first == null || second == null || first.width != second.width
         || first.height != second.height) return -1;
     int count = 0;
@@ -770,6 +787,18 @@ public final class RemoteTerminalViewRenderNodeBaselineTest {
     long total = 0;
     for (long bucket : buckets) total += bucket;
     return total;
+  }
+
+  private static final class PixelSnapshot {
+    final byte[] argbPixels;
+    final int width;
+    final int height;
+
+    PixelSnapshot(byte[] argbPixels, int width, int height) {
+      this.argbPixels = argbPixels;
+      this.width = width;
+      this.height = height;
+    }
   }
 
   private static final class DrawWaiter implements ViewTreeObserver.OnDrawListener {

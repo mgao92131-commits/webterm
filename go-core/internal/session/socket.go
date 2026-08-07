@@ -19,6 +19,12 @@ type Socket interface {
 	Close() error
 }
 
+// SocketPartsWriter 是可选的 scatter/gather 写能力。实现必须把 parts 作为同一个
+// WebSocket message 顺序写出；PhysicalWriter 在不支持时回退为一次合并拷贝。
+type SocketPartsWriter interface {
+	WriteParts(context.Context, MessageType, ...[]byte) error
+}
+
 type WebSocketAdapter struct {
 	conn *websocket.Conn
 }
@@ -43,6 +49,27 @@ func (adapter *WebSocketAdapter) Write(ctx context.Context, messageType MessageT
 		return adapter.conn.Write(ctx, websocket.MessageBinary, data)
 	}
 	return adapter.conn.Write(ctx, websocket.MessageText, data)
+}
+
+func (adapter *WebSocketAdapter) WriteParts(ctx context.Context, messageType MessageType, parts ...[]byte) error {
+	websocketType := websocket.MessageText
+	if messageType == MessageBinary {
+		websocketType = websocket.MessageBinary
+	}
+	writer, err := adapter.conn.Writer(ctx, websocketType)
+	if err != nil {
+		return err
+	}
+	for _, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+		if _, err := writer.Write(part); err != nil {
+			_ = writer.Close()
+			return err
+		}
+	}
+	return writer.Close()
 }
 
 func (adapter *WebSocketAdapter) Close() error {

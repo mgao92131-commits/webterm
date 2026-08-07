@@ -451,9 +451,6 @@ public final class AppFlowCoordinator implements
         terminalAuthRecoveryGeneration++;
         terminalAuthRecoveryInFlight = false;
         remoteTerminalIntegration.setAuthenticationListener(this::recoverTerminalAuthentication);
-        // 现场捕获菜单入口：debug/diag 返回 4 项（按记录状态动态显示），release 返回空列表。
-        remoteTerminalIntegration.setDebugMenuItems(
-            com.webterm.mobile.diagnostics.TerminalCaptureMenu.items(activity));
         remoteTerminalIntegration.start(activity, fragment, args,
             configStore.getFontSize(), getTypefaceByName(configStore.getFontType()));
         bindTerminalSessionInfo(findServerForRemoteTerminal());

@@ -35,7 +35,6 @@ import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalViewportState;
-import com.webterm.terminal.model.capture.CapturedViewState;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -68,7 +67,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     RenderUpdate update = model.consumeRenderUpdate();
     TerminalViewportState viewport = new TerminalViewportState();
     AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
-    AtomicReference<CapturedViewState> stateRef = new AtomicReference<>();
+    AtomicReference<RenderDiagnostics> stateRef = new AtomicReference<>();
     AtomicReference<Window> windowRef = new AtomicReference<>();
     AtomicReference<int[]> viewLocationRef = new AtomicReference<>();
     AtomicReference<int[]> windowSizeRef = new AtomicReference<>();
@@ -94,7 +93,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
         draw.attach(view);
         view.bindModel(model);
         view.applyRenderUpdate(update, viewport);
-        stateRef.set(view.captureDiagnostics());
+        stateRef.set(view.renderDiagnostics());
         int[] location = new int[2];
         view.getLocationInWindow(location);
         viewLocationRef.set(location);
@@ -106,7 +105,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       assertTrue("RenderNode parity frame did not draw", draw.await());
       scenario.onActivity(activity -> draw.detach(viewRef.get()));
 
-      CapturedViewState state = stateRef.get();
+      RenderDiagnostics state = stateRef.get();
       int width = viewRef.get().getWidth();
       int height = viewRef.get().getHeight();
       direct = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
@@ -129,7 +128,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       windowPixels.recycle();
     }
 
-    CapturedViewState state = stateRef.get();
+    RenderDiagnostics state = stateRef.get();
     int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
     int terminalRight = Math.min(direct.getWidth(),
         edgePx(state.cellWidth, COLUMNS));
@@ -183,7 +182,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       ParityCapture capture = captureParity(
           new CellValue[][] {edge.cells}, COLUMNS, VIEW_HEIGHT);
       try {
-        CapturedViewState state = capture.state;
+        RenderDiagnostics state = capture.state;
         int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
         int scanLeft = edgePx(state.cellWidth, edge.startColumn);
         Rect scan = new Rect(scanLeft, 0, capture.direct.getWidth(), capture.direct.getHeight());
@@ -233,7 +232,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
 
     ParityCapture capture = captureParity(rows, columns, VIEW_HEIGHT);
     try {
-      CapturedViewState state = capture.state;
+      RenderDiagnostics state = capture.state;
       int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
       int terminalRight = Math.min(capture.direct.getWidth(),
           edgePx(state.cellWidth, columns));
@@ -265,7 +264,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     };
     ParityCapture capture = captureParity(rows, COLUMNS, VIEW_HEIGHT);
     try {
-      CapturedViewState state = capture.state;
+      RenderDiagnostics state = capture.state;
       int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
       int terminalRight = Math.min(capture.direct.getWidth(), edgePx(state.cellWidth, COLUMNS));
       for (int row = 0; row < rows.length; row++) {
@@ -301,7 +300,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     CellValue[][] rows = contextualTextRows();
     ParityCapture capture = captureParity(rows, COLUMNS, VIEW_HEIGHT);
     try {
-      CapturedViewState state = capture.state;
+      RenderDiagnostics state = capture.state;
       int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
       int terminalRight = Math.min(capture.direct.getWidth(), edgePx(state.cellWidth, COLUMNS));
       int terminalBottom = Math.min(capture.direct.getHeight(),
@@ -346,7 +345,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     };
     ParityCapture capture = captureParity(rows, COLUMNS, 240, 10);
     try {
-      CapturedViewState state = capture.state;
+      RenderDiagnostics state = capture.state;
       int lineHeight = Math.round(state.lineHeight);
       int topInset = Math.round(Math.max(0f, state.lineHeight - state.baseline));
       assertTrue("test must use an odd line height: " + lineHeight
@@ -405,7 +404,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
     RenderUpdate update = model.consumeRenderUpdate();
     TerminalViewportState viewport = new TerminalViewportState();
     AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
-    AtomicReference<CapturedViewState> stateRef = new AtomicReference<>();
+    AtomicReference<RenderDiagnostics> stateRef = new AtomicReference<>();
     AtomicReference<Window> windowRef = new AtomicReference<>();
     AtomicReference<int[]> viewLocationRef = new AtomicReference<>();
     AtomicReference<int[]> windowSizeRef = new AtomicReference<>();
@@ -432,7 +431,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
         draw.attach(view);
         view.bindModel(model);
         view.applyRenderUpdate(update, viewport);
-        stateRef.set(view.captureDiagnostics());
+        stateRef.set(view.renderDiagnostics());
         int[] location = new int[2];
         view.getLocationInWindow(location);
         viewLocationRef.set(location);
@@ -444,7 +443,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
       assertTrue("RenderNode parity frame did not draw", draw.await());
       scenario.onActivity(activity -> draw.detach(viewRef.get()));
 
-      CapturedViewState state = stateRef.get();
+      RenderDiagnostics state = stateRef.get();
       int width = viewRef.get().getWidth();
       int height = viewRef.get().getHeight();
       direct = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
@@ -668,7 +667,7 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
   }
 
   private static boolean isExpectedRenderNodeClipping(EdgeCase edge, Rect direct,
-                                                       Rect hardware, CapturedViewState state) {
+                                                       Rect hardware, RenderDiagnostics state) {
     int terminalRight = edgePx(state.cellWidth, COLUMNS);
     // KNOWN-05 只覆盖末列斜体/fallback glyph。Contextual advance 会让 legacy X-only
     // fitting 保留一个小的浮点宽度差，软件 Canvas 的斜体 overhang 可能再多出 1px
@@ -800,9 +799,9 @@ public final class RemoteTerminalCanvasRenderNodeParityTest {
   private static final class ParityCapture {
     final Bitmap direct;
     final Bitmap hardware;
-    final CapturedViewState state;
+    final RenderDiagnostics state;
 
-    ParityCapture(Bitmap direct, Bitmap hardware, CapturedViewState state) {
+    ParityCapture(Bitmap direct, Bitmap hardware, RenderDiagnostics state) {
       this.direct = direct;
       this.hardware = hardware;
       this.state = state;

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,30 @@ type blockingMuxSocket struct {
 	firstStarted chan struct{}
 	releaseFirst chan struct{}
 }
+
+type partsMuxSocket struct {
+	writeCalled      atomic.Bool
+	writePartsCalled atomic.Bool
+	received         []byte
+}
+
+func (s *partsMuxSocket) Read(ctx context.Context) (termsession.MessageType, []byte, error) {
+	<-ctx.Done()
+	return 0, nil, ctx.Err()
+}
+func (s *partsMuxSocket) Write(context.Context, termsession.MessageType, []byte) error {
+	s.writeCalled.Store(true)
+	return errors.New("contiguous fallback must not be used")
+}
+func (s *partsMuxSocket) WriteParts(_ context.Context, _ termsession.MessageType, parts ...[]byte) error {
+	s.writePartsCalled.Store(true)
+	for _, part := range parts {
+		s.received = append(s.received, part...)
+	}
+	return nil
+}
+func (s *partsMuxSocket) Close() error     { return nil }
+func (s *partsMuxSocket) Protocol() string { return "webterm.mux.v1" }
 
 func (s *blockingMuxSocket) Read(ctx context.Context) (termsession.MessageType, []byte, error) {
 	<-ctx.Done()
@@ -86,6 +111,28 @@ func TestPhysicalWriterPrioritizesControlBetweenChannelFrames(t *testing.T) {
 		string(socket.writes[1]) != "control" ||
 		string(socket.writes[2]) != "screen-b" {
 		t.Fatalf("write order=%q, want screen-a, control, screen-b", socket.writes)
+	}
+}
+
+func TestPhysicalWriterUsesSocketPartsWriterWithoutCombiningPayload(t *testing.T) {
+	socket := &partsMuxSocket{}
+	writer := NewPhysicalWriter(socket, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	go writer.Run(ctx)
+
+	err := writer.SubmitParts(ctx, termsession.MessageBinary,
+		[][]byte{[]byte("header"), []byte("payload")}, false)
+	cancel()
+	<-writer.Done()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if socket.writeCalled.Load() || !socket.writePartsCalled.Load() {
+		t.Fatalf("Write called=%v WriteParts called=%v",
+			socket.writeCalled.Load(), socket.writePartsCalled.Load())
+	}
+	if got := string(socket.received); got != "headerpayload" {
+		t.Fatalf("received=%q, want headerpayload", got)
 	}
 }
 
@@ -283,16 +330,93 @@ func TestPhysicalWriterCloseUnblocksSubmitWaiters(t *testing.T) {
 	waitUntil(t, time.Now().Add(time.Second), func() bool {
 		return len(writer.dataWrites) == 8
 	}, "writer queue did not fill")
+	if got := writer.dataBytes.Load(); got != int64(8*len("pending")) {
+		t.Fatalf("queued data bytes = %d, want %d", got, 8*len("pending"))
+	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	go writer.Run(runCtx)
 	<-writer.Done()
+	if got := writer.dataBytes.Load(); got != 0 {
+		t.Fatalf("queued data bytes after close = %d, want 0", got)
+	}
 
 	for range 8 {
 		err := <-results
 		if err != nil && err != ErrWriterClosed {
 			t.Fatalf("submit result = %v, want nil or ErrWriterClosed", err)
+		}
+	}
+}
+
+func TestPhysicalWriterDataByteBudgetBlocksBeforeFrameQueueLimit(t *testing.T) {
+	socket := &blockingMuxSocket{}
+	writer := newPhysicalWriterWithLimits(socket, 8, 8, 8)
+
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- writer.Submit(
+			context.Background(), termsession.MessageBinary, []byte("123456"), false)
+	}()
+	waitUntil(t, time.Now().Add(time.Second), func() bool {
+		return len(writer.dataWrites) == 1
+	}, "first frame did not enter data queue")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := writer.Submit(ctx, termsession.MessageBinary, []byte("7890"), false)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second submit error=%v, want byte-budget deadline", err)
+	}
+	if got := len(writer.dataWrites); got != 1 {
+		t.Fatalf("queued frames=%d, want 1 while byte budget is full", got)
+	}
+
+	runCtx, stop := context.WithCancel(context.Background())
+	stop()
+	go writer.Run(runCtx)
+	<-writer.Done()
+	if err := <-firstResult; !errors.Is(err, ErrWriterClosed) {
+		t.Fatalf("first submit result=%v, want ErrWriterClosed", err)
+	}
+}
+
+func TestPhysicalWriterAllowsOnlyOneOversizedDataFrameAtATime(t *testing.T) {
+	socket := &blockingMuxSocket{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	writer := newPhysicalWriterWithLimits(socket, 8, 8, 8)
+	runCtx, stop := context.WithCancel(context.Background())
+	go writer.Run(runCtx)
+	defer func() {
+		stop()
+		<-writer.Done()
+	}()
+
+	results := make(chan error, 2)
+	go func() {
+		results <- writer.Submit(
+			runCtx, termsession.MessageBinary, []byte("oversized-1"), false)
+	}()
+	select {
+	case <-socket.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("oversized frame did not start")
+	}
+	go func() {
+		results <- writer.Submit(
+			runCtx, termsession.MessageBinary, []byte("oversized-2"), false)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	if got := len(writer.dataWrites); got != 0 {
+		t.Fatalf("second oversized frame entered queue while first was in flight: %d", got)
+	}
+	close(socket.releaseFirst)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
 		}
 	}
 }

@@ -432,6 +432,68 @@ public final class ScreenMailboxTest {
     assertEquals(0L, mailbox.pendingBytes());
   }
 
+  @Test
+  public void aggregateBudgetBoundsAllLanesAndProjectionOverflowKeepsControl() {
+    ScreenMailbox mailbox = new ScreenMailbox(
+        8, 16L, 8, 16L, 8, 16L, 8, 16L, 3, 16L);
+    TerminalSessionRuntime.ScreenConnection source =
+        mock(TerminalSessionRuntime.ScreenConnection.class);
+    offer(mailbox, source, ScreenMailbox.MessageKind.EXIT, 1);
+    offer(mailbox, source, ScreenMailbox.MessageKind.PONG, 2);
+    offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 3);
+
+    mailbox.offer(1L, source, new byte[] {4}, true,
+        ScreenMailbox.MessageKind.TERMINAL_COMMIT);
+
+    ScreenMailbox.Drain overflow = mailbox.poll();
+    assertNotNull(overflow.fence);
+    assertEquals(ScreenMailbox.OverflowKind.AGGREGATE_FRAME_BUDGET,
+        overflow.fence.overflowKind);
+    assertTrue(!overflow.fence.rebuildChannel);
+    assertEquals(2, mailbox.pendingMessages());
+    assertEquals(2L, mailbox.pendingBytes());
+    assertEquals(ScreenMailbox.MessageKind.EXIT, mailbox.poll().message.kind);
+    assertEquals(ScreenMailbox.MessageKind.PONG, mailbox.poll().message.kind);
+  }
+
+  @Test
+  public void aggregateBudgetDropsOldestBackgroundBeforeRejectingNewBackground() {
+    ScreenMailbox mailbox = new ScreenMailbox(
+        8, 16L, 8, 16L, 8, 16L, 8, 16L, 2, 2L);
+    TerminalSessionRuntime.ScreenConnection source =
+        mock(TerminalSessionRuntime.ScreenConnection.class);
+    offer(mailbox, source, ScreenMailbox.MessageKind.OTHER, 1);
+    offer(mailbox, source, ScreenMailbox.MessageKind.PONG, 2);
+
+    ScreenMailbox.Offer offer = mailbox.offer(1L, source, new byte[] {3}, true,
+        ScreenMailbox.MessageKind.EFFECT);
+
+    assertEquals(1L, offer.droppedBackgroundMessages);
+    assertEquals(2, mailbox.pendingMessages());
+    assertEquals(2L, mailbox.pendingBytes());
+    assertEquals(2, mailbox.poll().message.payload.get(0));
+    assertEquals(3, mailbox.poll().message.payload.get(0));
+  }
+
+  @Test
+  public void aggregateBudgetTreatsReliableOverflowAsFatal() {
+    ScreenMailbox mailbox = new ScreenMailbox(
+        8, 16L, 8, 16L, 8, 16L, 8, 16L, 1, 2L);
+    TerminalSessionRuntime.ScreenConnection source =
+        mock(TerminalSessionRuntime.ScreenConnection.class);
+    offer(mailbox, source, ScreenMailbox.MessageKind.TERMINAL_COMMIT, 1);
+
+    mailbox.offer(1L, source, new byte[] {2}, true,
+        ScreenMailbox.MessageKind.CLIPBOARD_EFFECT);
+
+    ScreenMailbox.Drain overflow = mailbox.poll();
+    assertNotNull(overflow.fence);
+    assertEquals(ScreenMailbox.OverflowKind.AGGREGATE_FRAME_BUDGET,
+        overflow.fence.overflowKind);
+    assertTrue(overflow.fence.rebuildChannel);
+    assertEquals(0, mailbox.pendingMessages());
+  }
+
   private static void offer(ScreenMailbox mailbox,
                             TerminalSessionRuntime.ScreenConnection source,
                             ScreenMailbox.MessageKind kind, int value) {

@@ -15,7 +15,6 @@ import (
 
 	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/screenprojection"
-	"webterm/go-core/internal/terminalcapture"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -57,10 +56,13 @@ type Runtime struct {
 	historyRangeTokens float64
 	historyRangeLast   time.Time
 
-	events   chan event
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	stopped  bool
+	// controlEvents 与 ptyEvents 分 lane，避免持续 PTY 输出把输入、Resize、租约和
+	// 投影 timer 挡在同一个 FIFO 后面。PTY lane 仍由单 actor 顺序消费，字节顺序不变。
+	controlEvents chan queuedEvent
+	ptyEvents     chan queuedEvent
+	stopOnce      sync.Once
+	stopCh        chan struct{}
+	stopped       bool
 	// draining 在 DrainAndClose 开始后置位：拒绝新的用户输入，readLoop 继续
 	// 读 PTY 尾部直到 EOF。
 	draining atomic.Bool
@@ -71,15 +73,16 @@ type Runtime struct {
 	// 等待真 EOF，避免退出后延迟到达的尾部输出在静默窗口后被截断。
 	drainEOFUncertain atomic.Bool
 
-	layoutEpoch       uint64
-	screenRevision    uint64
-	projectionPending bool
-	projectionToken   uint64
-	projectionEvents  int
-	denseFlushes      int
-	lastPTYOutput     time.Time
-	busyFlushWindow   time.Duration
-	ptyReadBuffers    sync.Pool
+	layoutEpoch         uint64
+	screenRevision      uint64
+	projectionPending   bool
+	projectionToken     uint64
+	projectionEvents    int
+	projectionPTYChunks int
+	denseFlushes        int
+	lastPTYOutput       time.Time
+	busyFlushWindow     time.Duration
+	ptyReadBuffers      sync.Pool
 	// ptyReadCredits 按固定读缓冲预留 PTY 输出的待处理内存。必须在 Read 前取得
 	// 一个 credit，避免 actor 落后时把未处理的 PTY 数据继续堆在 Go 堆中。
 	ptyReadCredits chan struct{}
@@ -98,11 +101,6 @@ type Runtime struct {
 	onResync        func(clientID string, reason string)
 	ptyOutputEvents atomic.Uint64
 	ptyOutputBytes  atomic.Uint64
-
-	// captureSink 是终端渲染路径现场捕获的旁路 Sink。生产构建为 NOOP，热路径只
-	// 承担一次廉价判断；仅当用户显式开启现场记录时才拷贝/记录有界数据。它绝不
-	// 消费业务状态（dirty/baseline/revision/history watermark）。
-	captureSink terminalcapture.Sink
 }
 
 // ScreenClient 是 screen protocol 客户端的抽象。
@@ -173,7 +171,8 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 		id:               id,
 		instanceID:       randomID(),
 		terminalIO:       terminalIO,
-		events:           make(chan event, 1024),
+		controlEvents:    make(chan queuedEvent, 1024),
+		ptyEvents:        make(chan queuedEvent, ptyPendingByteLimit/ptyReadBufferSize),
 		stopCh:           make(chan struct{}),
 		readDone:         make(chan struct{}),
 		ptyReadCredits:   make(chan struct{}, ptyPendingByteLimit/ptyReadBufferSize),
@@ -192,10 +191,6 @@ func NewRuntime(id string, terminalIO TerminalIO, rows, cols int, options ...Opt
 	for _, opt := range options {
 		opt(r)
 	}
-	if r.captureSink == nil {
-		r.captureSink = terminalcapture.Default()
-	}
-
 	// scrollbackMaxLines<=0 时 NewTrackedScrollback 回退 DefaultScrollbackLineLimit；
 	// scrollbackMaxBytes<=0 表示不启用字节预算。
 	r.scrollback = terminalengine.NewTrackedScrollback(r.scrollbackMaxLines, nil)
@@ -455,45 +450,6 @@ func (r *Runtime) ProjectedSnapshot() terminalengine.ScreenFrame {
 	}
 }
 
-// CaptureBarrier 在 actor 顺序中取得一致性只读捕获快照：记录当前 screenRevision，
-// 返回已存在的最新权威帧（不消费 dirty、不生成业务 Patch、不推进任何状态）。
-// 它由 capture 通道在收到 Android barrier 请求后调用。
-func (r *Runtime) CaptureBarrier() terminalcapture.BarrierState {
-	reply := make(chan terminalcapture.BarrierState, 1)
-	r.postEvent(captureBarrierEvent{reply: reply})
-	select {
-	case state := <-reply:
-		return state
-	case <-r.stopCh:
-		return terminalcapture.BarrierState{}
-	}
-}
-
-// captureBarrierState 在 actor goroutine 上组装 barrier 快照。始终用只读 ExportSnapshot
-// 现场生成当前权威状态：其内部走 ReadFullProjection（不消费 dirty）、构建独立字典
-// （不触碰 Projector 字典/缓存/ChangeIndex）、不推进 revision、不改变 FrameDeriver baseline。
-// 因此 barrier 永远反映“当前”状态，绝不复用跨 capture 生命周期的旧缓存帧。
-// （与 wire 帧的 style/link ID 可比性由记录期间的 canonical ring——capture 点 B——提供。）
-func (r *Runtime) captureBarrierState() terminalcapture.BarrierState {
-	info := r.Info()
-	frame := screenprojection.ExportSnapshot(
-		r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
-	)
-	return terminalcapture.BarrierState{
-		Available:          true,
-		AgentRevision:      info.ScreenRevision,
-		LayoutEpoch:        info.LayoutEpoch,
-		TerminalInstanceID: r.instanceID,
-		Canonical:          frame,
-	}
-}
-
-// CaptureSink 返回该 runtime 的现场捕获旁路 Sink（screen channel 据此挂接派生/
-// wire 捕获点，保证与 runtime 使用同一实现）。
-func (r *Runtime) CaptureSink() terminalcapture.Sink {
-	return r.captureSink
-}
-
 // Close 关闭 runtime。
 func (r *Runtime) Close() error {
 	r.stopOnce.Do(func() {
@@ -556,7 +512,7 @@ func (r *Runtime) waitReadDrained(ctx context.Context) {
 				continue
 			}
 			events := r.ptyOutputEvents.Load()
-			if events == lastEvents && len(r.events) == 0 {
+			if events == lastEvents && len(r.controlEvents) == 0 && len(r.ptyEvents) == 0 {
 				quiet++
 				if quiet >= quietNeeded {
 					return
@@ -591,7 +547,7 @@ func (r *Runtime) drain(ctx context.Context) bool {
 	// 写入引擎；在屏障内强制执行最后一次投影，保证最终画面先于 Exit 送达。
 	barrier := make(chan struct{})
 	select {
-	case r.events <- drainBarrierEvent{done: barrier}:
+	case r.controlEvents <- queuedEvent{event: drainBarrierEvent{done: barrier}, submittedAt: time.Now()}:
 	case <-r.stopCh:
 		return false
 	case <-ctx.Done():
@@ -611,10 +567,19 @@ func (r *Runtime) postEvent(ev event) {
 	// Actor inbox 只接收 actor 外部生产者的事件。Engine 的同步回调必须记录到
 	// engineSignals，并在当前 actor turn 结束前统一提交；actor 给自己投递到
 	// 这个有界队列会在突发输出下形成自锁。
+	queued := queuedEvent{event: ev, submittedAt: time.Now()}
+	if _, ok := ev.(ptyOutputEvent); ok {
+		select {
+		case <-r.stopCh:
+			return
+		case r.ptyEvents <- queued:
+		}
+		return
+	}
 	select {
 	case <-r.stopCh:
 		return
-	case r.events <- ev:
+	case r.controlEvents <- queued:
 	}
 }
 
@@ -673,10 +638,10 @@ func (r *Runtime) postPTYOutput(data []byte) bool {
 	select {
 	case <-r.stopCh:
 		return false
-	case r.events <- ptyOutputEvent{data: data, release: func() {
+	case r.ptyEvents <- queuedEvent{event: ptyOutputEvent{data: data, release: func() {
 		r.ptyReadBuffers.Put(data[:cap(data)])
 		r.releasePTYReadCredit()
-	}}:
+	}}, submittedAt: time.Now()}:
 		return true
 	}
 }
@@ -690,24 +655,37 @@ func (r *Runtime) actorLoop() {
 	}()
 
 	for {
+		// 每轮先给已经等待的控制事件一次机会。控制流量本身有界且低频；PTY
+		// burst 处理后也必回到这里，因此持续输出不能长期占有 actor。
 		select {
 		case <-r.stopCh:
 			return
 		case now := <-clipboardTicker.C:
 			r.prunePendingClipboard(now)
-		case ev := <-r.events:
-			r.handleEvent(ev)
+			continue
+		case queued := <-r.controlEvents:
+			r.observeActorEventWait(queued)
+			r.handleControlEvent(queued.event)
+			continue
+		default:
+		}
+
+		select {
+		case <-r.stopCh:
+			return
+		case now := <-clipboardTicker.C:
+			r.prunePendingClipboard(now)
+		case queued := <-r.controlEvents:
+			r.observeActorEventWait(queued)
+			r.handleControlEvent(queued.event)
+		case queued := <-r.ptyEvents:
+			r.handlePTYBurst(queued)
 		}
 	}
 }
 
-func (r *Runtime) handleEvent(ev event) {
+func (r *Runtime) handleControlEvent(ev event) {
 	switch e := ev.(type) {
-	case ptyOutputEvent:
-		r.handlePTYOutput(e.data)
-		if e.release != nil {
-			e.release()
-		}
 	case inputEvent:
 		r.handleInput(e)
 	case semanticInputEvent:
@@ -725,8 +703,9 @@ func (r *Runtime) handleEvent(ev event) {
 	case projectionFlushEvent:
 		r.handleProjectionFlush(e)
 	case drainBarrierEvent:
-		// 进程退出后的排空屏障：此前所有 PTY 输出已写入引擎，强制最后一次
-		// 投影后再放行 DrainAndClose，保证最终画面先于 Exit 送达客户端。
+		// control/PTY 分 lane 后，屏障不能依赖跨 channel FIFO。readDone 已关闭，
+		// 这里先同步吃完剩余 PTY lane，再强制最后一次投影。
+		r.drainPTYLane()
 		r.flushProjectionNow()
 		close(e.done)
 	case resizeEngineEvent:
@@ -739,20 +718,89 @@ func (r *Runtime) handleEvent(ev event) {
 		r.engine.SetWorkingDirectory(e.path)
 		r.bumpScreenRevision()
 		r.commitEngineSignals()
-		r.scheduleProjectionFlush()
+		r.scheduleProjectionFlush(1)
 	case projectedSnapshotEvent:
+		// Snapshot API 是显式 actor barrier；把调用前已进入 PTY lane 的输出先合并，
+		// 维持调用方看到“此前输出已生效”的既有契约。
+		r.drainPTYLane()
 		info := r.Info()
 		e.reply <- screenprojection.ExportSnapshot(
 			r.engine, r.scrollback, r.id, r.instanceID, info.LayoutEpoch, info.ScreenRevision,
 		)
-	case captureBarrierEvent:
-		e.reply <- r.captureBarrierState()
 	case acquireLayoutEvent:
 		r.handleAcquireLayout(e)
 	case releaseLayoutEvent:
 		r.handleReleaseLayout(e)
 	case clipboardResponseEvent:
 		r.handleClipboardResponse(e)
+	}
+}
+
+const (
+	maxPTYChunksPerActorTurn = 16
+	maxPTYBytesPerActorTurn  = 256 * 1024
+	maxPTYTimePerActorTurn   = time.Millisecond
+)
+
+// handlePTYBurst 顺序应用一个有界 PTY 批次。批次内 parser/effect 顺序不变，但
+// revision 与 projection bookkeeping 只提交一次；达到任一预算即让回 actor loop
+// 检查 control lane。
+func (r *Runtime) handlePTYBurst(first queuedEvent) {
+	started := time.Now()
+	chunks := 0
+	bytes := 0
+	queued := first
+	for {
+		r.observeActorEventWait(queued)
+		e, ok := queued.event.(ptyOutputEvent)
+		if !ok {
+			// ptyEvents 只接收 ptyOutputEvent；防御性地交回控制分发。
+			r.handleControlEvent(queued.event)
+			return
+		}
+		r.applyPTYOutput(e.data)
+		chunks++
+		bytes += len(e.data)
+		if e.release != nil {
+			e.release()
+		}
+		if chunks >= maxPTYChunksPerActorTurn || bytes >= maxPTYBytesPerActorTurn ||
+			time.Since(started) >= maxPTYTimePerActorTurn {
+			break
+		}
+		select {
+		case queued = <-r.ptyEvents:
+			continue
+		default:
+		}
+		break
+	}
+	r.finishPTYBatch(chunks)
+}
+
+// drainPTYLane 只用于 readLoop 已结束后的排空屏障，所以不会形成无界循环。
+func (r *Runtime) drainPTYLane() {
+	for {
+		select {
+		case queued := <-r.ptyEvents:
+			r.handlePTYBurst(queued)
+		default:
+			return
+		}
+	}
+}
+
+func (r *Runtime) observeActorEventWait(queued queuedEvent) {
+	wait := time.Since(queued.submittedAt).Nanoseconds()
+	switch queued.event.(type) {
+	case ptyOutputEvent:
+		diagnostics.Default.ActorPTYEventWaitBuckets.Observe(wait)
+	case inputEvent, semanticInputEvent:
+		diagnostics.Default.ActorInputEventWaitBuckets.Observe(wait)
+	case resizeEvent, resizeEngineEvent:
+		diagnostics.Default.ActorResizeEventWaitBuckets.Observe(wait)
+	default:
+		diagnostics.Default.ActorOtherControlEventWaitBuckets.Observe(wait)
 	}
 }
 
@@ -848,22 +896,28 @@ func (r *Runtime) handleSemanticInput(e semanticInputEvent) {
 	_ = r.inputWriter.Submit(data, nil)
 }
 
-func (r *Runtime) handlePTYOutput(data []byte) {
+func (r *Runtime) applyPTYOutput(data []byte) {
 	r.ptyOutputEvents.Add(1)
 	diagnostics.Default.PTYOutputEventCount.Add(1)
 	r.ptyOutputBytes.Add(uint64(len(data)))
-	// 捕获点 A：在 engine.Write 之前旁路记录原始 PTY 字节。PTY chunk 可能在
-	// UTF-8 字符中间断开，因此保存原始 bytes（由 sink 做有界拷贝），不校验/不改写。
-	// 未开启捕获时 sink 内部只做一次 atomic 判断立即返回。
-	r.captureSink.RecordPTY(r.instanceID, terminalcapture.PTYRecord{
-		EventSeq:             r.ptyOutputEvents.Load(),
-		ScreenRevisionBefore: r.currentRevision(),
-		Data:                 data,
-	})
+	writeStarted := time.Now()
 	_ = r.engine.Write(data)
+	writeNanos := time.Since(writeStarted).Nanoseconds()
+	diagnostics.Default.PTYEngineWriteDurationBuckets.Observe(writeNanos)
+	diagnostics.Default.PTYEngineWriteNanos.Add(uint64(max(writeNanos, 0)))
+	diagnostics.Default.PTYEngineWriteBytes.Add(uint64(len(data)))
+	r.projectionPTYChunks++
+}
+
+func (r *Runtime) finishPTYBatch(chunks int) {
+	if chunks <= 0 {
+		return
+	}
+	// Engine.Write 仍逐 chunk 顺序执行，只有对外可见版本与投影调度按 actor turn
+	// 合并。这样一个 burst 至多制造一个 revision，而不是由 PTY Read 粒度决定。
 	r.bumpScreenRevision()
 	r.commitEngineSignals()
-	r.scheduleProjectionFlush()
+	r.scheduleProjectionFlush(chunks)
 }
 
 func (r *Runtime) commitEngineSignals() {
@@ -1100,12 +1154,6 @@ func (r *Runtime) broadcastFrame() {
 	// is limited to diffing against that client's baseline; without this split a
 	// second viewer multiplied every grid/history traversal and allocation.
 	state := r.projector.ExportState(r.layoutEpoch, rev)
-	// 捕获点 B：在正常 ExportState 返回后旁路记录完整权威帧（持不可变引用，不拷贝、
-	// 不额外调用消费型 API）。仅在捕获激活（Enabled）时记录；barrier 用独立的只读
-	// ExportSnapshot 现场生成当前状态，不依赖此处缓存。
-	if r.captureSink.Enabled(r.instanceID) {
-		r.captureSink.RecordCanonical(r.instanceID, terminalcapture.CanonicalRecord{Frame: state})
-	}
 	for _, c := range r.clients {
 		if c.synced {
 			c.Send(state)
@@ -1143,14 +1191,17 @@ func projectionBusyWindowFromEnv() time.Duration {
 // scheduleProjectionFlush batches PTY chunks into one terminal export. The
 // actor continues applying every byte immediately; only projection/encoding is
 // delayed by at most one display frame.
-func (r *Runtime) scheduleProjectionFlush() {
+func (r *Runtime) scheduleProjectionFlush(eventCount int) {
 	now := time.Now()
 	if !r.lastPTYOutput.IsZero() && now.Sub(r.lastPTYOutput) > r.busyFlushWindow*2 {
 		// 空闲后回到低延迟档，避免上一段命令的高吞吐状态影响下一次交互。
 		r.denseFlushes = 0
 	}
 	r.lastPTYOutput = now
-	r.projectionEvents++
+	if eventCount <= 0 {
+		eventCount = 1
+	}
+	r.projectionEvents += eventCount
 	if r.projectionPending {
 		return
 	}
@@ -1176,7 +1227,9 @@ func (r *Runtime) handleProjectionFlush(e projectionFlushEvent) {
 	} else {
 		r.denseFlushes = 0
 	}
+	diagnostics.Default.ProjectionPTYChunkCount.Add(uint64(r.projectionPTYChunks))
 	r.projectionEvents = 0
+	r.projectionPTYChunks = 0
 	r.broadcastFrame()
 }
 
@@ -1185,7 +1238,9 @@ func (r *Runtime) flushProjectionNow() {
 		r.projectionPending = false
 		r.projectionToken++ // invalidate the scheduled timer event
 	}
+	diagnostics.Default.ProjectionPTYChunkCount.Add(uint64(r.projectionPTYChunks))
 	r.projectionEvents = 0
+	r.projectionPTYChunks = 0
 	r.denseFlushes = 0
 	r.broadcastFrame()
 }
@@ -1210,6 +1265,11 @@ func randomID() string {
 }
 
 type event interface{}
+
+type queuedEvent struct {
+	event       event
+	submittedAt time.Time
+}
 
 type ptyOutputEvent struct {
 	data    []byte
@@ -1278,13 +1338,6 @@ type workingDirectoryEvent struct {
 
 type projectedSnapshotEvent struct {
 	reply chan terminalengine.ScreenFrame
-}
-
-// captureBarrierEvent 是现场捕获 barrier：在 actor 顺序中产出一一致性只读快照
-// （当前 screenRevision + 已存在的最新权威帧）。它不消费 dirty、不生成业务 Patch、
-// 不推进 baseline/history watermark。
-type captureBarrierEvent struct {
-	reply chan terminalcapture.BarrierState
 }
 
 type acquireLayoutEvent struct {

@@ -363,21 +363,6 @@ public final class TerminalChannel implements TerminalSessionRuntime.ScreenConne
     return deviceConnection.sendTunnelFrame(channelId, payload, true, kind, callback);
   }
 
-  /**
-   * 现场捕获专用：返回当前 device connection（可能为 null，如尚未连接）。
-   * 仅供诊断捕获通道（webterm.capture.v1）打开独立逻辑通道使用，不参与 screen 业务。
-   */
-  @androidx.annotation.Nullable
-  public DeviceConnection captureDeviceConnection() {
-    return deviceConnection;
-  }
-
-  /** 现场捕获专用：与 screen 通道一致的 localSessionId，使 capture 通道路由到同一 Agent 会话。 */
-  @NonNull
-  public String captureLocalSessionId() {
-    return SessionIds.agentLocal(sessionId, relayDeviceId);
-  }
-
   private static TerminalScreenV3Proto.MouseButton mouseButtonFromString(@NonNull String button) {
     switch (button) {
       case "left":

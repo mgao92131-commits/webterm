@@ -29,8 +29,6 @@ import androidx.annotation.Nullable;
 import com.webterm.terminal.model.RemoteTerminalModel;
 import com.webterm.terminal.model.RenderDirtyState;
 import com.webterm.terminal.model.RenderUpdate;
-import com.webterm.terminal.model.capture.CapturedScreenshot;
-import com.webterm.terminal.model.capture.CapturedViewState;
 import com.webterm.terminal.model.TerminalRenderMetrics;
 import com.webterm.terminal.model.CellValue;
 import com.webterm.terminal.model.RenderLine;
@@ -162,8 +160,6 @@ public final class RemoteTerminalView extends View {
   private RemoteTerminalModel model;
   /** Canvas 本帧唯一允许使用的不可变快照；绝不在 onDraw 再向模型取新快照。 */
   @Nullable private RemoteTerminalModel.RenderSnapshot renderedSnapshot;
-  /** 最近一次应用的脏区，仅供现场捕获只读快照使用。 */
-  @Nullable private RenderDirtyState lastAppliedDirty;
   private TerminalViewportState viewport = new TerminalViewportState();
   private Host host;
   /** -1 向更旧历史，+1 向更新输出，0 未知；供 Range 方向预取。 */
@@ -336,7 +332,6 @@ public final class RemoteTerminalView extends View {
       updateViewportSelection();
     }
     updateRenderedSnapshot(update.snapshot);
-    this.lastAppliedDirty = update.dirty; // 现场捕获只读快照用（不消费状态）
     // Blink metadata 查询依赖这些 generation；必须先让新 snapshot 的视觉身份生效，
     // 再启动 scheduler，否则旧缓存可能把刚出现的 blink 行判成不可见。
     updateGenerationCounters(update.dirty);
@@ -993,12 +988,9 @@ public final class RemoteTerminalView extends View {
     return w > 0 ? w : 1;
   }
 
-  /**
-   * 捕获点 E：返回当前 View 的只读诊断快照（几何/字体/viewport/渲染身份/光标/选择）。
-   * 仅读取字段，绝不修改 View 状态；必须在主线程调用（读取 renderedSnapshot 与 viewport）。
-   */
+  /** 返回当前 View 的只读渲染诊断状态；必须在主线程调用。 */
   @NonNull
-  public CapturedViewState captureDiagnostics() {
+  public RenderDiagnostics renderDiagnostics() {
     RemoteTerminalModel.RenderSnapshot snapshot = renderedSnapshot;
     long renderedRevision = snapshot != null ? snapshot.screenRevision : 0L;
     long renderedEpoch = snapshot != null ? snapshot.layoutEpoch : 0L;
@@ -1006,7 +998,7 @@ public final class RemoteTerminalView extends View {
     boolean hasSelection = selecting || selectionStart != null || selectionEnd != null;
     String typefaceDescription = userTypeface != null ? String.valueOf(userTypeface) : "monospace";
     int liveScreenExitOffsetPixels = liveScreenExitOffsetPixels();
-    return new CapturedViewState(
+    return new RenderDiagnostics(
         System.currentTimeMillis(),
         getWidth(), getHeight(),
         getPaddingLeft(), getPaddingTop(), getPaddingRight(), getPaddingBottom(),
@@ -1023,54 +1015,11 @@ public final class RemoteTerminalView extends View {
         cursorBlinkOn, hasSelection);
   }
 
-  /** 截图像素硬上限（约 1.5MP），主线程按此下界缩放，避免整屏 bitmap OOM。 */
-  private static final int CAPTURE_MAX_PIXELS = 1_500_000;
-
-  /**
-   * 捕获点 F：在主线程把当前终端 viewport 光栅化为有界 ARGB 像素（按 CAPTURE_MAX_PIXELS
-   * 下界缩放），PNG 压缩交由控制器后台完成。优先捕获 viewport 而非整个 Activity。
-   * 失败（尺寸为 0、OOM 等）返回 null，由 manifest 记录 screenshotAvailable=false，绝不抛出。
-   */
+  /** 返回当前正在绘制的不可变 RenderSnapshot，仅供渲染回归测试。 */
+  @androidx.annotation.VisibleForTesting
   @Nullable
-  public CapturedScreenshot captureScreenshot() {
-    int w = getWidth();
-    int h = getHeight();
-    if (w <= 0 || h <= 0) return null;
-    android.graphics.Bitmap bitmap = null;
-    try {
-      float scale = 1f;
-      long pixels = (long) w * h;
-      if (pixels > CAPTURE_MAX_PIXELS) {
-        scale = (float) Math.sqrt((double) CAPTURE_MAX_PIXELS / pixels);
-      }
-      int cw = Math.max(1, Math.round(w * scale));
-      int ch = Math.max(1, Math.round(h * scale));
-      bitmap = android.graphics.Bitmap.createBitmap(cw, ch, android.graphics.Bitmap.Config.ARGB_8888);
-      android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
-      if (scale != 1f) canvas.scale(scale, scale);
-      draw(canvas);
-      java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(cw * ch * 4);
-      bitmap.copyPixelsToBuffer(buffer);
-      return new CapturedScreenshot(buffer.array(), cw, ch, w, h, scale != 1f);
-    } catch (Throwable t) {
-      return null;
-    } finally {
-      if (bitmap != null) {
-        bitmap.recycle();
-      }
-    }
-  }
-
-  /** 现场捕获：返回当前正在绘制的不可变 RenderSnapshot（主线程只读）。 */
-  @Nullable
-  public RemoteTerminalModel.RenderSnapshot currentRenderedSnapshot() {
+  public RemoteTerminalModel.RenderSnapshot renderedSnapshotForTest() {
     return renderedSnapshot;
-  }
-
-  /** 现场捕获：返回最近一次应用的脏区只读引用。 */
-  @Nullable
-  public RenderDirtyState lastAppliedDirty() {
-    return lastAppliedDirty;
   }
 
   private void updateFontMetrics() {

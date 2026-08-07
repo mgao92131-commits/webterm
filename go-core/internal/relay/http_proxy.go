@@ -49,6 +49,7 @@ func (s *httpStream) signalClosed() {
 type frameWriter interface {
 	writeFrame(ctx context.Context, conn *websocket.Conn, frame relaycore.Frame)
 	writeRaw(ctx context.Context, conn *websocket.Conn, data []byte) error
+	writeRawParts(ctx context.Context, conn *websocket.Conn, parts ...[]byte) error
 }
 
 func NewHTTPProxy(router *application.SessionRouter, writer frameWriter) *HTTPProxy {

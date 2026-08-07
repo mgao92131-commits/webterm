@@ -233,7 +233,6 @@ public final class MuxOutboundQueue {
     static FrameKind inferFrameKind(String channelId) {
         if (channelId == null || channelId.isEmpty()) return FrameKind.OTHER;
         String id = channelId.toLowerCase(Locale.ROOT);
-        if (id.contains("capture")) return FrameKind.OTHER;
         if (id.contains("webterm.screen") || id.contains("screen")) return FrameKind.SCREEN;
         if (id.contains("manager")) return FrameKind.MANAGER;
         if (id.contains("input")) return FrameKind.INPUT;

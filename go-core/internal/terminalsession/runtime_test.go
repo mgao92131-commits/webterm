@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"webterm/go-core/internal/diagnostics"
 	"webterm/go-core/internal/terminalengine"
 )
 
@@ -419,6 +420,124 @@ func TestRuntimeEngineEffectFloodDoesNotSelfDeadlock(t *testing.T) {
 	if got := bells.Load(); got != 2000 {
 		t.Fatalf("bell count=%d, want 2000", got)
 	}
+}
+
+func TestRuntimeConcurrentPTYAndControlEventsRecordActorWaitMetrics(t *testing.T) {
+	r := newRuntimeTestHarness(t)
+	r.AttachClient(&ScreenClient{ID: "screen-metrics", Send: func(terminalengine.ScreenFrame) {}})
+	leaseID, granted := r.AcquireLayout("screen-metrics", true)
+	if !granted {
+		t.Fatal("screen client was not attached")
+	}
+
+	beforePTY := sumMetricBuckets(diagnostics.Default.ActorPTYEventWaitBuckets.Snapshot())
+	beforeInput := sumMetricBuckets(diagnostics.Default.ActorInputEventWaitBuckets.Snapshot())
+	beforeResize := sumMetricBuckets(diagnostics.Default.ActorResizeEventWaitBuckets.Snapshot())
+	beforeWrites := diagnostics.Default.PTYEngineWriteBytes.Load()
+
+	start := make(chan struct{})
+	var producers sync.WaitGroup
+	producers.Add(3)
+	go func() {
+		defer producers.Done()
+		<-start
+		for i := 0; i < 32; i++ {
+			r.postEvent(ptyOutputEvent{data: []byte(strings.Repeat("output\r\n", 256))})
+		}
+	}()
+	go func() {
+		defer producers.Done()
+		<-start
+		for i := 0; i < 16; i++ {
+			r.WriteSemanticInput("screen-metrics", leaseID, terminalengine.SemanticInput{
+				Kind: terminalengine.InputText, Data: "x",
+			})
+		}
+	}()
+	go func() {
+		defer producers.Done()
+		<-start
+		for i := 0; i < 8; i++ {
+			r.Resize("screen-metrics", leaseID, 80+i, 24)
+		}
+	}()
+	close(start)
+	producers.Wait()
+	waitRuntimeSnapshot(t, r)
+
+	if got := sumMetricBuckets(diagnostics.Default.ActorPTYEventWaitBuckets.Snapshot()); got <= beforePTY {
+		t.Fatalf("PTY actor wait samples=%d, want > %d", got, beforePTY)
+	}
+	if got := sumMetricBuckets(diagnostics.Default.ActorInputEventWaitBuckets.Snapshot()); got <= beforeInput {
+		t.Fatalf("input actor wait samples=%d, want > %d", got, beforeInput)
+	}
+	if got := sumMetricBuckets(diagnostics.Default.ActorResizeEventWaitBuckets.Snapshot()); got <= beforeResize {
+		t.Fatalf("resize actor wait samples=%d, want > %d", got, beforeResize)
+	}
+	if got := diagnostics.Default.PTYEngineWriteBytes.Load(); got <= beforeWrites {
+		t.Fatalf("engine write bytes=%d, want > %d", got, beforeWrites)
+	}
+}
+
+func TestRuntimePTYBurstYieldsToControlAndBatchesRevision(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var firstOnce sync.Once
+	controlHandled := make(chan int64, 1)
+	var r *Runtime
+	r = newRuntimeTestHarness(t,
+		WithOnBell(func() {
+			firstOnce.Do(func() {
+				close(firstStarted)
+				<-releaseFirst
+			})
+		}),
+		WithOnWorkingDirectory(func(string) {
+			controlHandled <- int64(r.ptyOutputEvents.Load())
+		}))
+	startRevision := r.currentRevision()
+
+	r.postEvent(ptyOutputEvent{data: []byte("\a")})
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first PTY chunk did not enter actor")
+	}
+	for range 31 {
+		r.postEvent(ptyOutputEvent{data: []byte("b")})
+	}
+	r.postEvent(workingDirectoryEvent{path: "/tmp/actor-fairness"})
+	close(releaseFirst)
+
+	select {
+	case processed := <-controlHandled:
+		if processed > maxPTYChunksPerActorTurn {
+			t.Fatalf("control handled after %d PTY chunks, turn budget=%d",
+				processed, maxPTYChunksPerActorTurn)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control event was starved by PTY burst")
+	}
+
+	// ProjectedSnapshot 是显式 barrier，会排空剩余 PTY lane。
+	_ = r.ProjectedSnapshot()
+	if got := r.ptyOutputEvents.Load(); got != 32 {
+		t.Fatalf("processed PTY chunks=%d, want 32", got)
+	}
+	// 32 chunks 形成两个 16-chunk actor turn，再加 bell effect 和
+	// working-directory 变化各一次；
+	// revision 不再按 32 个 Read chunk 逐个推进。
+	if got, want := r.currentRevision(), startRevision+4; got != want {
+		t.Fatalf("revision=%d, want %d after two PTY batches and two effects", got, want)
+	}
+}
+
+func sumMetricBuckets(buckets []uint64) uint64 {
+	var total uint64
+	for _, count := range buckets {
+		total += count
+	}
+	return total
 }
 
 func TestRuntimeExpiredInputRevokesLeaseOnce(t *testing.T) {

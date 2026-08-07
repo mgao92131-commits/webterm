@@ -17,17 +17,29 @@ type TunnelFrame struct {
 }
 
 func EncodeTunnelFrame(msgType byte, id string, extraByte byte, payload []byte) ([]byte, error) {
+	header, err := EncodeTunnelHeader(msgType, id, extraByte)
+	if err != nil {
+		return nil, err
+	}
+	frame := make([]byte, len(header)+len(payload))
+	copy(frame, header)
+	copy(frame[len(header):], payload)
+	return frame, nil
+}
+
+// EncodeTunnelHeader 只编码固定头，供支持 scatter/gather 的物理 writer 直接以
+// header + protobuf payload 写成一个 WebSocket message，避免复制完整 payload。
+func EncodeTunnelHeader(msgType byte, id string, extraByte byte) ([]byte, error) {
 	idBytes := []byte(id)
 	if len(idBytes) > 255 {
 		return nil, ErrTunnelIDTooLong
 	}
-	frame := make([]byte, 1+1+len(idBytes)+1+len(payload))
-	frame[0] = msgType
-	frame[1] = byte(len(idBytes))
-	copy(frame[2:], idBytes)
-	frame[2+len(idBytes)] = extraByte
-	copy(frame[3+len(idBytes):], payload)
-	return frame, nil
+	header := make([]byte, 1+1+len(idBytes)+1)
+	header[0] = msgType
+	header[1] = byte(len(idBytes))
+	copy(header[2:], idBytes)
+	header[2+len(idBytes)] = extraByte
+	return header, nil
 }
 
 func DecodeTunnelFrame(data []byte) (TunnelFrame, error) {

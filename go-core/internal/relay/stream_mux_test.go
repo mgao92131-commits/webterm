@@ -19,6 +19,9 @@ type noopFrameWriter struct{}
 
 func (noopFrameWriter) writeFrame(context.Context, *websocket.Conn, relaycore.Frame) {}
 func (noopFrameWriter) writeRaw(context.Context, *websocket.Conn, []byte) error      { return nil }
+func (noopFrameWriter) writeRawParts(context.Context, *websocket.Conn, ...[]byte) error {
+	return nil
+}
 
 func streamOpenFrame(id string) relaycore.Frame {
 	payload, _ := json.Marshal(relaycore.StreamRoute{

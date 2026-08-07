@@ -32,7 +32,6 @@ import com.webterm.terminal.model.TerminalCursor;
 import com.webterm.terminal.model.TerminalModes;
 import com.webterm.terminal.model.TerminalPalette;
 import com.webterm.terminal.model.TerminalViewportState;
-import com.webterm.terminal.model.capture.CapturedViewState;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -60,7 +59,7 @@ public final class RemoteTerminalDecorationParityTest {
     RenderUpdate update = model.consumeRenderUpdate();
     TerminalViewportState viewport = new TerminalViewportState();
     AtomicReference<RemoteTerminalView> viewRef = new AtomicReference<>();
-    AtomicReference<CapturedViewState> stateRef = new AtomicReference<>();
+    AtomicReference<RenderDiagnostics> stateRef = new AtomicReference<>();
     AtomicReference<Window> windowRef = new AtomicReference<>();
     AtomicReference<int[]> locationRef = new AtomicReference<>();
     AtomicReference<int[]> windowSizeRef = new AtomicReference<>();
@@ -85,7 +84,7 @@ public final class RemoteTerminalDecorationParityTest {
         draw.attach(view);
         view.bindModel(model);
         view.applyRenderUpdate(update, viewport);
-        stateRef.set(view.captureDiagnostics());
+        stateRef.set(view.renderDiagnostics());
         int[] location = new int[2];
         view.getLocationInWindow(location);
         locationRef.set(location);
@@ -97,7 +96,7 @@ public final class RemoteTerminalDecorationParityTest {
       assertTrue("decoration parity frame did not draw", draw.await());
       scenario.onActivity(activity -> draw.detach(viewRef.get()));
 
-      CapturedViewState state = stateRef.get();
+      RenderDiagnostics state = stateRef.get();
       int width = viewRef.get().getWidth();
       int height = viewRef.get().getHeight();
       direct = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
@@ -120,7 +119,7 @@ public final class RemoteTerminalDecorationParityTest {
       windowPixels.recycle();
     }
 
-    CapturedViewState state = stateRef.get();
+    RenderDiagnostics state = stateRef.get();
     int top = Math.round(Math.max(0f, state.lineHeight - state.baseline));
     int bottom = top + Math.round(state.lineHeight);
     int strikeTop = top + Math.round(state.lineHeight * 0.45f);

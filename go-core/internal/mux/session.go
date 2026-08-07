@@ -361,17 +361,16 @@ func (s *Session) writeChannelFramePriorityForLifecycle(ctx context.Context, id 
 	if binary {
 		extra = protocol.WSDataBinary
 	}
-	frame, err := protocol.EncodeTunnelFrame(protocol.MsgTypeWSData, id, extra, payload)
+	header, err := protocol.EncodeTunnelHeader(protocol.MsgTypeWSData, id, extra)
 	if err != nil {
 		return err
 	}
 	if lifecycle != nil {
-		err = s.writer.SubmitChannel(
-			ctx, termsession.MessageBinary, frame,
+		err = s.writer.SubmitChannelParts(
+			ctx, termsession.MessageBinary, [][]byte{header, payload},
 			priority == termsession.FramePriorityHigh, lifecycle)
 	} else {
-		err = s.writer.Submit(
-			ctx, termsession.MessageBinary, frame,
+		err = s.writer.SubmitParts(ctx, termsession.MessageBinary, [][]byte{header, payload},
 			priority == termsession.FramePriorityHigh)
 	}
 	s.logWriteError(err)

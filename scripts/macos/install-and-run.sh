@@ -82,7 +82,7 @@ else
 fi
 PROTOCOL_SCHEMA_HASH="$(shasum -a 256 "$REPO_ROOT/shared/proto/terminal_screen_v3.proto" | awk '{print $1}')"
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-LDFLAGS="-s -w -X main.version=$VERSION -X main.gitCommit=$COMMIT -X main.gitDirty=$GIT_DIRTY -X main.sourceTreeHash=$SOURCE_TREE_HASH -X main.buildTime=$BUILD_TIME -X main.buildVariant=webterm_capture -X main.protocolSchemaHash=$PROTOCOL_SCHEMA_HASH"
+LDFLAGS="-s -w -X main.version=$VERSION -X main.gitCommit=$COMMIT -X main.gitDirty=$GIT_DIRTY -X main.sourceTreeHash=$SOURCE_TREE_HASH -X main.buildTime=$BUILD_TIME -X main.buildVariant=standard -X main.protocolSchemaHash=$PROTOCOL_SCHEMA_HASH"
 
 echo "[1/4] 运行 Go 测试"
 (cd "$GO_DIR" && go test ./...)
@@ -90,7 +90,7 @@ echo "[1/4] 运行 Go 测试"
 echo "[2/4] 编译 Agent 与 CLI"
 (
   cd "$GO_DIR"
-  go build -tags webterm_capture -ldflags "$LDFLAGS" -o "$TMP_DIR/webterm-agent" ./cmd/webterm-agent
+  go build -ldflags "$LDFLAGS" -o "$TMP_DIR/webterm-agent" ./cmd/webterm-agent
   go build -ldflags "$LDFLAGS" -o "$TMP_DIR/webterm" ./cmd/webterm
 )
 

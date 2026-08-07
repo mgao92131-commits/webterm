@@ -1,7 +1,6 @@
 package com.webterm.terminal.model;
 
 import java.util.HashSet;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -75,7 +74,7 @@ public final class HistoryBodyReducer {
     int stale = 0;
     long changedFrom = Long.MAX_VALUE;
     long changedTo = 0;
-    List<HistorySeqRange> changedRanges = new ArrayList<>();
+    HistorySeqRangeBuilder changedRanges = new HistorySeqRangeBuilder();
     Set<LineKey> seenKeys = new HashSet<>();
     try {
       for (LineBodyRecord entry : response.bodies) {
@@ -97,7 +96,7 @@ public final class HistoryBodyReducer {
           tx.bodyCache().putHistory(historySeq, entry.key(), entry.body());
           changedFrom = Math.min(changedFrom, historySeq);
           changedTo = Math.max(changedTo, historySeq);
-          changedRanges.add(new HistorySeqRange(historySeq, historySeq));
+          changedRanges.add(historySeq);
         } else {
           tx.bodyCache().putBody(entry.key(), entry.body());
         }
@@ -125,7 +124,7 @@ public final class HistoryBodyReducer {
           changedTo,
           applied,
           stale,
-          HistorySeqRange.coalesce(changedRanges),
+          changedRanges.build(),
           HistorySeqRange.coalesce(evictedRanges));
     } catch (CommitValidationException conflict) {
       return new HistoryBodyResult.Rejected(

@@ -37,6 +37,22 @@ func TestEncodeDecodeTunnelFrame(t *testing.T) {
 	}
 }
 
+func TestEncodeTunnelHeaderPlusPayloadMatchesContiguousFrame(t *testing.T) {
+	payload := []byte("screen-protobuf")
+	header, err := EncodeTunnelHeader(MsgTypeWSData, "tc_123", WSDataBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := append(append([]byte(nil), header...), payload...)
+	frame, err := EncodeTunnelFrame(MsgTypeWSData, "tc_123", WSDataBinary, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(joined, frame) {
+		t.Fatalf("header+payload=%x, contiguous=%x", joined, frame)
+	}
+}
+
 func TestEncodeTunnelFrameRejectsLongID(t *testing.T) {
 	_, err := EncodeTunnelFrame(MsgTypeWSData, strings.Repeat("x", 256), WSDataBinary, nil)
 	if !errors.Is(err, ErrTunnelIDTooLong) {
