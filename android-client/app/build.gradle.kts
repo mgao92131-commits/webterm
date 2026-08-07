@@ -77,16 +77,6 @@ android {
             versionNameSuffix = "-debug"
             buildConfigField("String", "BUILD_VARIANT_ID", "\"debug\"")
         }
-        create("diag") {
-            initWith(getByName("release"))
-            applicationIdSuffix = ".diag"
-            versionNameSuffix = "-diag"
-            signingConfig = signingConfigs.getByName("debug")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            matchingFallbacks.add("release")
-            buildConfigField("String", "BUILD_VARIANT_ID", "\"diagnostics\"")
-        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -96,6 +86,16 @@ android {
             )
             signingConfig = signingConfigs.getByName("debug")
             buildConfigField("String", "BUILD_VARIANT_ID", "\"release\"")
+        }
+        create("diag") {
+            // release 必须先完成配置，再复制给 diag；否则自定义 ProGuard 文件不会进入
+            // diag 的最终 R8 配置。
+            initWith(getByName("release"))
+            applicationIdSuffix = ".diag"
+            versionNameSuffix = "-diag"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks.add("release")
+            buildConfigField("String", "BUILD_VARIANT_ID", "\"diagnostics\"")
         }
     }
     sourceSets {
